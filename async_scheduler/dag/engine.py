@@ -1,13 +1,30 @@
-"""DAG engine for executing workflows with dependencies."""
+"""DAG engine for executing workflows with dependencies.
+
+The DAGEngine orchestrates the execution of directed acyclic graphs (DAGs)
+with support for:
+- Topological sorting and dependency resolution
+- Parallel execution of independent nodes
+- Conditional execution and error handling
+- Integration with StepExecutors for flexible execution modes
+
+This is Batch 2 of the deepwiki distributed-alignment roadmap: tighter
+integration with StepExecutors and more robust execution tracking.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any, Callable
 
-from async_scheduler.dag.step_executors import ExecutionMode, StepExecutionContext, StepExecutors
+from async_scheduler.dag.step_executors import (
+    ExecutionMode,
+    StepExecutionContext,
+    StepExecutors,
+    StepExecutionResult,
+)
 
 from async_scheduler.core.models import (
     DAG,
@@ -17,15 +34,29 @@ from async_scheduler.core.models import (
     TaskStatus,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class DAGEngine:
-    """Engine for executing DAGs with topological sorting and parallel execution."""
+    """Engine for executing DAGs with topological sorting and parallel execution.
 
-    def __init__(self) -> None:
+    The DAGEngine is the central orchestrator for DAG execution, managing:
+    - Node dependency resolution and topological ordering
+    - Parallel execution of independent nodes (up to max_parallelism)
+    - Conditional execution based on DAG context
+    - Error handling with skip/fallback strategies
+    - Integration with StepExecutors for flexible node execution
+
+    Args:
+        step_executors: Optional StepExecutors instance. If None, creates a new one.
+    """
+
+    def __init__(self, step_executors: StepExecutors | None = None) -> None:
         """Initialize the DAG engine."""
         self._running_executions: dict[str, asyncio.Task[None]] = {}
         self._cancellation_events: dict[str, asyncio.Event] = {}
-        self._step_executors = StepExecutors()
+        self._step_executors = step_executors or StepExecutors()
+        self._execution_results: dict[str, dict[str, StepExecutionResult]] = {}  # dag_id -> {node_id: result}
 
     def _build_node_index(self, dag: DAG) -> dict[str, DAGNode]:
         """Build a lookup dictionary for nodes by ID."""
@@ -102,7 +133,14 @@ class DAGEngine:
         handler: Callable[[str, dict[str, Any]], Any],
         cancel_event: asyncio.Event,
     ) -> None:
-        """Execute a single DAG node."""
+        """Execute a single DAG node using StepExecutors.
+
+        Args:
+            dag: The DAG being executed.
+            node: The node to execute.
+            handler: The handler function for the task type.
+            cancel_event: Event for checking cancellation.
+        """
         execution = dag.node_executions.get(node.id)
 
         if execution is None:
@@ -132,42 +170,72 @@ class DAGEngine:
                 raise asyncio.CancelledError()
 
             execution_mode = ExecutionMode(node.payload.get("execution_mode", "sync"))
+
+            # Create step execution context
+            step_ctx = StepExecutionContext(
+                task_type=node.task_type,
+                payload=work_payload,
+                timeout_seconds=node.timeout_seconds,
+                flask_url=node.payload.get("flask_url"),
+                step_id=node.id,
+                dag_id=dag.id,
+            )
+
+            # Execute using StepExecutors
             result = await self._step_executors.execute(
                 execution_mode,
-                StepExecutionContext(
-                    task_type=node.task_type,
-                    payload=work_payload,
-                    timeout_seconds=node.timeout_seconds,
-                    flask_url=node.payload.get("flask_url"),
-                ),
+                step_ctx,
                 handler,
             )
 
-            execution.status = TaskStatus.SUCCESS
-            execution.result = result if isinstance(result, dict) else {"value": result}
-            execution.completed_at = datetime.utcnow()
+            # Store execution result
+            if dag.id not in self._execution_results:
+                self._execution_results[dag.id] = {}
+            self._execution_results[dag.id][node.id] = result
 
-            # Merge result into context
-            if isinstance(result, dict):
-                dag.context.update(result)
+            # Map StepExecutionResult to TaskStatus
+            if result.status.value == "completed":
+                execution.status = TaskStatus.SUCCESS
+                execution.result = result.value if isinstance(result.value, dict) else {"value": result.value}
+                execution.completed_at = datetime.utcnow()
 
-        except asyncio.TimeoutError:
-            execution.status = TaskStatus.TIMEOUT
-            execution.error_message = f"Node timed out after {node.timeout_seconds} seconds"
-            execution.completed_at = datetime.utcnow()
+                # Merge result into context
+                if isinstance(result.value, dict):
+                    dag.context.update(result.value)
+            elif result.status.value == "timeout":
+                execution.status = TaskStatus.TIMEOUT
+                execution.error_message = f"Node timed out after {node.timeout_seconds} seconds"
+                execution.completed_at = datetime.utcnow()
 
-            if node.on_failure == "skip":
-                execution.skipped = True
-                execution.skip_reason = "Node failed with on_failure=skip"
+                if node.on_failure == "skip":
+                    execution.skipped = True
+                    execution.skip_reason = "Node failed with on_failure=skip"
+            elif result.status.value == "cancelled":
+                execution.status = TaskStatus.CANCELLED
+                execution.completed_at = datetime.utcnow()
+            else:  # failed
+                execution.status = TaskStatus.FAILED
+                execution.error_message = result.error or "Unknown error"
+                execution.completed_at = datetime.utcnow()
+
+                # Handle failure based on on_failure setting
+                if node.on_failure == "skip":
+                    execution.skipped = True
+                    execution.skip_reason = "Node failed with on_failure=skip"
+                elif node.on_failure == "fallback" and node.fallback_payload:
+                    # Store fallback result in context
+                    dag.context.update(node.fallback_payload)
 
         except asyncio.CancelledError:
             execution.status = TaskStatus.CANCELLED
             execution.completed_at = datetime.utcnow()
+            logger.debug(f"Node {node.id} cancelled")
 
         except Exception as e:
             execution.status = TaskStatus.FAILED
             execution.error_message = str(e)
             execution.completed_at = datetime.utcnow()
+            logger.exception(f"Node {node.id} execution failed: {e}")
 
             # Handle failure based on on_failure setting
             if node.on_failure == "skip":
@@ -294,6 +362,9 @@ class DAGEngine:
         dag.completed_at = datetime.utcnow()
         dag.updated_at = datetime.utcnow()
 
+        # Clear execution results to free memory
+        self.clear_execution_results(dag.id)
+
         return dag
 
     async def cancel(self, dag_id: str) -> bool:
@@ -306,6 +377,37 @@ class DAGEngine:
     def is_running(self, dag_id: str) -> bool:
         """Check if a DAG is currently running."""
         return dag_id in self._cancellation_events
+
+    def get_node_execution_result(self, dag_id: str, node_id: str) -> StepExecutionResult | None:
+        """Get the StepExecutionResult for a specific node.
+
+        Args:
+            dag_id: ID of the DAG.
+            node_id: ID of the node.
+
+        Returns:
+            The StepExecutionResult, or None if not found.
+        """
+        return self._execution_results.get(dag_id, {}).get(node_id)
+
+    def get_dag_execution_results(self, dag_id: str) -> dict[str, StepExecutionResult]:
+        """Get all StepExecutionResults for a DAG.
+
+        Args:
+            dag_id: ID of the DAG.
+
+        Returns:
+            Dict mapping node IDs to StepExecutionResults.
+        """
+        return self._execution_results.get(dag_id, {}).copy()
+
+    def clear_execution_results(self, dag_id: str) -> None:
+        """Clear execution results for a DAG.
+
+        Args:
+            dag_id: ID of the DAG.
+        """
+        self._execution_results.pop(dag_id, None)
 
 
 async def default_dag_handler(task_type: str, payload: dict[str, Any]) -> Any:
