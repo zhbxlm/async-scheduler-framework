@@ -1,0 +1,96 @@
+"""Service composition helpers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from async_scheduler.core.consumer import TaskConsumer
+from async_scheduler.dag import DAGEngine
+from async_scheduler.executor import TaskExecutor, default_task_handler
+from async_scheduler.platform.callback import CallbackDispatcher
+from async_scheduler.platform.completion import TaskCompletionNode
+from async_scheduler.platform.handlers import RegistryDagHandler, RegistryTaskHandler
+from async_scheduler.platform.quota import TenantQuotaManager
+from async_scheduler.platform.reconciler import TaskReconciler
+from async_scheduler.platform.router import TaskRouter
+from async_scheduler.queue import QueueManager
+from async_scheduler.registry import CapabilityRegistry
+from async_scheduler.scheduler import CronScheduler
+from async_scheduler.worker import create_default_workers, WorkerPool
+
+
+@dataclass
+class ServiceContainer:
+    queue_manager: QueueManager
+    task_executor: TaskExecutor
+    dag_engine: DAGEngine
+    task_router: TaskRouter
+    callback_dispatcher: CallbackDispatcher
+    completion_node: TaskCompletionNode
+    quota_manager: TenantQuotaManager
+    registry: CapabilityRegistry
+    task_consumer: TaskConsumer
+    cron_scheduler: CronScheduler
+    worker_pool: WorkerPool
+    task_handler: RegistryTaskHandler
+    dag_handler: RegistryDagHandler
+    reconciler: TaskReconciler
+
+
+async def _build_default_registry() -> CapabilityRegistry:
+    registry = CapabilityRegistry()
+    registry.register("default", default_task_handler, description="Default async task handler", tags=["default"])
+    registry.register("echo", default_task_handler, description="Echo capability", tags=["utility"])
+    registry.register("compute", default_task_handler, description="Compute capability", tags=["math"])
+    registry.register("io", default_task_handler, description="I/O capability", tags=["io"])
+    registry.register("email", default_task_handler, description="Email capability", tags=["notify"])
+    return registry
+
+
+async def build_service_container() -> ServiceContainer:
+    queue_manager = QueueManager()
+    task_executor = TaskExecutor()
+    dag_engine = DAGEngine()
+    quota_manager = TenantQuotaManager()
+    task_router = TaskRouter(queue_manager, quota_manager=quota_manager)
+    callback_dispatcher = CallbackDispatcher()
+    completion_node = TaskCompletionNode(callback_dispatcher)
+    registry = await _build_default_registry()
+    reconciler = TaskReconciler()
+
+    task_handler = RegistryTaskHandler(registry)
+    dag_handler = RegistryDagHandler(registry)
+
+    task_consumer = TaskConsumer(
+        queue_manager=queue_manager,
+        executor=task_executor,
+        handler=task_handler,
+        max_concurrent_tasks=10,
+        poll_interval=1.0,
+        quota_manager=quota_manager,
+        completion_node=completion_node,
+    )
+
+    cron_scheduler = CronScheduler(
+        queue_manager=queue_manager,
+        poll_interval=60.0,
+    )
+
+    worker_pool = WorkerPool(create_default_workers(queue_manager, task_executor, num_workers=1))
+
+    return ServiceContainer(
+        queue_manager=queue_manager,
+        task_executor=task_executor,
+        dag_engine=dag_engine,
+        task_router=task_router,
+        callback_dispatcher=callback_dispatcher,
+        completion_node=completion_node,
+        quota_manager=quota_manager,
+        registry=registry,
+        task_consumer=task_consumer,
+        cron_scheduler=cron_scheduler,
+        worker_pool=worker_pool,
+        task_handler=task_handler,
+        dag_handler=dag_handler,
+        reconciler=reconciler,
+    )
