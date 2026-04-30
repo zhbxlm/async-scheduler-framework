@@ -21,14 +21,15 @@
 async_scheduler/
   api/           # FastAPI 应用
   cli/           # CLI 入口
+  backends/      # Backend 抽象层（支持内存/Redis 等可插拔存储）🆕
   core/          # 核心模型与 consumer
   dag/           # DAG 引擎 / loader / step executors
   executor/      # 任务执行器
   persistence/   # SQLAlchemy + repository
   platform/      # router / quota / completion / reconciler / handlers
-  queue/         # 优先级队列
+  queue/         # 优先级队列（Backend 抽象）
   registry/      # capability registry
-  scheduler/     # cron scheduler + schedule registry
+  scheduler/     # cron scheduler + schedule registry（Backend 抽象）
   worker/        # worker 抽象与示例
 tests/           # pytest 测试
 examples/        # demo 文档
@@ -194,3 +195,52 @@ curl -X POST http://127.0.0.1:8000/reconciler/run
 ## 当前状态
 
 这是一个 **已经基本可用的本地异步调度框架基线仓库**，适合继续做二次开发与逐步向 deepwiki 核心架构收敛。
+
+## Backend 抽象层（Batch 1 - 已实现）
+
+框架现在引入了 **Backend 抽象层**，为分布式 deepwiki 架构的对齐做准备。当前实现支持：
+
+### 抽象接口
+
+- **QueueBackend** - 任务队列后端抽象
+  - `enqueue()` / `dequeue()` / `peek()` / `cancel()` / `update_priority()`
+  - 支持优先级队列和延时任务
+  - 当前实现：`InMemoryQueueBackend`（使用 `asyncio.PriorityQueue`）
+
+- **LockBackend** - 分布式锁后端抽象
+  - `acquire()` / `release()` / `extend()` / `is_locked()`
+  - 当前实现：`InMemoryLockBackend`（使用 `asyncio.Lock`）
+
+- **RegistryBackend** - 调度注册表后端抽象
+  - `create()` / `get()` / `list_active()` / `list_ready()`
+  - `advance_next_fire()` / `pause()` / `resume()`
+  - 当前实现：`InMemoryRegistryBackend`（使用 SQLite 持久化）
+
+### 使用方式
+
+```python
+from async_scheduler.backends import BackendConfig, BackendFactory
+
+# 使用默认内存后端（当前行为）
+from async_scheduler.platform import build_service_container
+services = await build_service_container()
+
+# 配置自定义后端（未来支持 Redis 等）
+config = BackendConfig(
+    queue_type="redis",  # 未来支持
+    lock_type="redis",   # 未来支持
+    registry_type="postgres",  # 未来支持
+    queue_config={"url": "redis://localhost:6379"},
+)
+services = await build_service_container(backend_config=config)
+```
+
+### DeepWiki 分布式对齐路线图
+
+| 阶段 | 状态 | 内容 |
+|------|------|------|
+| **Batch 1** | ✅ 已完成 | Backend 抽象层 + 内存实现，保持现有 API/CLI 行为不变 |
+| **Batch 2** | 🔜 待实现 | Redis 后端实现（Queue, Lock） |
+| **Batch 3** | 🔜 待实现 | PostgreSQL 后端实现（Registry） |
+| **Batch 4** | 🔜 待实现 | 分布式协调器（Raft/Paxos 共识） |
+| **Batch 5** | 🔜 待实现 | ResourceManager / NodeAgent 集成 |

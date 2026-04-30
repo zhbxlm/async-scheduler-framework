@@ -1,9 +1,16 @@
-"""Service composition helpers."""
+"""Service composition helpers.
+
+This module provides a factory for creating the service container that wires
+together all scheduler components. The service container now supports
+pluggable backends for distributed scheduler support (Batch 1 of the
+deepwiki distributed-alignment roadmap).
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from async_scheduler.backends import BackendConfig, BackendFactory, QueueBackend
 from async_scheduler.core.consumer import TaskConsumer
 from async_scheduler.dag import DAGEngine
 from async_scheduler.executor import TaskExecutor, default_task_handler
@@ -47,8 +54,35 @@ async def _build_default_registry() -> CapabilityRegistry:
     return registry
 
 
-async def build_service_container() -> ServiceContainer:
-    queue_manager = QueueManager()
+async def build_service_container(
+    backend_config: BackendConfig | None = None,
+) -> ServiceContainer:
+    """Build the service container with optional backend configuration.
+
+    This factory function creates all the services needed for the scheduler,
+    optionally using configured backends for queue, lock, and registry operations.
+
+    Args:
+        backend_config: Optional backend configuration. If None, uses default
+            in-memory backends (maintaining current behavior).
+
+    Returns:
+        A fully configured ServiceContainer instance.
+    """
+    # Create backends if config is provided, otherwise use defaults
+    if backend_config is not None:
+        factory = BackendFactory(backend_config)
+        queue_backend = factory.create_queue_backend()
+        # Note: Lock backend is available but not yet wired into the core flow
+        # This is prepared for future distributed use cases
+        # lock_backend = factory.create_lock_backend()
+        # Note: Registry backend is currently created by ScheduleRegistry directly
+        # This is prepared for future configuration flexibility
+    else:
+        # Use default in-memory backend for queue
+        queue_backend = None  # QueueManager will create InMemoryQueueBackend
+
+    queue_manager = QueueManager(backend=queue_backend)
     task_executor = TaskExecutor()
     dag_engine = DAGEngine()
     quota_manager = TenantQuotaManager()

@@ -2,46 +2,89 @@
 
 This is a local/SQLite-backed counterpart of the deepwiki ScheduleRegistry,
 introduced to keep lifecycle logic separate from CronScheduler.
+
+This module now uses pluggable backends (RegistryBackend) to enable
+distributed scheduler support while maintaining backward compatibility
+with the existing SQLite-based implementation.
+
+This is part of the deepwiki distributed-alignment roadmap (Batch 1).
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from croniter import croniter
-
+from async_scheduler.backends import InMemoryRegistryBackend, RegistryBackend
 from async_scheduler.core.models import Schedule, ScheduleCreate
-from async_scheduler.persistence import ScheduleRepository, get_session_no_context
 
 
 class ScheduleRegistry:
-    """Registry facade for schedule lifecycle operations."""
+    """Registry facade for schedule lifecycle operations using pluggable backends.
+
+    The ScheduleRegistry provides a unified interface for schedule operations
+    while delegating storage and retrieval to a RegistryBackend. By default,
+    it uses an InMemoryRegistryBackend (which internally uses SQLite).
+
+    Args:
+        backend: RegistryBackend instance. If None, creates an InMemoryRegistryBackend.
+    """
+
+    def __init__(self, backend: RegistryBackend | None = None) -> None:
+        """Initialize the registry with a backend."""
+        self._backend: RegistryBackend = backend or InMemoryRegistryBackend()
+
 
     async def create(self, schedule_create: ScheduleCreate) -> Schedule:
-        async with await get_session_no_context() as session:
-            created = await ScheduleRepository.create(session, schedule_create)
-            return created
+        """Create a new schedule.
+
+        Delegates to the underlying backend.
+
+        Args:
+            schedule_create: Schedule creation data.
+
+        Returns:
+            The created schedule.
+        """
+        return await self._backend.create(schedule_create)
 
     async def get(self, schedule_id: str) -> Schedule | None:
-        async with await get_session_no_context() as session:
-            return await ScheduleRepository.get(session, schedule_id)
+        """Get a schedule by ID.
+
+        Delegates to the underlying backend.
+
+        Args:
+            schedule_id: ID of the schedule.
+
+        Returns:
+            The schedule, or None if not found.
+        """
+        return await self._backend.get(schedule_id)
 
     async def list_active(self, limit: int = 100) -> list[Schedule]:
-        async with await get_session_no_context() as session:
-            return await ScheduleRepository.list_active(session, limit=limit)
+        """List all active schedules.
+
+        Delegates to the underlying backend.
+
+        Args:
+            limit: Maximum number of schedules to return.
+
+        Returns:
+            List of active schedules.
+        """
+        return await self._backend.list_active(limit)
 
     async def list_ready(self, now: datetime | None = None) -> list[Schedule]:
-        now = now or datetime.utcnow()
-        schedules = await self.list_active(limit=1000)
-        ready: list[Schedule] = []
-        for schedule in schedules:
-            if schedule.next_run_at is None:
-                next_fire = croniter(schedule.cron_expression, now).get_next(datetime)
-                await self.advance_next_fire(schedule.id, next_fire, last_triggered_at=schedule.last_run_at)
-                continue
-            if schedule.next_run_at <= now:
-                ready.append(schedule)
-        return ready
+        """Get schedules due for execution.
+
+        Delegates to the underlying backend.
+
+        Args:
+            now: Current time for comparison. Defaults to current UTC time.
+
+        Returns:
+            List of schedules ready to fire.
+        """
+        return await self._backend.list_ready(now)
 
     async def advance_next_fire(
         self,
@@ -50,31 +93,55 @@ class ScheduleRegistry:
         *,
         last_triggered_at: datetime | None,
     ) -> Schedule | None:
-        async with await get_session_no_context() as session:
-            return await ScheduleRepository.update(
-                session,
-                schedule_id,
-                next_run_at=next_fire_at,
-                last_run_at=last_triggered_at,
-            )
+        """Update schedule timing after trigger.
+
+        Delegates to the underlying backend.
+
+        Args:
+            schedule_id: ID of the schedule.
+            next_fire_at: Next scheduled execution time.
+            last_triggered_at: Last execution time.
+
+        Returns:
+            Updated schedule, or None if not found.
+        """
+        return await self._backend.advance_next_fire(
+            schedule_id, next_fire_at, last_triggered_at=last_triggered_at
+        )
 
     async def pause(self, schedule_id: str) -> Schedule | None:
-        async with await get_session_no_context() as session:
-            from async_scheduler.core.models import ScheduleStatus
+        """Pause a schedule.
 
-            return await ScheduleRepository.update(session, schedule_id, status=ScheduleStatus.PAUSED)
+        Delegates to the underlying backend.
+
+        Args:
+            schedule_id: ID of the schedule.
+
+        Returns:
+            Updated schedule, or None if not found.
+        """
+        return await self._backend.pause(schedule_id)
 
     async def resume(self, schedule_id: str) -> Schedule | None:
-        async with await get_session_no_context() as session:
-            from async_scheduler.core.models import ScheduleStatus
+        """Resume a paused schedule.
 
-            schedule = await ScheduleRepository.get(session, schedule_id)
-            if schedule is None:
-                return None
-            next_fire = croniter(schedule.cron_expression, datetime.utcnow()).get_next(datetime)
-            return await ScheduleRepository.update(
-                session,
-                schedule_id,
-                status=ScheduleStatus.ACTIVE,
-                next_run_at=next_fire,
-            )
+        Delegates to the underlying backend.
+
+        Args:
+            schedule_id: ID of the schedule.
+
+        Returns:
+            Updated schedule, or None if not found.
+        """
+        return await self._backend.resume(schedule_id)
+
+    @property
+    def backend(self) -> RegistryBackend:
+        """Get the underlying backend instance.
+
+        This property allows direct access to the backend for advanced use cases.
+
+        Returns:
+            The RegistryBackend instance.
+        """
+        return self._backend

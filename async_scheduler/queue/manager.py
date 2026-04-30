@@ -1,170 +1,168 @@
-"""Queue manager for task prioritization and scheduling."""
+"""Queue manager for task prioritization and scheduling.
 
-import asyncio
-from collections import defaultdict
-from dataclasses import dataclass, field
+The QueueManager provides a facade over pluggable backend implementations,
+allowing the scheduler to use different storage mechanisms (in-memory, Redis, etc.)
+without changing the application code.
+
+This is part of the deepwiki distributed-alignment roadmap (Batch 1).
+"""
+
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.backends import InMemoryQueueBackend, QueueBackend
+from async_scheduler.core.models import Task, TaskPriority
+
+if TYPE_CHECKING:
+    from async_scheduler.backends.base import QueueItem
+
+__all__ = ["QueueManager", "QueueItem"]
 
 
-@dataclass(order=True)
-class QueueItem:
-    """A single item in the priority queue."""
-
-    priority: int = field(compare=True)
-    created_at: datetime = field(compare=True)
-    task: Task = field(compare=False)
+# Re-export QueueItem from backends for backward compatibility
+from async_scheduler.backends.base import QueueItem  # noqa: E402
 
 
 class QueueManager:
-    """Manages task queues with priority support."""
+    """Manages task queues with priority support using pluggable backends.
 
-    def __init__(self) -> None:
-        """Initialize the queue manager."""
-        self._queues: defaultdict[int, asyncio.PriorityQueue[QueueItem]] = defaultdict(
-            lambda: asyncio.PriorityQueue()
-        )
-        self._scheduled_tasks: dict[str, asyncio.TimerHandle] = {}
-        self._task_lookup: dict[str, QueueItem] = {}
-        self._lock = asyncio.Lock()
+    The QueueManager provides a unified interface for task queuing operations
+    while delegating the actual storage and execution to a QueueBackend.
+    By default, it uses an in-memory backend for local deployment.
+
+    Args:
+        backend: QueueBackend instance. If None, creates an InMemoryQueueBackend.
+    """
+
+    def __init__(self, backend: QueueBackend | None = None) -> None:
+        """Initialize the queue manager with a backend."""
+        self._backend: QueueBackend = backend or InMemoryQueueBackend()
+
 
     async def enqueue(self, task: Task, scheduled_at: datetime | None = None) -> None:
-        """Add a task to the appropriate queue."""
-        async with self._lock:
-            if scheduled_at and scheduled_at > datetime.utcnow():
-                # Schedule for later execution
-                self._schedule_task(task, scheduled_at)
-            else:
-                # Add to immediate queue based on priority
-                item = QueueItem(
-                    priority=task.priority.value,
-                    created_at=task.created_at,
-                    task=task,
-                )
-                await self._queues[task.priority.value].put(item)
-                self._task_lookup[task.id] = item
+        """Add a task to the appropriate queue.
 
-    def _schedule_task(self, task: Task, scheduled_at: datetime) -> None:
-        """Schedule a task for future execution."""
+        Delegates to the underlying backend.
 
-        async def _execute_scheduled() -> None:
-            try:
-                # Update scheduled_at and enqueue
-                await self.enqueue(task, None)
-            except Exception:
-                pass  # Task might have been cancelled
-
-        delay = (scheduled_at - datetime.utcnow()).total_seconds()
-        if delay > 0:
-            handle = asyncio.get_event_loop().call_later(delay, lambda: asyncio.create_task(_execute_scheduled()))
-            self._scheduled_tasks[task.id] = handle
+        Args:
+            task: The task to enqueue.
+            scheduled_at: Optional future execution time.
+        """
+        await self._backend.enqueue(task, scheduled_at)
 
     async def dequeue(self, timeout: float | None = None) -> Task | None:
-        """Get the next highest priority task."""
-        # Check queues in priority order (highest first)
-        for priority in sorted(self._queues.keys(), reverse=True):
-            queue = self._queues[priority]
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=timeout)
-                self._task_lookup.pop(item.task.id, None)
-                return item.task
-            except asyncio.TimeoutError:
-                continue
-        return None
+        """Get the next highest priority task.
+
+        Delegates to the underlying backend.
+
+        Args:
+            timeout: Maximum time to wait for a task.
+
+        Returns:
+            The next task, or None if timeout expires.
+        """
+        return await self._backend.dequeue(timeout)
 
     async def peek(self, limit: int = 10) -> list[Task]:
-        """Peek at the next tasks without removing them."""
-        tasks: list[Task] = []
+        """Peek at the next tasks without removing them.
 
-        for priority in sorted(self._queues.keys(), reverse=True):
-            queue = self._queues[priority]
-            size = queue.qsize()
+        Delegates to the underlying backend.
 
-            # Create a temporary queue for peeking
-            temp_items: list[QueueItem] = []
+        Args:
+            limit: Maximum number of tasks to return.
 
-            for _ in range(min(size, limit - len(tasks))):
-                item = queue.get_nowait()
-                tasks.append(item.task)
-                temp_items.append(item)
-
-            # Put items back
-            for item in temp_items:
-                queue.put_nowait(item)
-
-            if len(tasks) >= limit:
-                break
-
-        return tasks
+        Returns:
+            List of upcoming tasks.
+        """
+        return await self._backend.peek(limit)
 
     async def cancel(self, task_id: str) -> bool:
-        """Cancel a scheduled or queued task."""
-        async with self._lock:
-            # Cancel scheduled task
-            if task_id in self._scheduled_tasks:
-                handle = self._scheduled_tasks.pop(task_id)
-                handle.cancel()
-                return True
+        """Cancel a scheduled or queued task.
 
-            # Remove from queue
-            if task_id in self._task_lookup:
-                item = self._task_lookup.pop(task_id)
-                # Mark as cancelled in the item's task
-                item.task.status = TaskStatus.CANCELLED
-                # We can't easily remove from PriorityQueue, so we'll skip it when dequeuing
-                return True
+        Delegates to the underlying backend.
 
-            return False
+        Args:
+            task_id: ID of the task to cancel.
+
+        Returns:
+            True if cancelled, False if not found.
+        """
+        return await self._backend.cancel(task_id)
 
     async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
-        """Update a task's priority in the queue."""
-        async with self._lock:
-            if task_id not in self._task_lookup:
-                return False
+        """Update a task's priority in the queue.
 
-            old_item = self._task_lookup.pop(task_id)
-            old_item.task.priority = new_priority
+        Delegates to the underlying backend.
 
-            new_item = QueueItem(
-                priority=new_priority.value,
-                created_at=old_item.created_at,
-                task=old_item.task,
-            )
+        Args:
+            task_id: ID of the task to update.
+            new_priority: New priority level.
 
-            await self._queues[new_priority.value].put(new_item)
-            self._task_lookup[task_id] = new_item
-
-            return True
+        Returns:
+            True if updated, False if not found.
+        """
+        return await self._backend.update_priority(task_id, new_priority)
 
     async def size(self) -> dict[int, int]:
-        """Get the size of each priority queue."""
-        sizes: dict[int, int] = {}
-        for priority, queue in self._queues.items():
-            sizes[priority] = queue.qsize()
-        return sizes
+        """Get the size of each priority queue.
+
+        Delegates to the underlying backend.
+
+        Returns:
+            Dict mapping priority levels to queue sizes.
+        """
+        return await self._backend.size()
 
     async def clear(self) -> None:
-        """Clear all queues."""
-        async with self._lock:
-            for handle in self._scheduled_tasks.values():
-                handle.cancel()
-            self._scheduled_tasks.clear()
-            self._task_lookup.clear()
+        """Clear all queues.
 
-            for queue in self._queues.values():
-                while not queue.empty():
-                    queue.get_nowait()
+        Delegates to the underlying backend.
+        """
+        await self._backend.clear()
 
     def is_scheduled(self, task_id: str) -> bool:
-        """Check if a task is scheduled for future execution."""
-        return task_id in self._scheduled_tasks
+        """Check if a task is scheduled for future execution.
+
+        Delegates to the underlying backend.
+
+        Args:
+            task_id: ID of the task to check.
+
+        Returns:
+            True if the task is scheduled, False otherwise.
+        """
+        return self._backend.is_scheduled(task_id)
 
     def get_scheduled_count(self) -> int:
-        """Get the count of scheduled tasks."""
-        return len(self._scheduled_tasks)
+        """Get the count of scheduled tasks.
+
+        Delegates to the underlying backend.
+
+        Returns:
+            Number of tasks scheduled for future execution.
+        """
+        return self._backend.get_scheduled_count()
 
     def get_queue_count(self) -> int:
-        """Get the total count of tasks in queues."""
-        return sum(queue.qsize() for queue in self._queues.values())
+        """Get the total count of tasks in queues.
+
+        Delegates to the underlying backend.
+
+        Returns:
+            Total number of tasks in immediate queues.
+        """
+        return self._backend.get_queue_count()
+
+    @property
+    def backend(self) -> QueueBackend:
+        """Get the underlying backend instance.
+
+        This property allows direct access to the backend for advanced use cases.
+
+        Returns:
+            The QueueBackend instance.
+        """
+        return self._backend
+
