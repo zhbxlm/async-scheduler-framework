@@ -187,6 +187,12 @@ class ScheduleRepository:
         db_schedule = result.scalar_one_or_none()
         return Schedule.model_validate(db_schedule) if db_schedule else None
 
+    @staticmethod
+    async def delete(session: AsyncSession, schedule_id: str) -> bool:
+        """Delete a schedule."""
+        result = await session.execute(delete(ScheduleORM).where(ScheduleORM.id == schedule_id))
+        return result.rowcount > 0
+
 
 class DAGRepository:
     """Repository for DAG operations."""

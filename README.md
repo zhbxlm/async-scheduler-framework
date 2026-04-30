@@ -72,6 +72,14 @@ async-scheduler dev --init-db
 pytest -q
 ```
 
+### 6. 运行烟雾测试
+
+烟雾测试用于验证框架的核心功能是否正常工作：
+
+```bash
+python -m scripts.smoke_test
+```
+
 ## 常用 CLI
 
 ### 创建任务
@@ -196,7 +204,7 @@ curl -X POST http://127.0.0.1:8000/reconciler/run
 
 这是一个 **已经基本可用的本地异步调度框架基线仓库**，适合继续做二次开发与逐步向 deepwiki 核心架构收敛。
 
-## Backend 抽象层（Batch 1 - 已实现）
+## Backend 抽象层（Batch 1 - 已完成）
 
 框架现在引入了 **Backend 抽象层**，为分布式 deepwiki 架构的对齐做准备。当前实现支持：
 
@@ -235,12 +243,126 @@ config = BackendConfig(
 services = await build_service_container(backend_config=config)
 ```
 
-### DeepWiki 分布式对齐路线图
+## StepExecutors 增强（Batch 2 - 已完成）
+
+Batch 2 加强了 StepExecutors 组件，使其成为 DAG 执行的核心：
+
+### 新增功能
+
+- **ExecutionStatus** - 步骤执行状态枚举（pending, running, completed, failed, timeout, cancelled）
+- **StepExecutionResult** - 包含状态、值、错误、执行时间等详细信息的执行结果
+- **ExecutionMetrics** - 跟踪成功率和平均执行时间
+- **异步执行支持** - `get_async_result()` 和 `cancel_execution()` 用于管理异步执行
+- **指标收集** - 可选的执行指标跟踪
+
+### 使用示例
+
+```python
+from async_scheduler.dag import StepExecutors, ExecutionMode, StepExecutionContext
+
+executors = StepExecutors(enable_metrics=True)
+
+# 执行步骤
+ctx = StepExecutionContext(
+    task_type="my_task",
+    payload={"data": "value"},
+    timeout_seconds=30,
+)
+
+result = await executors.execute(ExecutionMode.SYNC, ctx, handler)
+print(f"Status: {result.status}, Value: {result.value}, Duration: {result.duration_ms}ms")
+
+# 获取指标
+metrics = executors.get_metrics()
+print(f"Success rate: {metrics.get_success_rate()}%")
+```
+
+## ScheduleRegistry 生命周期扩展（Batch 2 - 已完成）
+
+Batch 2 扩展了 ScheduleRegistry 的生命周期控制能力：
+
+### 新增操作
+
+- `delete(schedule_id)` - 删除调度
+- `update(schedule_id, **updates)` - 更新调度属性
+- `pause_all(tenant_id=None)` - 批量暂停（可选租户范围）
+- `resume_all(tenant_id=None)` - 批量恢复（可选租户范围）
+- `delete_all(tenant_id=None, status=None)` - 批量删除
+- `get_count(status=None)` - 按状态计数
+- `exists(schedule_id)` - 检查调度是否存在
+- `get_by_name(name, tenant_id=None)` - 按名称查找
+
+## 平台组件集成（Batch 3 - 已完成）
+
+Batch 3 加强了 TaskCompletionNode 和 TaskReconciler 作为平台组件的集成：
+
+### TaskCompletionNode
+
+- **CompletionMetrics** - 跟踪完成统计和回调成功率
+- **Completion Handlers** - 注册自定义完成处理逻辑
+- **改进的错误处理** - 更好的日志记录和错误跟踪
+
+### TaskReconciler
+
+- **ReconciliationConfig** - 可配置的修复行为
+- **ReconciliationMetrics** - 详细的修复统计
+- **RepairStrategy** - 支持多种修复策略（mark_failed, requeue, ignore）
+- **Reconciliation Handlers** - 注册自定义修复处理逻辑
+- **孤立任务检测** - 检测长时间处于 queued 状态的任务
+
+### CapabilityRegistry
+
+- **增强的元数据** - 版本、作者、schema、时间戳
+- **启用/禁用** - 在不注销的情况下禁用能力
+- **使用跟踪** - 执行次数和最后执行时间
+- **标签搜索** - 按标签发现能力
+- **指标** - 注册表级别统计信息
+
+### 使用示例
+
+```python
+from async_scheduler.platform import (
+    TaskCompletionNode, TaskReconciler,
+    ReconciliationConfig, RepairStrategy,
+    CapabilityRegistry
+)
+
+# 创建增强的组件
+completion_node = TaskCompletionNode(enable_metrics=True)
+
+# 配置 reconciler
+reconciler = TaskReconciler(
+    config=ReconciliationConfig(
+        stuck_after_seconds=3600,
+        repair_strategy=RepairStrategy.MARK_FAILED,
+    ),
+    completion_node=completion_node,
+)
+
+# 注册处理程序
+def on_task_completed(task):
+    print(f"Task {task.id} completed with status {task.status}")
+
+completion_node.register_completion_handler(TaskStatus.SUCCESS, on_task_completed)
+
+# 增强的 capability registry
+registry = CapabilityRegistry()
+registry.register(
+    "my_capability",
+    handler,
+    description="My custom capability",
+    version="1.0.0",
+    tags=["custom", "v1"],
+    enabled=True,
+)
+```
+
+## DeepWiki 分布式对齐路线图
 
 | 阶段 | 状态 | 内容 |
 |------|------|------|
 | **Batch 1** | ✅ 已完成 | Backend 抽象层 + 内存实现，保持现有 API/CLI 行为不变 |
-| **Batch 2** | 🔜 待实现 | Redis 后端实现（Queue, Lock） |
-| **Batch 3** | 🔜 待实现 | PostgreSQL 后端实现（Registry） |
-| **Batch 4** | 🔜 待实现 | 分布式协调器（Raft/Paxos 共识） |
-| **Batch 5** | 🔜 待实现 | ResourceManager / NodeAgent 集成 |
+| **Batch 2** | ✅ 已完成 | StepExecutors 增强 + ScheduleRegistry 生命周期扩展 |
+| **Batch 3** | ✅ 已完成 | TaskCompletionNode/TaskReconciler 集成 + CapabilityRegistry 增强 |
+| **Batch 4** | ✅ 已完成 | 可用性硬化：文档完善、API 补充、操作验证 |
+| **未来** | 🔜 待规划 | Redis 后端实现、PostgreSQL 后端实现、分布式协调器 |

@@ -221,7 +221,7 @@ class InMemoryLockBackend(LockBackend):
 
             # Set up TTL if specified
             if ttl:
-                handle.expires_at = datetime.utcnow() + datetime.timedelta(seconds=ttl)
+                handle.expires_at = datetime.utcnow() + timedelta(seconds=ttl)
 
             self._locks[key] = (inner_lock, handle)
 
@@ -276,7 +276,7 @@ class InMemoryLockBackend(LockBackend):
                 return False  # Not the holder of this lock
 
             # Update expiration
-            stored_handle.expires_at = datetime.utcnow() + datetime.timedelta(seconds=ttl)
+            stored_handle.expires_at = datetime.utcnow() + timedelta(seconds=ttl)
 
             # Note: In a real distributed backend, this would also
             # update the TTL on the actual lock mechanism

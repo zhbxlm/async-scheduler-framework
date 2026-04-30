@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
 
@@ -49,9 +50,6 @@ class CompletionMetrics:
         if self.callback_dispatches == 0:
             return 0.0
         return ((self.callback_dispatches - self.callback_failures) / self.callback_dispatches) * 100
-
-
-from dataclasses import dataclass
 
 
 class TaskCompletionNode:
