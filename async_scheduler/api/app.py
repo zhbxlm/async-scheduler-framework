@@ -387,7 +387,18 @@ async def quota_stats():
 async def reconciler_stats():
     if not services:
         raise HTTPException(status_code=503, detail="Services not available")
-    return services.reconciler.stats()
+    metrics = services.reconciler.get_metrics()
+    return {
+        "total_runs": metrics.total_runs,
+        "stuck_tasks_found": metrics.stuck_tasks_found,
+        "tasks_repaired": metrics.tasks_repaired,
+        "tasks_ignored": metrics.tasks_ignored,
+        "tasks_requeued": metrics.tasks_requeued,
+        "last_run_at": metrics.last_run_at,
+        "last_repaired_count": metrics.last_repaired_count,
+        "repair_rate": metrics.get_repair_rate(),
+        "running": services.reconciler.is_running(),
+    }
 
 
 @app.post("/reconciler/run")
@@ -402,7 +413,10 @@ async def run_reconciler_once():
 async def list_capabilities():
     if not services:
         raise HTTPException(status_code=503, detail="Services not available")
-    return {"items": [item.model_dump() for item in services.registry.list_capability_info()]}
+    return {
+        "items": [item.model_dump() for item in services.registry.list_capability_info()],
+        "metrics": services.registry.get_metrics(),
+    }
 
 
 @app.get("/capabilities/{capability_name}")

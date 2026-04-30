@@ -5,8 +5,13 @@ from async_scheduler.platform.callback import CallbackDispatcher
 from async_scheduler.platform.services import ServiceContainer, build_service_container
 from async_scheduler.platform.quota import QuotaExceededError, TenantQuotaManager
 from async_scheduler.platform.handlers import RegistryDagHandler, RegistryTaskHandler
-from async_scheduler.platform.completion import TaskCompletionNode
-from async_scheduler.platform.reconciler import TaskReconciler
+from async_scheduler.platform.completion import CompletionMetrics, TaskCompletionNode
+from async_scheduler.platform.reconciler import (
+    ReconciliationConfig,
+    ReconciliationMetrics,
+    RepairStrategy,
+    TaskReconciler,
+)
 
 __all__ = [
     "TaskRouter",
@@ -18,5 +23,9 @@ __all__ = [
     "RegistryTaskHandler",
     "RegistryDagHandler",
     "TaskCompletionNode",
+    "CompletionMetrics",
     "TaskReconciler",
+    "ReconciliationConfig",
+    "ReconciliationMetrics",
+    "RepairStrategy",
 ]

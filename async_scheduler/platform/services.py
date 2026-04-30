@@ -4,6 +4,11 @@ This module provides a factory for creating the service container that wires
 together all scheduler components. The service container now supports
 pluggable backends for distributed scheduler support (Batch 1 of the
 deepwiki distributed-alignment roadmap).
+
+Batch 3 enhancements:
+- Integrated enhanced TaskCompletionNode with TaskReconciler
+- Integrated enhanced StepExecutors with DAGEngine
+- Integrated enhanced CapabilityRegistry with handlers
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from dataclasses import dataclass
 
 from async_scheduler.backends import BackendConfig, BackendFactory, QueueBackend
 from async_scheduler.core.consumer import TaskConsumer
-from async_scheduler.dag import DAGEngine
+from async_scheduler.dag import DAGEngine, StepExecutors
 from async_scheduler.executor import TaskExecutor, default_task_handler
 from async_scheduler.platform.callback import CallbackDispatcher
 from async_scheduler.platform.completion import TaskCompletionNode
@@ -42,6 +47,7 @@ class ServiceContainer:
     task_handler: RegistryTaskHandler
     dag_handler: RegistryDagHandler
     reconciler: TaskReconciler
+    step_executors: StepExecutors
 
 
 async def _build_default_registry() -> CapabilityRegistry:
@@ -82,19 +88,29 @@ async def build_service_container(
         # Use default in-memory backend for queue
         queue_backend = None  # QueueManager will create InMemoryQueueBackend
 
+    # Create enhanced components (Batch 3)
+    step_executors = StepExecutors(enable_metrics=True)
+    callback_dispatcher = CallbackDispatcher()
+    completion_node = TaskCompletionNode(callback_dispatcher, enable_metrics=True)
+    registry = await _build_default_registry()
+
+    # Create queue and engine
     queue_manager = QueueManager(backend=queue_backend)
+    dag_engine = DAGEngine(step_executors=step_executors)
+
+    # Create other services
     task_executor = TaskExecutor()
-    dag_engine = DAGEngine()
     quota_manager = TenantQuotaManager()
     task_router = TaskRouter(queue_manager, quota_manager=quota_manager)
-    callback_dispatcher = CallbackDispatcher()
-    completion_node = TaskCompletionNode(callback_dispatcher)
-    registry = await _build_default_registry()
-    reconciler = TaskReconciler()
 
+    # Create handlers
     task_handler = RegistryTaskHandler(registry)
     dag_handler = RegistryDagHandler(registry)
 
+    # Create reconciler with completion node integration (Batch 3)
+    reconciler = TaskReconciler(completion_node=completion_node)
+
+    # Create task consumer with completion node
     task_consumer = TaskConsumer(
         queue_manager=queue_manager,
         executor=task_executor,
@@ -105,11 +121,13 @@ async def build_service_container(
         completion_node=completion_node,
     )
 
+    # Create cron scheduler
     cron_scheduler = CronScheduler(
         queue_manager=queue_manager,
         poll_interval=60.0,
     )
 
+    # Create worker pool
     worker_pool = WorkerPool(create_default_workers(queue_manager, task_executor, num_workers=1))
 
     return ServiceContainer(
@@ -127,4 +145,5 @@ async def build_service_container(
         task_handler=task_handler,
         dag_handler=dag_handler,
         reconciler=reconciler,
+        step_executors=step_executors,
     )
