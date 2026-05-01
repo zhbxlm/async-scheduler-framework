@@ -68,3 +68,24 @@ curl http://127.0.0.1:8000/capabilities
 ```bash
 curl -X POST http://127.0.0.1:8000/reconciler/run
 ```
+
+## 8. Redis 过渡态测试入口
+
+如果你在推进当前仓库的 Redis 过渡态分布式能力，可以直接运行：
+
+```bash
+pytest -q tests/integration/test_real_redis_coordination.py
+pytest -q tests/integration/test_real_redis_coordination_more.py
+pytest -q tests/integration/test_real_redis_recovery_invariants.py
+```
+
+如果环境中可用 `fakeredis.aioredis`，还可以额外运行：
+
+```bash
+pytest -q tests/integration/test_fakeredis_coordination.py
+```
+
+说明：
+- 上述测试主要验证 queue / lock / worker registry / completion dedupe 的 Redis 过渡态协调路径
+- `test_fakeredis_coordination.py` 在缺少对应 fakeredis 模块时会自动 skip
+- 当前这些测试是 distributed transition validation，不等于生产级 live Redis 验证

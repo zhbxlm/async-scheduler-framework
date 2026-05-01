@@ -34,6 +34,7 @@ dependencies = [
     "click>=8.1.0",
     "python-dotenv>=1.0.0",
     "PyYAML>=6.0.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,7 @@ dev = [
     "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.6.0",
+    "fakeredis>=2.23.0",
 ]
 
 [project.scripts]

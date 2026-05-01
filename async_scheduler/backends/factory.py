@@ -10,16 +10,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, model_validator
+
 from async_scheduler.backends.base import LockBackend, QueueBackend, RegistryBackend
 from async_scheduler.backends.memory import (
     InMemoryLockBackend,
     InMemoryQueueBackend,
     InMemoryRegistryBackend,
 )
+from async_scheduler.backends.redis import RedisQueueBackend
 
 
-@dataclass
-class BackendConfig:
+class BackendConfig(BaseModel):
     """Configuration for backend selection and initialization.
 
     This configuration allows users to select different backend implementations
@@ -30,20 +32,49 @@ class BackendConfig:
         queue_type: Type of queue backend ("memory" for in-memory, "redis" for Redis, etc.)
         lock_type: Type of lock backend ("memory" for in-memory, "redis" for Redis, etc.)
         registry_type: Type of registry backend ("memory" for in-memory/SQLite, etc.)
+        redis_url: Shared Redis connection URL for distributed-mode scaffolding.
+        lease_ttl_seconds: Default task lease TTL for distributed execution.
+        heartbeat_interval_seconds: Worker heartbeat interval in distributed mode.
         queue_config: Additional configuration for queue backend.
         lock_config: Additional configuration for lock backend.
         registry_config: Additional configuration for registry backend.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     queue_type: str = "memory"
     lock_type: str = "memory"
     registry_type: str = "memory"
+    redis_url: str | None = None
+    lease_ttl_seconds: float = 30.0
+    heartbeat_interval_seconds: float = 10.0
     queue_config: dict[str, Any] = field(default_factory=dict)
     lock_config: dict[str, Any] = field(default_factory=dict)
     registry_config: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def distributed_mode(self) -> bool:
+        return any(backend_type == "redis" for backend_type in (self.queue_type, self.lock_type))
+
+    @model_validator(mode="after")
+    def validate_distributed_settings(self) -> "BackendConfig":
+        if self.distributed_mode and not self.redis_url:
+            raise ValueError("redis_url is required when using Redis backends")
+
+        self.queue_config = self._merge_redis_defaults(self.queue_config)
+        self.lock_config = self._merge_redis_defaults(self.lock_config)
+        return self
+
+    def _merge_redis_defaults(self, config: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(config)
+        if self.redis_url:
+            merged.setdefault("redis_url", self.redis_url)
+        merged.setdefault("lease_ttl_seconds", self.lease_ttl_seconds)
+        merged.setdefault("heartbeat_interval_seconds", self.heartbeat_interval_seconds)
+        return merged
+
     @classmethod
-    def default(cls) -> BackendConfig:
+    def default(cls) -> "BackendConfig":
         """Create default configuration with in-memory backends."""
         return cls()
 
@@ -77,9 +108,10 @@ class BackendFactory:
         if backend_type == "memory":
             return InMemoryQueueBackend()
 
+        if backend_type == "redis":
+            return RedisQueueBackend(**self._config.queue_config)
+
         # Future implementations:
-        # elif backend_type == "redis":
-        #     return RedisQueueBackend(**self._config.queue_config)
         # elif backend_type == "rabbitmq":
         #     return RabbitMQQueueBackend(**self._config.queue_config)
 
@@ -96,9 +128,9 @@ class BackendFactory:
         if backend_type == "memory":
             return InMemoryLockBackend()
 
-        # Future implementations:
-        # elif backend_type == "redis":
-        #     return RedisLockBackend(**self._config.lock_config)
+        if backend_type == "redis":
+            from async_scheduler.backends.redis import RedisLockBackend
+            return RedisLockBackend(**self._config.lock_config)
 
         raise ValueError(f"Unknown lock backend type: {backend_type}")
 

@@ -23,6 +23,7 @@ from async_scheduler.backends.memory import (
     InMemoryQueueBackend,
     InMemoryRegistryBackend,
 )
+from async_scheduler.backends.redis import RedisLockBackend, RedisQueueBackend
 
 __all__ = [
     # Abstract base classes
@@ -36,6 +37,8 @@ __all__ = [
     "InMemoryQueueBackend",
     "InMemoryLockBackend",
     "InMemoryRegistryBackend",
+    "RedisQueueBackend",
+    "RedisLockBackend",
     # Factory
     "BackendFactory",
     "BackendConfig",

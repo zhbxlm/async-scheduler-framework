@@ -1,6 +1,8 @@
 # Async Scheduler Framework
 
-一个本地可运行的异步调度框架 MVP，参考 ray-amu deepwiki 的能力边界，提供：
+一个本地可运行并已演进到 **分布式执行内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
+
+> 当前仓库已具备 **Redis transition-state distributed kernel semantics**：包括 queue、lease、worker heartbeat、execution attempts、completion idempotency、distributed reconciler 和 multi-worker / recovery 测试覆盖。当前状态不是纯 stand-in：queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径，并有 shared-client integration 与 recovery invariant 测试保护；但它也还不是生产级真实 Redis 方案，Lua/CAS 级原子化与 live Redis integration 仍未完成。
 
 - FastAPI 任务 API
 - SQLite 持久化
@@ -79,6 +81,39 @@ pytest -q
 ```bash
 python -m scripts.smoke_test
 ```
+
+> 当前 `scripts/smoke_test.py` 主要覆盖内存模式和基础框架可用性；Redis 过渡态验证请使用下面的 integration tests。
+
+### 7. 运行 Redis 过渡态集成测试
+
+当前仓库支持一组“real Redis transition state”测试：
+
+```bash
+pytest -q tests/integration/test_real_redis_coordination.py
+pytest -q tests/integration/test_real_redis_coordination_more.py
+pytest -q tests/integration/test_real_redis_recovery_invariants.py
+```
+
+如果环境里安装了 `fakeredis` 且其 `fakeredis.aioredis` 可用，还可以运行：
+
+```bash
+pytest -q tests/integration/test_fakeredis_coordination.py
+```
+
+若 `fakeredis.aioredis` 不可用，该测试会自动 skip，这是预期行为。
+
+### 8. 运行 distributed smoke test
+
+仓库还提供了一个 dedicated distributed smoke variant：
+
+```bash
+python3 scripts/distributed_smoke_test.py
+```
+
+它会：
+- 默认跑 shared fake async Redis client 的协调链 smoke
+- 如果环境中可用 `fakeredis.aioredis`，再追加跑一层 fakeredis compatibility smoke
+- 在缺少 fakeredis 模块时以 skip 方式降级，而不是报错失败
 
 ## 常用 CLI
 
@@ -202,7 +237,25 @@ curl -X POST http://127.0.0.1:8000/reconciler/run
 
 ## 当前状态
 
-这是一个 **已经基本可用的本地异步调度框架基线仓库**，适合继续做二次开发与逐步向 deepwiki 核心架构收敛。
+这是一个 **已经具备分布式执行、幂等收敛与恢复语义，并进入 partial real Redis-backed transition state 的调度内核骨架仓库**，适合继续做二次开发，并进一步向真实 Redis-backed 的 deepwiki 风格分布式架构收敛。
+
+### Real Redis Transition State
+
+当前以下组件已支持真实 async Redis client 注入路径：
+- `RedisQueueBackend`
+- `RedisLockBackend`
+- `RedisCompletionDedupBackend`
+- `WorkerRegistry`
+
+当前已补的验证包括：
+- 单组件 real-Redis-path 测试
+- shared fake-client coordination integration tests
+- recovery / invariant tests
+- lock compare-and-act safety tests
+- queue concurrency invariant tests
+- full regression: `pytest -q` → 101 passed
+
+这意味着当前仓库已经不是“只有 Redis-shaped 接口”，而是已经具备一条可测试的真实 Redis 过渡路径。
 
 ## Backend 抽象层（Batch 1 - 已完成）
 
@@ -235,12 +288,20 @@ services = await build_service_container()
 
 # 配置自定义后端（未来支持 Redis 等）
 config = BackendConfig(
-    queue_type="redis",  # 未来支持
-    lock_type="redis",   # 未来支持
-    registry_type="postgres",  # 未来支持
-    queue_config={"url": "redis://localhost:6379"},
+    queue_type="redis",
+    lock_type="redis",
+    registry_type="memory",
+    redis_url="redis://localhost:6379/0",
+    lease_ttl_seconds=30,
+    heartbeat_interval_seconds=10,
 )
 services = await build_service_container(backend_config=config)
+
+# 当前阶段说明：
+# - 这会启用 distributed_settings 配置通路
+# - 当前 queue/lock/completion dedupe/worker registry 已支持真实 async Redis client 路径
+# - 若环境未提供 redis client / live backend，仍可退回测试友好的 fallback 语义
+# - 生产级 live Redis 部署与 Lua/CAS 原子语义仍在后续阶段
 ```
 
 ## StepExecutors 增强（Batch 2 - 已完成）

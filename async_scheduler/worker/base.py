@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -25,7 +26,7 @@ class Worker(ABC):
     ) -> None:
         """Initialize the worker."""
         self.name = name
-        self.worker_id = worker_id or f"{name}-{id(self)}"
+        self.worker_id = worker_id or f"{name}-{uuid.uuid4().hex[:12]}"
         self._running = False
         self._task: asyncio.Task[None] | None = None
 

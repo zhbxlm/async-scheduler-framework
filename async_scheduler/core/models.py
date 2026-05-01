@@ -23,6 +23,17 @@ class TaskStatus(str, Enum):
     RETRY = "retry"
 
 
+class ExecutionAttemptStatus(str, Enum):
+    """Distributed execution-attempt status."""
+
+    CLAIMED = "claimed"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    ABANDONED = "abandoned"
+
+
 class TaskPriority(int, Enum):
     """Task priority levels."""
 
@@ -48,7 +59,7 @@ class DAGExecutionStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    PARTIAL = "partial"  # Some steps succeeded, some failed
+    PARTIAL = "partial"
 
 
 class TaskBase(BaseModel):
@@ -99,6 +110,37 @@ class TaskUpdate(BaseModel):
     result: dict[str, Any] | None = None
 
 
+class ExecutionAttemptBase(BaseModel):
+    """Base execution-attempt model."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    task_id: str
+    worker_id: str
+    retry_index: int = Field(default=0, ge=0)
+    lease_token: str
+
+
+class ExecutionAttempt(ExecutionAttemptBase):
+    """Full execution-attempt model."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    status: ExecutionAttemptStatus = ExecutionAttemptStatus.CLAIMED
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
+    error_message: str | None = None
+    result_payload: dict[str, Any] | None = None
+
+
+class ExecutionAttemptCreate(ExecutionAttemptBase):
+    """Execution-attempt creation request."""
+
+    pass
+
+
 class ScheduleBase(BaseModel):
     """Base schedule model."""
 
@@ -136,14 +178,14 @@ class DAGNode(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    task_type: str  # Type identifier for worker routing
+    task_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    dependencies: list[str] = Field(default_factory=list)  # Node IDs this depends on
-    condition: str | None = None  # Python expression for conditional execution
+    dependencies: list[str] = Field(default_factory=list)
+    condition: str | None = None
     retry_count: int = 0
     max_retries: int = 3
     timeout_seconds: int = 300
-    on_failure: str = "fail"  # "fail", "skip", "fallback"
+    on_failure: str = "fail"
     fallback_payload: dict[str, Any] | None = None
 
 
@@ -183,7 +225,7 @@ class DAG(DAGBase):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     node_executions: dict[str, DAGNodeExecution] = Field(default_factory=dict)
-    context: dict[str, Any] = Field(default_factory=dict)  # Shared execution context
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class DAGCreate(DAGBase):

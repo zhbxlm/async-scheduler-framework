@@ -310,6 +310,16 @@ class InMemoryRegistryBackend(RegistryBackend):
         async with await get_session_no_context() as session:
             return await ScheduleRepository.list_active(session, limit=limit)
 
+    async def update(self, schedule_id: str, **kwargs) -> Schedule | None:
+        """Update a schedule."""
+        async with await get_session_no_context() as session:
+            return await ScheduleRepository.update(session, schedule_id, **kwargs)
+
+    async def delete(self, schedule_id: str) -> bool:
+        """Delete a schedule."""
+        async with await get_session_no_context() as session:
+            return await ScheduleRepository.delete(session, schedule_id)
+
     async def list_ready(self, now: datetime | None = None) -> list[Schedule]:
         """Get schedules due for execution."""
         now = now or datetime.utcnow()

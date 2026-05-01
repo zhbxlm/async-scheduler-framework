@@ -24,8 +24,9 @@ class TestTaskLifecycle:
     @pytest_asyncio.fixture
     async def db_session(self):
         """Create a database session for tests."""
-        from async_scheduler.persistence import get_session_no_context, init_db
+        from async_scheduler.persistence import drop_db, get_session_no_context, init_db
 
+        await drop_db()
         await init_db()
 
         async with await get_session_no_context() as session:

@@ -3,20 +3,12 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    DateTime,
-    Enum as SQLEnum,
-    Integer,
-    String,
-    Text,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import JSON, Boolean, DateTime, Enum as SQLEnum, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from async_scheduler.core.models import (
     DAGExecutionStatus,
+    ExecutionAttemptStatus,
     ScheduleStatus,
     TaskPriority,
     TaskStatus,
@@ -65,6 +57,26 @@ class TaskORM(Base):
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class ExecutionAttemptORM(Base):
+    """Execution attempt ORM model."""
+
+    __tablename__ = "execution_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    worker_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    status: Mapped[ExecutionAttemptStatus] = mapped_column(SQLEnum(ExecutionAttemptStatus), nullable=False)
+    retry_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ScheduleORM(Base):
@@ -124,5 +136,4 @@ class DAGExecutionORM(Base):
 
 
 if TYPE_CHECKING:
-    # For type checking, expose relationships
     pass

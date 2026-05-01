@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from async_scheduler.backends import BackendConfig, BackendFactory, QueueBackend
+from async_scheduler.backends import BackendConfig, BackendFactory
 from async_scheduler.core.consumer import TaskConsumer
 from async_scheduler.dag import DAGEngine, StepExecutors
+from async_scheduler.distributed import WorkerRegistry
 from async_scheduler.executor import TaskExecutor, default_task_handler
 from async_scheduler.platform.callback import CallbackDispatcher
 from async_scheduler.platform.completion import TaskCompletionNode
@@ -28,7 +29,14 @@ from async_scheduler.platform.router import TaskRouter
 from async_scheduler.queue import QueueManager
 from async_scheduler.registry import CapabilityRegistry
 from async_scheduler.scheduler import CronScheduler
-from async_scheduler.worker import create_default_workers, WorkerPool
+from async_scheduler.worker import WorkerPool, create_default_workers
+
+
+@dataclass(frozen=True)
+class DistributedSettings:
+    redis_url: str
+    lease_ttl_seconds: float
+    heartbeat_interval_seconds: float
 
 
 @dataclass
@@ -48,6 +56,8 @@ class ServiceContainer:
     dag_handler: RegistryDagHandler
     reconciler: TaskReconciler
     step_executors: StepExecutors
+    distributed_settings: DistributedSettings | None = None
+    worker_registry: WorkerRegistry | None = None
 
 
 async def _build_default_registry() -> CapabilityRegistry:
@@ -63,54 +73,44 @@ async def _build_default_registry() -> CapabilityRegistry:
 async def build_service_container(
     backend_config: BackendConfig | None = None,
 ) -> ServiceContainer:
-    """Build the service container with optional backend configuration.
+    """Build the service container with optional backend configuration."""
+    distributed_settings: DistributedSettings | None = None
+    worker_registry: WorkerRegistry | None = None
 
-    This factory function creates all the services needed for the scheduler,
-    optionally using configured backends for queue, lock, and registry operations.
-
-    Args:
-        backend_config: Optional backend configuration. If None, uses default
-            in-memory backends (maintaining current behavior).
-
-    Returns:
-        A fully configured ServiceContainer instance.
-    """
-    # Create backends if config is provided, otherwise use defaults
     if backend_config is not None:
         factory = BackendFactory(backend_config)
-        queue_backend = factory.create_queue_backend()
-        # Note: Lock backend is available but not yet wired into the core flow
-        # This is prepared for future distributed use cases
-        # lock_backend = factory.create_lock_backend()
-        # Note: Registry backend is currently created by ScheduleRegistry directly
-        # This is prepared for future configuration flexibility
+        if backend_config.distributed_mode:
+            distributed_settings = DistributedSettings(
+                redis_url=backend_config.redis_url or "",
+                lease_ttl_seconds=backend_config.lease_ttl_seconds,
+                heartbeat_interval_seconds=backend_config.heartbeat_interval_seconds,
+            )
+            queue_backend = factory.create_queue_backend()
+            worker_registry = WorkerRegistry(
+                redis_url=distributed_settings.redis_url,
+                heartbeat_ttl_seconds=distributed_settings.heartbeat_interval_seconds * 2,
+            )
+        else:
+            queue_backend = factory.create_queue_backend()
     else:
-        # Use default in-memory backend for queue
-        queue_backend = None  # QueueManager will create InMemoryQueueBackend
+        queue_backend = None
 
-    # Create enhanced components (Batch 3)
     step_executors = StepExecutors(enable_metrics=True)
     callback_dispatcher = CallbackDispatcher()
     completion_node = TaskCompletionNode(callback_dispatcher, enable_metrics=True)
     registry = await _build_default_registry()
 
-    # Create queue and engine
     queue_manager = QueueManager(backend=queue_backend)
     dag_engine = DAGEngine(step_executors=step_executors)
 
-    # Create other services
     task_executor = TaskExecutor()
     quota_manager = TenantQuotaManager()
     task_router = TaskRouter(queue_manager, quota_manager=quota_manager)
 
-    # Create handlers
     task_handler = RegistryTaskHandler(registry)
     dag_handler = RegistryDagHandler(registry)
-
-    # Create reconciler with completion node integration (Batch 3)
     reconciler = TaskReconciler(completion_node=completion_node)
 
-    # Create task consumer with completion node
     task_consumer = TaskConsumer(
         queue_manager=queue_manager,
         executor=task_executor,
@@ -121,13 +121,11 @@ async def build_service_container(
         completion_node=completion_node,
     )
 
-    # Create cron scheduler
     cron_scheduler = CronScheduler(
         queue_manager=queue_manager,
         poll_interval=60.0,
     )
 
-    # Create worker pool
     worker_pool = WorkerPool(create_default_workers(queue_manager, task_executor, num_workers=1))
 
     return ServiceContainer(
@@ -146,4 +144,6 @@ async def build_service_container(
         dag_handler=dag_handler,
         reconciler=reconciler,
         step_executors=step_executors,
+        distributed_settings=distributed_settings,
+        worker_registry=worker_registry,
     )
