@@ -201,17 +201,53 @@ class DAGEngine:
                 dag_id=dag.id,
             )
 
-            # Execute using StepExecutors
-            result = await self._step_executors.execute(
-                execution_mode,
-                step_ctx,
-                handler,
-            )
+            # Execute using StepExecutors — with retry support (Bug1 fix)
+            last_error: str | None = None
+            result = None
+            max_attempts = max(1, node.max_retries + 1)
+            for attempt in range(max_attempts):
+                try:
+                    result = await self._step_executors.execute(
+                        execution_mode,
+                        step_ctx,
+                        handler,
+                    )
+                    if result.status.value == "completed":
+                        break  # success, stop retrying
+                    if result.status.value in ("timeout", "cancelled"):
+                        break  # non-retryable
+                    # failed result — retry if attempts remain
+                    last_error = result.error or "Unknown error"
+                    if attempt < max_attempts - 1:
+                        import random as _random
+                        wait = min(2 ** attempt, 30) + _random.uniform(0, 0.5)
+                        logger.warning(
+                            "DAGEngine: node=%s attempt=%d/%d failed, retrying in %.1fs: %s",
+                            node.id, attempt + 1, max_attempts, wait, last_error,
+                        )
+                        execution.retry_count = attempt + 1
+                        await asyncio.sleep(wait)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    last_error = str(exc)
+                    if attempt < max_attempts - 1:
+                        import random as _random
+                        wait = min(2 ** attempt, 30) + _random.uniform(0, 0.5)
+                        logger.warning(
+                            "DAGEngine: node=%s attempt=%d/%d raised, retrying in %.1fs: %s",
+                            node.id, attempt + 1, max_attempts, wait, exc,
+                        )
+                        execution.retry_count = attempt + 1
+                        await asyncio.sleep(wait)
+                    else:
+                        raise  # exhausted retries — propagate to outer except
 
             # Store execution result
             if dag.id not in self._execution_results:
-                self._execution_results[dag.id] = {}
-            self._execution_results[dag.id][node.id] = result
+                self._execution_results[dag.id] = {}  
+            if result is not None:
+                self._execution_results[dag.id][node.id] = result
 
             # Map StepExecutionResult to TaskStatus
             if result.status.value == "completed":
@@ -243,8 +279,13 @@ class DAGEngine:
                     execution.skipped = True
                     execution.skip_reason = "Node failed with on_failure=skip"
                 elif node.on_failure == "fallback" and node.fallback_payload:
-                    # Store fallback result in context
+                    # Bug2 fix: fallback means "treat as success with fallback data"
+                    # Mark as skipped (SUCCESS-equivalent) so downstream can proceed
                     dag.context.update(node.fallback_payload)
+                    execution.result = node.fallback_payload
+                    execution.status = TaskStatus.SUCCESS
+                    execution.skipped = True
+                    execution.skip_reason = f"fallback applied after {execution.error_message}"
 
         except asyncio.CancelledError:
             execution.status = TaskStatus.CANCELLED
@@ -262,8 +303,12 @@ class DAGEngine:
                 execution.skipped = True
                 execution.skip_reason = "Node failed with on_failure=skip"
             elif node.on_failure == "fallback" and node.fallback_payload:
-                # Store fallback result in context
+                # Bug2 fix: apply fallback data, mark as SUCCESS/skipped so downstream proceeds
                 dag.context.update(node.fallback_payload)
+                execution.result = node.fallback_payload
+                execution.status = TaskStatus.SUCCESS
+                execution.skipped = True
+                execution.skip_reason = f"fallback applied after exception: {e}"
 
         finally:
             # G5: release capability concurrency slot and record result for circuit breaker
