@@ -278,6 +278,27 @@ Recent commits:
 Recent regression:
 - **16 passed, 1 skipped**
 
+### Latest addition (final push)
+This final push adds:
+
+- **multi-control-point partition-like simulation**
+  - Sequential failure across lock, dedupe, and registry control points
+  - Validates best-effort continuation and recovery
+
+- **delayed promotion under concurrent load**
+  - 10 tasks with identical scheduled time
+  - Verifies concurrent promotion and consumption semantics
+  - Ensures no task loss or duplication
+
+- **DAG branch semantics refinement**
+  - Partial branch success with downstream cancellation vs. failure interplay
+  - Fan-out/fan-in with failure propagation
+  - Long-running branch cancellation + sibling success preservation
+
+Latest regression:
+- **14 passed** in failure recovery suite
+- **14 passed** in DAG engine suite
+
 ---
 
 ## Final PR body (CN)

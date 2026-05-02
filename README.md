@@ -351,6 +351,10 @@ curl http://127.0.0.1:8000/debug/leases/<task_id>
 - 单元测试与普通集成测试
 - shared-client / fallback Redis integration tests
 - live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证
+- control-point transient failure hardening (lock/queue/registry/completion/worker)
+- DAG 分支语义（fan-out/fan-in / partial success / cancellation-failure interplay）
+- delayed promotion under concurrent load
+- multi-control-point partition-like simulation
 - multi-worker overlap / dead-owner recovery / delayed promotion 验证
 - finalize / callback / reconciler overlap fault-injection tests
 - control-point failure hardening for heartbeat / completion dedupe / reconciler liveness lookup / requeue enqueue paths
