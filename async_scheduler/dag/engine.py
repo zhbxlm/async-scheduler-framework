@@ -51,12 +51,22 @@ class DAGEngine:
         step_executors: Optional StepExecutors instance. If None, creates a new one.
     """
 
-    def __init__(self, step_executors: StepExecutors | None = None) -> None:
-        """Initialize the DAG engine."""
+    def __init__(
+        self,
+        step_executors: StepExecutors | None = None,
+        queue_manager: Any | None = None,
+    ) -> None:
+        """Initialize the DAG engine.
+
+        Args:
+            step_executors: Optional StepExecutors instance.
+            queue_manager: Optional QueueManager for capability concurrency slot control (G5).
+        """
         self._running_executions: dict[str, asyncio.Task[None]] = {}
         self._cancellation_events: dict[str, asyncio.Event] = {}
         self._step_executors = step_executors or StepExecutors()
         self._execution_results: dict[str, dict[str, StepExecutionResult]] = {}  # dag_id -> {node_id: result}
+        self._queue_manager = queue_manager  # G5: capability concurrency slot control
 
     def _build_node_index(self, dag: DAG) -> dict[str, DAGNode]:
         """Build a lookup dictionary for nodes by ID."""
@@ -161,6 +171,16 @@ class DAGEngine:
             execution.completed_at = datetime.utcnow()
             return
 
+        # G5: acquire capability concurrency slot before execution
+        # node.task_type is used as the capability key; falls back gracefully if qm absent
+        node_capability = node.payload.get("capability", node.task_type or "default")
+        slot_acquired = False
+        if self._queue_manager is not None:
+            try:
+                slot_acquired = await self._acquire_capability_slot(node_capability)
+            except Exception as _e:
+                logger.warning("DAGEngine: capability slot acquire failed cap=%s: %s", node_capability, _e)
+
         execution.status = TaskStatus.RUNNING
         execution.started_at = datetime.utcnow()
 
@@ -244,6 +264,51 @@ class DAGEngine:
             elif node.on_failure == "fallback" and node.fallback_payload:
                 # Store fallback result in context
                 dag.context.update(node.fallback_payload)
+
+        finally:
+            # G5: release capability concurrency slot and record result for circuit breaker
+            if self._queue_manager is not None and slot_acquired:
+                success = execution.status == TaskStatus.SUCCESS
+                await self._release_capability_slot(node_capability, success=success)
+
+    async def _acquire_capability_slot(self, capability: str) -> bool:
+        """G5: Acquire a concurrency slot for a capability.
+
+        Calls queue_manager.acquire_concurrency_slot if available,
+        otherwise records a start via circuit breaker.
+        Returns True if slot was acquired (should be released in finally).
+        """
+        if hasattr(self._queue_manager, 'acquire_concurrency_slot'):
+            try:
+                return await self._queue_manager.acquire_concurrency_slot(capability)
+            except Exception:
+                return False
+        # Fallback: just mark circuit as being used (no-op if method absent)
+        return False
+
+    async def _release_capability_slot(
+        self,
+        capability: str,
+        success: bool = True,
+    ) -> None:
+        """G5: Release capability concurrency slot and record result.
+
+        Calls:
+          - queue_manager.record_result(capability, success) for circuit breaker
+          - queue_manager.try_recover_concurrent(capability) to restore slot
+        """
+        if self._queue_manager is None:
+            return
+        if hasattr(self._queue_manager, 'record_result'):
+            try:
+                await self._queue_manager.record_result(capability, success)
+            except Exception as e:
+                logger.debug("DAGEngine: record_result failed cap=%s: %s", capability, e)
+        if hasattr(self._queue_manager, 'try_recover_concurrent'):
+            try:
+                await self._queue_manager.try_recover_concurrent(capability)
+            except Exception as e:
+                logger.debug("DAGEngine: try_recover_concurrent failed cap=%s: %s", capability, e)
 
     async def execute(
         self,

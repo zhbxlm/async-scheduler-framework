@@ -278,6 +278,94 @@ DELAYED_PROMOTE_SCRIPT = dedent(
     """
 ).strip()
 
+# G6: Lua script for atomic time-gated promotion of delayed tasks
+# Reads delayed ZSET by score <= now, parses wrapped payload, promotes to
+# capability pending ZSET and updates task_data hash atomically.
+DELAYED_PROMOTE_CAP_SCRIPT = dedent(
+    """
+    -- KEYS[1] = delayed_key (global delayed ZSET)
+    -- KEYS[2] = cap_registry_key (capabilities:registry Set)
+    -- KEYS[3] = scheduled_set_key
+    -- ARGV[1] = now_ts (unix seconds float as string)
+    -- ARGV[2] = ts_ms (current timestamp in ms)
+    -- ARGV[3] = capability filter ("*" = all, else exact match)
+    local delayed_key      = KEYS[1]
+    local cap_registry_key = KEYS[2]
+    local scheduled_set    = KEYS[3]
+    local now_ts           = tonumber(ARGV[1])
+    local ts_ms            = tonumber(ARGV[2])
+    local cap_filter       = ARGV[3]
+
+    -- Get all tasks with scheduled_at <= now
+    local due = redis.call('ZRANGEBYSCORE', delayed_key, '-inf', now_ts, 'WITHSCORES')
+    local promoted = 0
+
+    local i = 1
+    while i <= #due do
+        local payload = due[i]
+        -- expected format: JSON with {"capability": "...", "task": {...}}
+        -- extract capability via simple string search (no cjson on all Redis versions)
+        local cap_start = payload:find('"capability":') 
+        local cap = 'default'
+        if cap_start then
+            local val_start = payload:find('"', cap_start + 13) + 1
+            local val_end   = payload:find('"', val_start) - 1
+            if val_start and val_end then
+                cap = payload:sub(val_start, val_end)
+            end
+        end
+
+        -- Apply capability filter
+        if cap_filter == '*' or cap_filter == cap then
+            -- Extract task_id: find "id":"..."
+            local id_start = payload:find('"id":"')
+            local task_id  = ''
+            if id_start then
+                local vs = payload:find('"', id_start + 6) + 1
+                local ve = payload:find('"', vs) - 1
+                if vs and ve then
+                    task_id = payload:sub(vs, ve)
+                end
+            end
+
+            if task_id ~= '' then
+                -- Build capability-specific keys (namespace prefix from task data)
+                -- We pass pending_key and task_data_key as dynamic from ARGV to keep script generic.
+                -- Instead, the caller passes namespace prefix in ARGV[4] so we can build keys.
+                local ns = ARGV[4] or 'async-scheduler'
+                local pending_key   = ns .. ':' .. cap .. ':pending'
+                local task_data_key = ns .. ':' .. cap .. ':task_data'
+                local stats_key     = ns .. ':' .. cap .. ':stats'
+
+                -- Decode priority_rank from task JSON (default 3 = NORMAL)
+                local pri_rank = 3
+                local pr_start = payload:find('"priority":')
+                if pr_start then
+                    local pr_num = payload:match('"priority": *([0-9]+)', pr_start)
+                    if pr_num then pri_rank = tonumber(pr_num) end
+                end
+
+                -- score = priority_rank * 10^13 + ts_ms
+                local score = pri_rank * 10000000000000 + ts_ms
+
+                redis.call('HSET', task_data_key, task_id, payload)
+                redis.call('ZADD', pending_key, score, task_id)
+                redis.call('SADD', cap_registry_key, cap)
+                redis.call('HINCRBY', stats_key, 'promote_count', 1)
+                redis.call('ZREM', delayed_key, payload)
+                redis.call('SREM', scheduled_set, task_id)
+
+                promoted = promoted + 1
+            end
+        end
+
+        i = i + 2
+    end
+
+    return promoted
+    """
+).strip()
+
 
 class RedisLockBackend(LockBackend):
     def __init__(
@@ -915,37 +1003,47 @@ class RedisQueueBackend(QueueBackend):
     async def _promote_due_tasks(self, capability: str = "default") -> None:
         now = datetime.utcnow().timestamp()
         if self._client_supports_queue_ops:
-            due_payloads = await self._client.zrangebyscore(self._delayed_key(), float("-inf"), now)
-            for payload in due_payloads:
-                # Try to parse as new-style capability-wrapped payload
-                try:
-                    wrapped = json.loads(payload)
-                    if isinstance(wrapped, dict) and "capability" in wrapped and "task" in wrapped:
-                        cap = wrapped["capability"]
-                        task_payload = json.dumps(wrapped["task"], sort_keys=True)
-                        task = self._deserialize_task(task_payload)
-                        # Only promote tasks matching the requested capability
-                        if capability != "default" and cap != capability:
-                            continue
-                        # Promote to capability pending ZSET
-                        ts_ms = int(now * 1000)
-                        priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
-                        score = priority_rank * (10 ** 13) + ts_ms
-                        pending_key = self._cap_pending_key(cap)
-                        task_data_key = self._cap_task_data_key(cap)
-                        await self._client.sadd(self._cap_registry_key(), cap)
-                        await self._client.hset(task_data_key, task.id, task_payload)
-                        await self._client.zadd(pending_key, {task.id: score})
-                        await self._client.zrem(self._delayed_key(), payload)
-                        await self._client.srem(self._scheduled_set_key, task.id)
-                        continue
-                except (json.JSONDecodeError, KeyError):
-                    pass
-                # Old-style plain task payload
-                task = self._deserialize_task(payload)
-                moved = await self._promote_due_atomic(task.priority.value, payload)
-                if not moved:
-                    continue
+            # G6: Use Lua script for atomic time-gated promotion
+            ts_ms = int(now * 1000)
+            cap_filter = "*" if capability == "default" else capability
+            try:
+                promoted = await self._client.eval(
+                    DELAYED_PROMOTE_CAP_SCRIPT,
+                    3,
+                    self._delayed_key(),
+                    self._cap_registry_key(),
+                    self._scheduled_set_key,
+                    str(now),
+                    str(ts_ms),
+                    cap_filter,
+                    self._namespace,
+                )
+                if promoted:
+                    logger.debug("_promote_due_tasks: promoted %d tasks cap=%s", promoted, capability)
+            except Exception as e:
+                logger.warning("_promote_due_tasks Lua failed, fallback to Python: %s", e)
+                # Fallback: manual Python promotion (non-atomic)
+                due_payloads = await self._client.zrangebyscore(self._delayed_key(), float("-inf"), now)
+                for payload in due_payloads:
+                    try:
+                        wrapped = json.loads(payload)
+                        if isinstance(wrapped, dict) and "capability" in wrapped and "task" in wrapped:
+                            cap = wrapped["capability"]
+                            task_payload = json.dumps(wrapped["task"], sort_keys=True)
+                            task = self._deserialize_task(task_payload)
+                            if cap_filter != "*" and cap != cap_filter:
+                                continue
+                            priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                            score = priority_rank * (10 ** 13) + ts_ms
+                            pending_key = self._cap_pending_key(cap)
+                            task_data_key = self._cap_task_data_key(cap)
+                            await self._client.sadd(self._cap_registry_key(), cap)
+                            await self._client.hset(task_data_key, task.id, task_payload)
+                            await self._client.zadd(pending_key, {task.id: score})
+                            await self._client.zrem(self._delayed_key(), payload)
+                            await self._client.srem(self._scheduled_set_key, task.id)
+                    except (json.JSONDecodeError, KeyError):
+                        pass
             return
         if not self._client_supports_queue_ops:
             due_payloads = [payload for payload, score in self._delayed_store.items() if score <= now]

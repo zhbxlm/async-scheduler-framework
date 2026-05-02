@@ -125,6 +125,12 @@ class TaskConsumer:
             await self._update_task_status(task, TaskStatus.CANCELLED)
             return None
 
+        # G7: if task was in SCHEDULED state (just promoted from delayed queue),
+        # update DB status to QUEUED now that it is actually being consumed.
+        if task.status == TaskStatus.SCHEDULED:
+            async with await get_session_no_context() as _session:
+                task = await TaskRepository.update(_session, task.id, status=TaskStatus.QUEUED) or task
+
         if self._quota_manager is not None:
             try:
                 self._quota_manager.release_queue(task.tenant_id)
