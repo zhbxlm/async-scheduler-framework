@@ -158,6 +158,24 @@ class FailOnceCompletionDedupBackend(CompletionDedupBackend):
         return None
 
 
+class FailOnceWorkerRegistry:
+    def __init__(self, inner: WorkerRegistry) -> None:
+        self._inner = inner
+        self.calls = 0
+
+    async def register(self, info: WorkerInfo):
+        return await self._inner.register(info)
+
+    async def deregister(self, worker_id: str):
+        return await self._inner.deregister(worker_id)
+
+    async def is_live(self, worker_id: str) -> bool:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient worker-registry outage")
+        return await self._inner.is_live(worker_id)
+
+
 @pytest.mark.asyncio
 async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_task() -> None:
     await drop_db()
@@ -622,6 +640,80 @@ async def test_concurrent_reconcile_does_not_double_requeue_same_orphan_task() -
     assert len(repair_history) == 1
     assert repair_history[0]["task_id"] == task.id
     assert repair_history[0]["action"] == "requeue"
+
+
+@pytest.mark.asyncio
+async def test_transient_worker_liveness_lookup_failure_skips_repair_for_safety() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.05,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    raw_worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.1)
+    worker_registry = FailOnceWorkerRegistry(raw_worker_registry)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="transient-worker-registry-failure", payload={}))
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            updated_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-transient-registry",
+                retry_index=0,
+                lease_token="lease-transient-registry",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+
+    await raw_worker_registry.register(WorkerInfo(worker_id="worker-transient-registry", name="transient-registry"))
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+    await asyncio.sleep(0.12)
+    await raw_worker_registry.deregister("worker-transient-registry")
+
+    repaired = await reconciler.reconcile()
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert repaired == 0
+    assert worker_registry.calls >= 1
+    assert final_task is not None
+    assert final_task.status == TaskStatus.RUNNING
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.RUNNING
+    assert await queue_manager.dequeue(timeout=0.01) is None
 
 
 @pytest.mark.asyncio

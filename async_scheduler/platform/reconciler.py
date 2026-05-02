@@ -152,7 +152,15 @@ class TaskReconciler:
 
         worker_live = False
         if self.worker_registry is not None:
-            worker_live = await self.worker_registry.is_live(latest_attempt.worker_id)
+            try:
+                worker_live = await self.worker_registry.is_live(latest_attempt.worker_id)
+            except Exception as exc:
+                logger.warning(
+                    "Worker liveness lookup failed for %s during reconcile; skipping repair for safety: %s",
+                    latest_attempt.worker_id,
+                    exc,
+                )
+                return False
 
         lease_live = False
         if self.lock_backend is not None:
