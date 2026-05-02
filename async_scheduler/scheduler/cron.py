@@ -81,6 +81,8 @@ class CronScheduler:
 
         self._running = True
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        # P1-TODO-7: start leader lease renewal background task
+        self._leader_renew_task: asyncio.Task | None = asyncio.create_task(self._leader_renewal_loop())
         logger.info("Cron scheduler started")
 
     async def stop(self) -> None:
@@ -94,6 +96,14 @@ class CronScheduler:
             self._scheduler_task.cancel()
             try:
                 await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+
+        # P1-TODO-7: stop leader renewal task
+        if hasattr(self, "_leader_renew_task") and self._leader_renew_task:
+            self._leader_renew_task.cancel()
+            try:
+                await self._leader_renew_task
             except asyncio.CancelledError:
                 pass
 
@@ -126,6 +136,36 @@ class CronScheduler:
 
         self._is_leader = False
         return False
+
+    async def _renew_leader_lease(self) -> bool:
+        """Renew leader lease. Returns False if we lost leadership."""
+        if self._redis is None:
+            return True  # in-process mode, always leader
+        key = self._leader_key
+        token = self._instance_id
+        ttl = self._leader_lease_ttl
+        # Only set if key exists AND value matches (xx=True)
+        result = await self._redis.set(key, token, ex=ttl, xx=True)
+        if result is None:
+            # Key expired or taken by another instance
+            self._is_leader = False
+            return False
+        self._is_leader = True
+        return True
+
+    async def _leader_renewal_loop(self) -> None:
+        """Background loop to renew leader lease periodically."""
+        # Renew at 1/3 of TTL to stay well ahead of expiry
+        renew_interval = self._leader_lease_ttl / 3
+        while self._running:
+            await asyncio.sleep(renew_interval)
+            if self._is_leader:
+                renewed = await self._renew_leader_lease()
+                if not renewed:
+                    logger.warning(
+                        "CronScheduler lost leadership, will re-elect on next poll instance_id=%s",
+                        self._instance_id,
+                    )
 
     async def _scheduler_loop(self) -> None:
         """Main scheduler loop with distributed leader election."""

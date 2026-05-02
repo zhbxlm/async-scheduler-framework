@@ -25,12 +25,20 @@ class TaskRouter:
             task = await TaskRepository.create(session, task_create)
             scheduled_at = task.scheduled_at
 
+            # P1-TODO-6: infer capability from task metadata
+            # Checks tags list for items starting with "capability:", else "default"
+            capability = "default"
+            for tag in (task.tags or []):
+                if isinstance(tag, str) and tag.startswith("capability:"):
+                    capability = tag.split(":", 1)[1].strip()
+                    break
+
             if scheduled_at and scheduled_at > datetime.utcnow():
                 task = await TaskRepository.update(session, task.id, status=TaskStatus.QUEUED) or task
-                await self.queue_manager.enqueue(task, scheduled_at=scheduled_at)
+                await self.queue_manager.enqueue(task, scheduled_at=scheduled_at, capability=capability)
             else:
                 task = await TaskRepository.update(session, task.id, status=TaskStatus.QUEUED) or task
-                await self.queue_manager.enqueue(task)
+                await self.queue_manager.enqueue(task, capability=capability)
 
             return task
 

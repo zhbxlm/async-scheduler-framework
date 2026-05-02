@@ -36,6 +36,7 @@ class TaskExecutor:
         self,
         task: Task,
         handler: Callable[[dict[str, Any]], Any],
+        lease_lost_event: asyncio.Event | None = None,
     ) -> ExecutionResult:
         """Execute a task with retries and timeout handling."""
         result = ExecutionResult(success=False)
@@ -72,17 +73,44 @@ class TaskExecutor:
                 self._cancellation_events[task.id] = cancel_event
 
                 cancel_wait_task = asyncio.create_task(cancel_event.wait())
+
+                # P0-TODO-3: also watch for lease_lost_event
+                lease_lost_wait_task: asyncio.Task | None = None
+                if lease_lost_event is not None:
+                    lease_lost_wait_task = asyncio.create_task(lease_lost_event.wait())
+                    wait_set = [wait_task, cancel_wait_task, lease_lost_wait_task]
+                else:
+                    wait_set = [wait_task, cancel_wait_task]
+
                 done, pending = await asyncio.wait(
-                    [wait_task, cancel_wait_task],
+                    wait_set,
                     return_when=asyncio.FIRST_COMPLETED,
                     timeout=task.timeout_seconds,
                 )
+
+                # Check lease_lost first
+                if lease_lost_event is not None and lease_lost_event.is_set():
+                    if not wait_task.done():
+                        wait_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await wait_task
+                    if lease_lost_wait_task and not lease_lost_wait_task.done():
+                        lease_lost_wait_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await lease_lost_wait_task
+                    result.error = RuntimeError("lease_lost")
+                    result.should_retry = False
+                    break
 
                 if cancel_event.is_set() or cancel_wait_task in done:
                     if not wait_task.done():
                         wait_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await wait_task
+                    if lease_lost_wait_task and not lease_lost_wait_task.done():
+                        lease_lost_wait_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await lease_lost_wait_task
                     raise asyncio.CancelledError("Task was cancelled")
 
                 if wait_task.done():
@@ -97,6 +125,10 @@ class TaskExecutor:
                         cancel_wait_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await cancel_wait_task
+                    if lease_lost_wait_task and not lease_lost_wait_task.done():
+                        lease_lost_wait_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await lease_lost_wait_task
                     break
 
                 # Timeout occurred
@@ -108,6 +140,10 @@ class TaskExecutor:
                         cancel_wait_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await cancel_wait_task
+                    if lease_lost_wait_task and not lease_lost_wait_task.done():
+                        lease_lost_wait_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await lease_lost_wait_task
 
                     raise TimeoutError(f"Task timed out after {task.timeout_seconds} seconds")
 

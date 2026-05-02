@@ -75,8 +75,19 @@ class TaskReconciler:
         queue_manager: QueueManager | None = None,
         lock_backend: LockBackend | None = None,
         worker_registry: WorkerRegistry | None = None,
+        stale_ttl_seconds: int | None = None,  # P1-TODO-8: configurable stale TTL
     ) -> None:
         self.config = config or ReconciliationConfig()
+        # P1-TODO-8: override stuck_after_seconds if stale_ttl_seconds provided
+        if stale_ttl_seconds is not None:
+            self.config = ReconciliationConfig(
+                stuck_after_seconds=stale_ttl_seconds,
+                interval_seconds=self.config.interval_seconds,
+                max_tasks_per_run=self.config.max_tasks_per_run,
+                repair_strategy=self.config.repair_strategy,
+                check_timeouts=self.config.check_timeouts,
+                check_orphaned=self.config.check_orphaned,
+            )
         self.completion_node = completion_node
         self.queue_manager = queue_manager
         self.lock_backend = lock_backend

@@ -47,32 +47,51 @@ class InMemoryQueueBackend(QueueBackend):
         self._scheduled_tasks: dict[str, asyncio.TimerHandle] = {}
         self._task_lookup: dict[str, QueueItem] = {}
         self._lock = asyncio.Lock()
+        # Capability-aware state
+        self._capabilities: set[str] = set()
+        self._cap_pending: defaultdict[str, list] = defaultdict(list)  # heap: (score, payload)
+        self._cap_running: defaultdict[str, dict] = defaultdict(dict)  # {cap: {task_id: ts}}
+        self._cap_max_concurrent: dict[str, int] = {}
+        self._cap_stats: defaultdict[str, dict] = defaultdict(lambda: {
+            "enqueue_count": 0, "dequeue_count": 0, "complete_count": 0, "fail_count": 0
+        })
 
     async def enqueue(
-        self, task: Task, scheduled_at: datetime | None = None
+        self, task: Task, scheduled_at: datetime | None = None, capability: str = "default"  # type: ignore[override]
     ) -> None:
         """Add a task to the appropriate queue."""
+        import heapq
+        import time as _time
+        self._capabilities.add(capability)
         async with self._lock:
             if scheduled_at and scheduled_at > datetime.utcnow():
                 # Schedule for later execution
-                self._schedule_task(task, scheduled_at)
+                self._schedule_task(task, scheduled_at, capability=capability)
             else:
-                # Add to immediate queue based on priority
+                # Capability-aware: use score-based heap
+                ts_ms = int(_time.time() * 1000)
+                priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                score = priority_rank * (10 ** 13) + ts_ms
+                import json
+                payload = json.dumps(task.model_dump(mode="json"), sort_keys=True)
+                heapq.heappush(self._cap_pending[capability], (score, payload))
+                self._cap_stats[capability]["enqueue_count"] += 1
+                # Keep task_lookup for cancel() support
                 item = QueueItem(
                     priority=task.priority.value,
                     created_at=task.created_at,
                     task=task,
                 )
-                await self._queues[task.priority.value].put(item)
                 self._task_lookup[task.id] = item
+                # NOTE: do NOT push to self._queues to avoid double-counting in get_queue_count
 
-    def _schedule_task(self, task: Task, scheduled_at: datetime) -> None:
+    def _schedule_task(self, task: Task, scheduled_at: datetime, capability: str = "default") -> None:
         """Schedule a task for future execution."""
 
         async def _execute_scheduled() -> None:
             try:
                 # Update scheduled_at and enqueue
-                await self.enqueue(task, None)
+                await self.enqueue(task, None, capability=capability)
             except Exception:
                 pass  # Task might have been cancelled
 
@@ -83,9 +102,30 @@ class InMemoryQueueBackend(QueueBackend):
             )
             self._scheduled_tasks[task.id] = handle
 
-    async def dequeue(self, timeout: float | None = None) -> Task | None:
+    async def dequeue(self, timeout: float | None = None, capability: str = "default") -> Task | None:  # type: ignore[override]
         """Get the next highest priority task."""
-        # Check queues in priority order (highest first)
+        import heapq, json as _json
+        # Check capability-aware heap first
+        max_concurrent = self._cap_max_concurrent.get(capability)
+        if max_concurrent is not None and len(self._cap_running[capability]) >= max_concurrent:
+            return None
+
+        import time as _time
+        heap = self._cap_pending[capability]
+        if heap:
+            while heap:
+                score, payload = heapq.heappop(heap)
+                task = Task.model_validate(_json.loads(payload))
+                if task.status == TaskStatus.CANCELLED:
+                    self._task_lookup.pop(task.id, None)
+                    continue
+                ts = _time.time()
+                self._cap_running[capability][task.id] = ts
+                self._cap_stats[capability]["dequeue_count"] += 1
+                self._task_lookup.pop(task.id, None)
+                return task
+
+        # Fallback: check legacy queues in priority order (highest first)
         for priority in sorted(self._queues.keys(), reverse=False):
             queue = self._queues[priority]
             try:
@@ -179,6 +219,12 @@ class InMemoryQueueBackend(QueueBackend):
                 while not queue.empty():
                     queue.get_nowait()
 
+            # Clear capability state
+            self._cap_pending.clear()
+            self._cap_running.clear()
+            self._capabilities.clear()
+            self._cap_stats.clear()
+
     def is_scheduled(self, task_id: str) -> bool:
         """Check if a task is scheduled for future execution."""
         return task_id in self._scheduled_tasks
@@ -189,7 +235,58 @@ class InMemoryQueueBackend(QueueBackend):
 
     def get_queue_count(self) -> int:
         """Get the total count of tasks in queues."""
-        return sum(queue.qsize() for queue in self._queues.values())
+        cap_total = sum(len(h) for h in self._cap_pending.values())
+        legacy_total = sum(queue.qsize() for queue in self._queues.values())
+        return cap_total + legacy_total
+
+    async def complete(self, task_id: str, capability: str = "default") -> None:  # type: ignore[override]
+        """Mark a task as completed."""
+        self._cap_running[capability].pop(task_id, None)
+        self._cap_stats[capability]["complete_count"] += 1
+
+    async def fail(self, task_id: str, capability: str = "default") -> None:  # type: ignore[override]
+        """Mark a task as failed."""
+        self._cap_running[capability].pop(task_id, None)
+        self._cap_stats[capability]["fail_count"] += 1
+
+    async def discover_capabilities(self) -> list[str]:
+        """Return all known capability names."""
+        return sorted(self._capabilities)
+
+    async def get_capability_stats(self, capability: str) -> dict:
+        """Return stats for a capability queue."""
+        stats = self._cap_stats[capability]
+        return {
+            "capability": capability,
+            "enqueue_count": stats["enqueue_count"],
+            "dequeue_count": stats["dequeue_count"],
+            "complete_count": stats["complete_count"],
+            "fail_count": stats["fail_count"],
+            "running_count": len(self._cap_running.get(capability, {})),
+            "pending_count": len(self._cap_pending.get(capability, [])),
+        }
+
+    async def get_capability_pending(self, capability: str) -> int:
+        """Return number of pending tasks for a capability."""
+        return len(self._cap_pending.get(capability, []))
+
+    async def get_capability_running(self, capability: str) -> int:
+        """Return number of running tasks for a capability."""
+        return len(self._cap_running.get(capability, {}))
+
+    async def set_max_concurrent(self, capability: str, max_concurrent: int) -> None:
+        """Set max concurrent limit for a capability."""
+        self._cap_max_concurrent[capability] = max_concurrent
+
+    async def cleanup_stale_running(self, capability: str = "default", max_age_seconds: float = 3600.0) -> int:
+        """Remove stale entries from running set."""
+        import time as _time
+        now = _time.time()
+        running = self._cap_running.get(capability, {})
+        stale = [tid for tid, ts in running.items() if now - ts > max_age_seconds]
+        for tid in stale:
+            running.pop(tid, None)
+        return len(stale)
 
 
 class InMemoryLockBackend(LockBackend):

@@ -237,6 +237,12 @@ class QueueManager:
         only tasks for that capability are considered.  Falls back to the global
         ready queue otherwise.
         """
+        cap = capability or "default"
+        if hasattr(self._backend, "dequeue"):
+            import inspect
+            sig = inspect.signature(self._backend.dequeue)
+            if "capability" in sig.parameters:
+                return await self._backend.dequeue(capability=cap, timeout=timeout)
         return await self._backend.dequeue(timeout)
 
     async def dequeue_ready(self, capability: str | None = None) -> Task | None:

@@ -46,6 +46,10 @@ class TaskConsumer:
         self._worker_id = worker_id or "local-worker"
         self._lease_ttl_seconds = lease_ttl_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
+        # P0-TODO-2: round-robin capability index
+        self._cap_idx: int = 0
+        # P0-TODO-3: lease-lost event map
+        self._lease_lost_events: dict[str, asyncio.Event] = {}
 
     async def start(self) -> None:
         if self._running:
@@ -78,7 +82,27 @@ class TaskConsumer:
             if self._executor.get_running_count() >= self._max_concurrent_tasks:
                 await asyncio.sleep(self._poll_interval)
                 continue
-            claimed = await self._claim_next_task(timeout=1.0)
+
+            # P0-TODO-2: Round-robin across known capabilities
+            capabilities = await self._queue_manager.discover_capabilities()
+            if capabilities:
+                cap = capabilities[self._cap_idx % len(capabilities)]
+                self._cap_idx += 1
+                # Periodic per-capability debug logging
+                if self._cap_idx % 50 == 0:
+                    for c in capabilities:
+                        try:
+                            stats = await self._queue_manager.get_capability_stats(c)
+                            logger.debug(
+                                "cap=%s pending=%d running=%d",
+                                c, stats.pending, stats.running,
+                            )
+                        except Exception:
+                            pass
+                claimed = await self._claim_next_task(timeout=0.05, capability=cap)
+            else:
+                claimed = await self._claim_next_task(timeout=1.0)
+
             if claimed is None:
                 await asyncio.sleep(self._poll_interval)
                 continue
@@ -93,8 +117,8 @@ class TaskConsumer:
         await self._process_single_task(task, handle=handle, attempt_id=attempt_id)
         return True
 
-    async def _claim_next_task(self, timeout: float | None = None) -> tuple[Task, LockHandle | None, str | None] | None:
-        task = await self._queue_manager.dequeue(timeout=timeout)
+    async def _claim_next_task(self, timeout: float | None = None, capability: str = "default") -> tuple[Task, LockHandle | None, str | None] | None:
+        task = await self._queue_manager.dequeue(timeout=timeout, capability=capability)
         if task is None:
             return None
         if task.status == TaskStatus.CANCELLED:
@@ -147,21 +171,30 @@ class TaskConsumer:
     async def _process_single_task(self, task: Task, handle: LockHandle | None = None, attempt_id: str | None = None) -> None:
         heartbeat_task: asyncio.Task[None] | None = None
         lease_lost = False
+        # P0-TODO-3: per-task lease-lost event
+        lease_lost_event = asyncio.Event()
+        self._lease_lost_events[task.id] = lease_lost_event
         try:
             if attempt_id is not None and handle is not None and self._lock_backend is not None:
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(handle, attempt_id))
+                heartbeat_task = asyncio.create_task(
+                    self._heartbeat_loop(handle, attempt_id, task_id=task.id)
+                )
 
             async with await get_session_no_context() as session:
                 fresh_task = await TaskRepository.get(session, task.id)
                 if fresh_task and fresh_task.status == TaskStatus.CANCELLED:
                     return
 
-            result = await self._executor.execute(task, self._handler)
+            result = await self._executor.execute(task, self._handler, lease_lost_event=lease_lost_event)
 
             if heartbeat_task is not None and heartbeat_task.done():
                 exc = heartbeat_task.exception()
                 if exc is not None:
                     lease_lost = True
+
+            # Also check lease_lost_event
+            if lease_lost_event.is_set():
+                lease_lost = True
 
             if lease_lost:
                 final_status = TaskStatus.FAILED
@@ -217,14 +250,22 @@ class TaskConsumer:
                 await self._lock_backend.release(handle)
             if self._quota_manager is not None:
                 self._quota_manager.release_running(task.tenant_id)
+            # P0-TODO-3: clean up lease_lost_event
+            self._lease_lost_events.pop(task.id, None)
 
-    async def _heartbeat_loop(self, handle: LockHandle, attempt_id: str) -> None:
+    async def _heartbeat_loop(self, handle: LockHandle, attempt_id: str, task_id: str | None = None) -> None:
         while True:
             await asyncio.sleep(self._heartbeat_interval_seconds)
             if self._lock_backend is not None:
                 extended = await self._lock_backend.extend(handle, ttl=self._lease_ttl_seconds)
                 if not extended:
-                    raise RuntimeError(f"Lost lease for {handle.key}")
+                    # P0-TODO-3: signal via event instead of raising, so executor can interrupt
+                    event = self._lease_lost_events.get(task_id) if task_id else None
+                    if event is not None:
+                        event.set()
+                    else:
+                        raise RuntimeError(f"Lost lease for {handle.key}")
+                    return
             async with get_session() as session:
                 await ExecutionAttemptRepository.update(session, attempt_id, last_heartbeat_at=datetime.utcnow())
 

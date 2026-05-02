@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from textwrap import dedent
@@ -456,7 +455,7 @@ class RedisQueueBackend(QueueBackend):
         self._namespace = namespace
         self._client = client or (Redis.from_url(redis_url, decode_responses=True) if Redis is not None else None)
         self._client_supports_queue_ops = self._client is not None and all(
-            hasattr(self._client, attr) for attr in ("rpush", "lpop", "llen", "zadd", "zrangebyscore", "zrem", "delete", "exists", "scard", "sadd", "srem", "sismember", "zpopmin", "zcard")
+            hasattr(self._client, attr) for attr in ("rpush", "lpop", "llen", "zadd", "zrangebyscore", "zrem", "delete", "exists", "scard", "sadd", "srem", "sismember")
         )
         self._lock = asyncio.Lock()
         self._cancelled_set_key = f"{namespace}:queue:cancelled"
@@ -468,156 +467,43 @@ class RedisQueueBackend(QueueBackend):
         self._cancelled_ids: set[str] = set()
         self._ready_store: defaultdict[int, list[str]] = defaultdict(list)
         self._delayed_store: dict[str, float] = {}
-        # Capability-aware in-process state
-        self._capabilities: set[str] = set()
-        self._cap_pending: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)  # heap: (score, payload)
-        self._cap_running: defaultdict[str, dict[str, float]] = defaultdict(dict)  # {cap: {task_id: ts}}
-        self._cap_max_concurrent: dict[str, int] = {}  # optional per-cap limit
 
-    # ------------------------------------------------------------------
-    # Capability key helpers
-    # ------------------------------------------------------------------
 
-    def _cap_pending_key(self, capability: str) -> str:
-        return f"{self._namespace}:{capability}:pending"
-
-    def _cap_running_key(self, capability: str) -> str:
-        return f"{self._namespace}:{capability}:running"
-
-    def _cap_stats_key(self, capability: str) -> str:
-        return f"{self._namespace}:{capability}:stats"
-
-    def _cap_config_key(self, capability: str) -> str:
-        return f"{self._namespace}:{capability}:config"
-
-    def _cap_registry_key(self) -> str:
-        return f"{self._namespace}:capabilities:registry"
-
-    def _cap_task_data_key(self, capability: str) -> str:
-        return f"{self._namespace}:{capability}:task_data"
-
-    async def enqueue(self, task: Task, scheduled_at: datetime | None = None, capability: str = "default") -> None:  # type: ignore[override]
+    async def enqueue(self, task: Task, scheduled_at: datetime | None = None) -> None:
         serialized = self._serialize_task(task)
-        cap = capability
-        self._capabilities.add(cap)
-
         if self._client_supports_queue_ops:
             await self._client.srem(self._cancelled_set_key, task.id)
-            # Register capability
-            await self._client.sadd(self._cap_registry_key(), cap)
-
             if scheduled_at and scheduled_at > datetime.utcnow():
-                # Store capability in delayed payload for later promotion
-                delayed_payload = json.dumps({"capability": cap, "task": json.loads(serialized)})
-                await self._client.zadd(self._delayed_key(), {delayed_payload: scheduled_at.timestamp()})
+                await self._client.zadd(self._delayed_key(), {serialized: scheduled_at.timestamp()})
                 await self._client.sadd(self._scheduled_set_key, task.id)
                 return
-
-            # Capability-aware: use ZSET with priority score
-            ts_ms = int(time.time() * 1000)
-            priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
-            score = priority_rank * (10 ** 13) + ts_ms
-            pending_key = self._cap_pending_key(cap)
-            task_data_key = self._cap_task_data_key(cap)
-            stats_key = self._cap_stats_key(cap)
-
-            await self._client.hset(task_data_key, task.id, serialized)
-            await self._client.zadd(pending_key, {task.id: score})
-            await self._client.hincrby(stats_key, "enqueue_count", 1)
+            await self._client.hset(self._task_data_key, task.id, serialized)
+            await self._client.rpush(self._ready_key(task.priority.value), task.id)
             return
-
-        # In-process fallback
-        async with self._lock:
-            if scheduled_at and scheduled_at > datetime.utcnow():
+        if not self._client_supports_queue_ops:
+            async with self._lock:
                 await self._push_ready(serialized, task.priority.value, scheduled_at)
-            else:
-                ts_ms = int(time.time() * 1000)
-                priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
-                score = priority_rank * (10 ** 13) + ts_ms
-                import heapq
-                heapq.heappush(self._cap_pending[cap], (score, serialized))
-                self._task_index[task.id] = task
 
-    async def dequeue(self, timeout: float | None = None, capability: str = "default") -> Task | None:  # type: ignore[override]
-        await self._promote_due_tasks(capability=capability)
+    async def dequeue(self, timeout: float | None = None) -> Task | None:
+        await self._promote_due_tasks()
         deadline = None if timeout is None else asyncio.get_running_loop().time() + timeout
         while True:
             if self._client_supports_queue_ops:
-                pending_key = self._cap_pending_key(capability)
-                running_key = self._cap_running_key(capability)
-                task_data_key = self._cap_task_data_key(capability)
-                stats_key = self._cap_stats_key(capability)
-                config_key = self._cap_config_key(capability)
-
-                # Check max_concurrent
-                max_concurrent_raw = await self._client.hget(config_key, "max_concurrent")
-                if max_concurrent_raw is not None:
-                    max_concurrent = int(max_concurrent_raw)
-                    running_count = await self._client.zcard(running_key)
-                    if running_count >= max_concurrent:
-                        return None
-
-                # ZPOPMIN to get highest-priority (lowest-score) task
-                result = await self._client.zpopmin(pending_key, 1)
-                if not result:
-                    # Fallback: also check legacy ready queues
-                    for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
-                        task_id = await self._client.lpop(self._ready_key(priority.value))
-                        if task_id is None:
-                            continue
-                        is_cancelled = await self._client.sismember(self._cancelled_set_key, task_id)
-                        if is_cancelled:
-                            await self._client.srem(self._cancelled_set_key, task_id)
-                            await self._client.hdel(self._task_data_key, task_id)
-                            continue
-                        payload = await self._client.hget(self._task_data_key, task_id)
-                        if not payload:
-                            continue
-                        await self._client.hdel(self._task_data_key, task_id)
-                        return self._deserialize_task(payload)
-                    if timeout is None or asyncio.get_running_loop().time() >= deadline:
-                        return None
-                    await asyncio.sleep(0.01)
-                    await self._promote_due_tasks(capability=capability)
-                    continue
-
-                task_id = result[0][0] if isinstance(result[0], (list, tuple)) else result[0]
-                # Add to running ZSET
-                ts_ms = int(time.time() * 1000)
-                await self._client.zadd(running_key, {task_id: ts_ms})
-                await self._client.hincrby(stats_key, "dequeue_count", 1)
-                # Get task data
-                payload = await self._client.hget(task_data_key, task_id)
-                if not payload:
-                    await self._client.zrem(running_key, task_id)
-                    if timeout is None or asyncio.get_running_loop().time() >= deadline:
-                        return None
-                    await asyncio.sleep(0.01)
-                    continue
-                return self._deserialize_task(payload)
-            else:
-                # In-process fallback with capability awareness
-                cap = capability
-                max_concurrent = self._cap_max_concurrent.get(cap)
-                if max_concurrent is not None and len(self._cap_running[cap]) >= max_concurrent:
-                    return None
-
-                import heapq
-                heap = self._cap_pending[cap]
-                while heap:
-                    score, payload = heapq.heappop(heap)
-                    task = self._deserialize_task(payload)
-                    if task.id in self._cancelled_ids:
-                        self._cancelled_ids.discard(task.id)
-                        self._task_index.pop(task.id, None)
+                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
+                    task_id = await self._client.lpop(self._ready_key(priority.value))
+                    if task_id is None:
                         continue
-                    self._queue_counts[task.priority.value] = max(0, self._queue_counts.get(task.priority.value, 0) - 1)
-                    self._task_index.pop(task.id, None)
-                    ts = time.time()
-                    self._cap_running[cap][task.id] = ts
-                    return task
-
-                # Fallback to legacy ready_store if capability heap is empty
+                    is_cancelled = await self._client.sismember(self._cancelled_set_key, task_id)
+                    if is_cancelled:
+                        await self._client.srem(self._cancelled_set_key, task_id)
+                        await self._client.hdel(self._task_data_key, task_id)
+                        continue
+                    payload = await self._client.hget(self._task_data_key, task_id)
+                    if not payload:
+                        continue
+                    await self._client.hdel(self._task_data_key, task_id)
+                    return self._deserialize_task(payload)
+            else:
                 for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
                     queue = self._ready_store[priority.value]
                     payload = queue.pop(0) if queue else None
@@ -631,11 +517,10 @@ class RedisQueueBackend(QueueBackend):
                     self._queue_counts[priority.value] = max(0, self._queue_counts[priority.value] - 1)
                     self._task_index.pop(task.id, None)
                     return task
-
             if timeout is None or asyncio.get_running_loop().time() >= deadline:
                 return None
             await asyncio.sleep(0.01)
-            await self._promote_due_tasks(capability=capability)
+            await self._promote_due_tasks()
 
     async def peek(self, limit: int = 10) -> list[Task]:
         await self._promote_due_tasks()
@@ -665,102 +550,6 @@ class RedisQueueBackend(QueueBackend):
                     return tasks
         return tasks
 
-    async def complete(self, task_id: str, capability: str = "default") -> None:
-        """Mark a task as completed and remove from running set."""
-        if self._client_supports_queue_ops:
-            running_key = self._cap_running_key(capability)
-            stats_key = self._cap_stats_key(capability)
-            task_data_key = self._cap_task_data_key(capability)
-            await self._client.zrem(running_key, task_id)
-            await self._client.hincrby(stats_key, "complete_count", 1)
-            await self._client.hdel(task_data_key, task_id)
-        else:
-            self._cap_running[capability].pop(task_id, None)
-
-    async def fail(self, task_id: str, capability: str = "default") -> None:
-        """Mark a task as failed and remove from running set."""
-        if self._client_supports_queue_ops:
-            running_key = self._cap_running_key(capability)
-            stats_key = self._cap_stats_key(capability)
-            task_data_key = self._cap_task_data_key(capability)
-            await self._client.zrem(running_key, task_id)
-            await self._client.hincrby(stats_key, "fail_count", 1)
-            await self._client.hdel(task_data_key, task_id)
-        else:
-            self._cap_running[capability].pop(task_id, None)
-
-    async def discover_capabilities(self) -> list[str]:
-        """Return all known capability names."""
-        if self._client_supports_queue_ops:
-            caps = await self._client.smembers(self._cap_registry_key())
-            return sorted(caps) if caps else []
-        return sorted(self._capabilities)
-
-    async def get_capability_stats(self, capability: str) -> dict:
-        """Return stats for a capability queue."""
-        if self._client_supports_queue_ops:
-            stats_key = self._cap_stats_key(capability)
-            running_key = self._cap_running_key(capability)
-            pending_key = self._cap_pending_key(capability)
-            raw = await self._client.hgetall(stats_key) or {}
-            running_count = await self._client.zcard(running_key)
-            pending_count = await self._client.zcard(pending_key)
-            return {
-                "capability": capability,
-                "enqueue_count": int(raw.get("enqueue_count", 0)),
-                "dequeue_count": int(raw.get("dequeue_count", 0)),
-                "complete_count": int(raw.get("complete_count", 0)),
-                "fail_count": int(raw.get("fail_count", 0)),
-                "running_count": running_count,
-                "pending_count": pending_count,
-            }
-        import heapq
-        return {
-            "capability": capability,
-            "enqueue_count": 0,
-            "dequeue_count": 0,
-            "complete_count": 0,
-            "fail_count": 0,
-            "running_count": len(self._cap_running.get(capability, {})),
-            "pending_count": len(self._cap_pending.get(capability, [])),
-        }
-
-    async def get_capability_pending(self, capability: str) -> int:
-        """Return number of pending tasks for a capability."""
-        if self._client_supports_queue_ops:
-            return await self._client.zcard(self._cap_pending_key(capability))
-        return len(self._cap_pending.get(capability, []))
-
-    async def get_capability_running(self, capability: str) -> int:
-        """Return number of running tasks for a capability."""
-        if self._client_supports_queue_ops:
-            return await self._client.zcard(self._cap_running_key(capability))
-        return len(self._cap_running.get(capability, {}))
-
-    async def set_max_concurrent(self, capability: str, max_concurrent: int) -> None:
-        """Set max concurrent limit for a capability."""
-        if self._client_supports_queue_ops:
-            await self._client.hset(self._cap_config_key(capability), "max_concurrent", str(max_concurrent))
-        else:
-            self._cap_max_concurrent[capability] = max_concurrent
-
-    async def cleanup_stale_running(self, capability: str = "default", max_age_seconds: float = 3600.0) -> int:
-        """Remove stale entries from the running set."""
-        if self._client_supports_queue_ops:
-            running_key = self._cap_running_key(capability)
-            stale_threshold = (time.time() - max_age_seconds) * 1000
-            stale_ids = await self._client.zrangebyscore(running_key, "-inf", stale_threshold)
-            if stale_ids:
-                await self._client.zrem(running_key, *stale_ids)
-            return len(stale_ids)
-        else:
-            now = time.time()
-            running = self._cap_running.get(capability, {})
-            stale = [tid for tid, ts in running.items() if now - ts > max_age_seconds]
-            for tid in stale:
-                running.pop(tid, None)
-            return len(stale)
-
     async def cancel(self, task_id: str) -> bool:
         if self._client_supports_queue_ops:
             await self._client.sadd(self._cancelled_set_key, task_id)
@@ -786,18 +575,7 @@ class RedisQueueBackend(QueueBackend):
                 self._scheduled_ids.remove(task_id)
                 self._remove_from_delayed(task_id)
             else:
-                # Remove from capability pending heaps
-                removed_from_cap = False
-                for cap, heap in self._cap_pending.items():
-                    new_heap = [(s, p) for s, p in heap
-                                if json.loads(p).get("id") != task_id]
-                    if len(new_heap) < len(heap):
-                        self._cap_pending[cap] = new_heap
-                        import heapq
-                        heapq.heapify(self._cap_pending[cap])
-                        removed_from_cap = True
-                if not removed_from_cap:
-                    self._remove_from_ready(task_id)
+                self._remove_from_ready(task_id)
             self._task_index.pop(task_id, None)
             return True
 
@@ -833,14 +611,7 @@ class RedisQueueBackend(QueueBackend):
                 priority.value: await self._client.llen(self._ready_key(priority.value))
                 for priority in TaskPriority
             }
-        # In-process: aggregate cap_pending by priority
-        counts: dict[int, int] = {p.value: 0 for p in TaskPriority}
-        for heap in self._cap_pending.values():
-            for score, payload in heap:
-                # Decode priority_rank from score
-                rank = score // (10 ** 13)
-                counts[rank] = counts.get(rank, 0) + 1
-        return counts
+        return {priority.value: self._queue_counts[priority.value] for priority in TaskPriority}
 
     async def clear(self) -> None:
         if self._client_supports_queue_ops:
@@ -849,19 +620,7 @@ class RedisQueueBackend(QueueBackend):
             keys.append(self._cancelled_set_key)
             keys.append(self._task_data_key)
             keys.append(self._scheduled_set_key)
-            keys.append(self._cap_registry_key())
-            # Clear all capability keys
-            caps = await self.discover_capabilities()
-            for cap in caps:
-                keys.extend([
-                    self._cap_pending_key(cap),
-                    self._cap_running_key(cap),
-                    self._cap_stats_key(cap),
-                    self._cap_config_key(cap),
-                    self._cap_task_data_key(cap),
-                ])
-            if keys:
-                await self._client.delete(*keys)
+            await self._client.delete(*keys)
             return
         async with self._lock:
             for priority in TaskPriority:
@@ -871,9 +630,6 @@ class RedisQueueBackend(QueueBackend):
             self._scheduled_ids.clear()
             self._task_index.clear()
             self._cancelled_ids.clear()
-            self._cap_pending.clear()
-            self._cap_running.clear()
-            self._capabilities.clear()
 
     async def is_scheduled(self, task_id: str) -> bool:
         if self._client_supports_queue_ops:
@@ -888,16 +644,10 @@ class RedisQueueBackend(QueueBackend):
     async def get_queue_count(self) -> int:
         if self._client_supports_queue_ops:
             total = 0
-            # Count legacy ready queues
             for priority in TaskPriority:
                 total += await self._client.llen(self._ready_key(priority.value))
-            # Count capability pending ZSETs
-            caps = await self.discover_capabilities()
-            for cap in caps:
-                total += await self._client.zcard(self._cap_pending_key(cap))
             return total
-        # In-process: only count _cap_pending (canonical source)
-        return sum(len(h) for h in self._cap_pending.values())
+        return sum(self._queue_counts.values())
 
     async def _push_ready(self, serialized: str, priority: int, scheduled_at: datetime | None = None) -> None:
         if scheduled_at and scheduled_at > datetime.utcnow():
@@ -912,36 +662,11 @@ class RedisQueueBackend(QueueBackend):
         self._task_index[task.id] = task
         self._queue_counts[priority] += 1
 
-    async def _promote_due_tasks(self, capability: str = "default") -> None:
+    async def _promote_due_tasks(self) -> None:
         now = datetime.utcnow().timestamp()
         if self._client_supports_queue_ops:
             due_payloads = await self._client.zrangebyscore(self._delayed_key(), float("-inf"), now)
             for payload in due_payloads:
-                # Try to parse as new-style capability-wrapped payload
-                try:
-                    wrapped = json.loads(payload)
-                    if isinstance(wrapped, dict) and "capability" in wrapped and "task" in wrapped:
-                        cap = wrapped["capability"]
-                        task_payload = json.dumps(wrapped["task"], sort_keys=True)
-                        task = self._deserialize_task(task_payload)
-                        # Only promote tasks matching the requested capability
-                        if capability != "default" and cap != capability:
-                            continue
-                        # Promote to capability pending ZSET
-                        ts_ms = int(now * 1000)
-                        priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
-                        score = priority_rank * (10 ** 13) + ts_ms
-                        pending_key = self._cap_pending_key(cap)
-                        task_data_key = self._cap_task_data_key(cap)
-                        await self._client.sadd(self._cap_registry_key(), cap)
-                        await self._client.hset(task_data_key, task.id, task_payload)
-                        await self._client.zadd(pending_key, {task.id: score})
-                        await self._client.zrem(self._delayed_key(), payload)
-                        await self._client.srem(self._scheduled_set_key, task.id)
-                        continue
-                except (json.JSONDecodeError, KeyError):
-                    pass
-                # Old-style plain task payload
                 task = self._deserialize_task(payload)
                 moved = await self._promote_due_atomic(task.priority.value, payload)
                 if not moved:
@@ -958,14 +683,7 @@ class RedisQueueBackend(QueueBackend):
                     del self._delayed_store[payload]
                     task = self._deserialize_task(payload)
                     self._scheduled_ids.discard(task.id)
-                    # Promote to capability pending heap
-                    cap = capability
-                    ts_ms = int(now * 1000)
-                    priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
-                    score = priority_rank * (10 ** 13) + ts_ms
-                    import heapq
-                    heapq.heappush(self._cap_pending[cap], (score, payload))
-                    self._capabilities.add(cap)
+                    await self._push_ready(payload, task.priority.value)
 
     def _remove_from_delayed(self, task_id: str) -> None:
         for payload in list(self._delayed_store.keys()):

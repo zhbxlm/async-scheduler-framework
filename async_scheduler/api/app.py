@@ -549,6 +549,10 @@ async def debug_summary():
             },
             "recent_history": repair_history,
         },
+        # P2-TODO-9: capability queue stats
+        "capability_queues": {
+            "capabilities": await services.queue_manager.discover_capabilities(),
+        },
     }
 
 
@@ -557,6 +561,25 @@ async def quota_stats():
     if not services:
         raise HTTPException(status_code=503, detail="Services not available")
     return services.quota_manager.stats()
+
+
+# P2-TODO-9: Capability queue endpoints
+@app.get("/queues/capabilities")
+async def list_queue_capabilities():
+    """List all known capability queue names."""
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+    caps = await services.queue_manager.discover_capabilities()
+    return {"capabilities": caps}
+
+
+@app.get("/queues/{capability}/stats")
+async def get_capability_queue_stats(capability: str):
+    """Get runtime stats for a specific capability queue."""
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+    stats = await services.queue_manager.get_capability_stats(capability)
+    return stats.to_dict()
 
 
 @app.get("/reconciler/stats")
