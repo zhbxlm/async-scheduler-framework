@@ -72,16 +72,16 @@ async def _collect_lease_snapshot(
 ) -> list[dict]:
     """Shared lease-scan helper used by debug/summary, anomalies, and anomaly-summary.
 
+    Uses a single JOIN query to fetch attempts + task status, avoiding N+1 DB roundtrips.
     Returns a list of dicts with keys:
         task_id, task_status, worker_id, attempt_status, locked, lease,
         attempt (full attempt detail dict)
     """
-    attempts = await ExecutionAttemptRepository.list_latest_attempts(
+    rows = await ExecutionAttemptRepository.list_latest_attempts_with_task(
         session, limit=limit, offset=offset, worker_id=worker_id
     )
     items: list[dict] = []
-    for attempt in attempts:
-        task = await TaskRepository.get(session, attempt.task_id)
+    for attempt, task in rows:
         lease = None
         if svc.lock_backend is not None and hasattr(svc.lock_backend, "describe_lock"):
             lease = await svc.lock_backend.describe_lock(f"task:{attempt.task_id}")

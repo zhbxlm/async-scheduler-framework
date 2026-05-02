@@ -461,12 +461,13 @@ class TaskReconciler:
             updated_at = task.updated_at or task.created_at
             if updated_at > threshold:
                 continue
-            async with await get_session_no_context() as session:
-                repairable = await self._is_repairable_running_task(session, task, threshold)
-            if not repairable:
-                continue
 
             if self.config.repair_strategy == RepairStrategy.REQUEUE and self.queue_manager is not None:
+                # Open one session: check repairability, then requeue in same session
+                async with await get_session_no_context() as session:
+                    repairable = await self._is_repairable_running_task(session, task, threshold)
+                if not repairable:
+                    continue
                 try:
                     await self.queue_manager.enqueue(task)
                     async with get_session() as session:
@@ -495,7 +496,12 @@ class TaskReconciler:
                     break
                 error_msg = "reconciler-phase2: marked failed after lease expiry"
                 try:
+                    # One session: check repairability + get latest attempt + mark failed
                     async with get_session() as session:
+                        repairable = await self._is_repairable_running_task(session, task, threshold)
+                        if not repairable:
+                            continue
+                        latest = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
                         await TaskRepository.update(
                             session,
                             task.id,
@@ -503,7 +509,6 @@ class TaskReconciler:
                             error_message=error_msg,
                             completed_at=datetime.utcnow(),
                         )
-                        latest = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
                         if latest is not None:
                             await ExecutionAttemptRepository.finalize(
                                 session,

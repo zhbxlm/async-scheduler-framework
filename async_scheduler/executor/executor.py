@@ -41,6 +41,7 @@ class TaskExecutor:
     ) -> ExecutionResult:
         """Execute a task with retries and timeout handling."""
         result = ExecutionResult(success=False)
+        _is_coro = inspect.iscoroutinefunction(handler)  # cache once per execute() call
 
         for attempt in range(task.max_retries + 1):
             if task.status == TaskStatus.CANCELLED:
@@ -55,12 +56,12 @@ class TaskExecutor:
 
             async def _wrapped_handler() -> Any:
                 try:
-                    if inspect.iscoroutinefunction(handler):
+                    if _is_coro:
                         return await handler(task.payload)
-                    result = handler(task.payload)
-                    if inspect.isawaitable(result):
-                        return await result
-                    return await asyncio.to_thread(lambda: result)
+                    rv = handler(task.payload)
+                    if inspect.isawaitable(rv):
+                        return await rv
+                    return rv
                 except Exception as e:
                     return e
 

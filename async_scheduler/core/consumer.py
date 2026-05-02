@@ -171,6 +171,7 @@ class TaskConsumer:
             if handle is None:
                 await self._queue_manager.enqueue(task)
                 return None
+            now = datetime.utcnow()
             async with get_session() as session:
                 attempt = await ExecutionAttemptRepository.create(
                     session,
@@ -179,22 +180,32 @@ class TaskConsumer:
                         worker_id=self._worker_id,
                         retry_index=task.retry_count,
                         lease_token=handle.token,
+                        status=ExecutionAttemptStatus.RUNNING,
+                        started_at=now,
+                        last_heartbeat_at=now,
+                    ),
+                )
+                attempt_id = attempt.id
+        else:
+            # No distributed lock: still create an attempt record for tracking
+            now = datetime.utcnow()
+            async with get_session() as session:
+                attempt = await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task.id,
+                        worker_id=self._worker_id,
+                        retry_index=task.retry_count,
+                        lease_token=None,
+                        status=ExecutionAttemptStatus.RUNNING,
+                        started_at=now,
+                        last_heartbeat_at=now,
                     ),
                 )
                 attempt_id = attempt.id
 
         task.status = TaskStatus.RUNNING
         await self._update_task_status(task, TaskStatus.RUNNING)
-
-        if attempt_id is not None:
-            async with get_session() as session:
-                await ExecutionAttemptRepository.update(
-                    session,
-                    attempt_id,
-                    status=ExecutionAttemptStatus.RUNNING,
-                    started_at=datetime.utcnow(),
-                    last_heartbeat_at=datetime.utcnow(),
-                )
 
         return task, handle, attempt_id
 
@@ -215,7 +226,6 @@ class TaskConsumer:
                 if fresh_task and fresh_task.status == TaskStatus.CANCELLED:
                     return
 
-            result = await self._executor.execute(task, self._handler, lease_lost_event=lease_lost_event)
 
             if heartbeat_task is not None and heartbeat_task.done():
                 exc = heartbeat_task.exception()
@@ -310,12 +320,13 @@ class TaskConsumer:
         error_message: str | None = None,
         result: dict[str, Any] | None = None,
     ) -> None:
+        now = datetime.utcnow()  # single timestamp for the whole update
         async with get_session() as session:
-            update_data = {"status": status, "updated_at": datetime.utcnow()}
+            update_data: dict[str, Any] = {"status": status, "updated_at": now}
             if status == TaskStatus.RUNNING:
-                update_data["started_at"] = datetime.utcnow()
+                update_data["started_at"] = now
             if status in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT):
-                update_data["completed_at"] = datetime.utcnow()
+                update_data["completed_at"] = now
             if error_message:
                 update_data["error_message"] = error_message
             if result:

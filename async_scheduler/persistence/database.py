@@ -16,10 +16,20 @@ DATABASE_URL = os.getenv(
 )
 
 # Create async engine
+# pool_size / max_overflow only meaningful for non-SQLite engines;
+# aiosqlite uses StaticPool by default (single connection, fine for SQLite).
+# When DATABASE_URL points at PostgreSQL, bump pool_size to match concurrency.
+_is_sqlite = DATABASE_URL.startswith("sqlite")
 engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("SQL_ECHO", "false").lower() == "true",
     pool_pre_ping=True,
+    **({} if _is_sqlite else {
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        "pool_timeout": float(os.getenv("DB_POOL_TIMEOUT", "30")),
+        "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "1800")),
+    }),
 )
 
 # Create async session factory

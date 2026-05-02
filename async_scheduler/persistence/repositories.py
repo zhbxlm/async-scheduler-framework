@@ -235,6 +235,52 @@ class ExecutionAttemptRepository:
         return [ExecutionAttempt.model_validate(row) for row in result.scalars().all()]
 
 
+    @staticmethod
+    async def list_latest_attempts_with_task(
+        session: AsyncSession,
+        limit: int = 200,
+        offset: int = 0,
+        worker_id: str | None = None,
+    ) -> list[tuple["ExecutionAttempt", "Task | None"]]:
+        """Fetch latest attempts joined with their task in a single query.
+
+        Avoids the N+1 pattern of fetching each task separately.
+        Returns list of (attempt, task_or_None) tuples.
+        """
+        latest_subq = (
+            select(
+                ExecutionAttemptORM.task_id.label("task_id"),
+                func.max(ExecutionAttemptORM.created_at).label("latest_created_at"),
+            )
+            .group_by(ExecutionAttemptORM.task_id)
+            .subquery()
+        )
+
+        query = (
+            select(ExecutionAttemptORM, TaskORM)
+            .join(
+                latest_subq,
+                (ExecutionAttemptORM.task_id == latest_subq.c.task_id)
+                & (ExecutionAttemptORM.created_at == latest_subq.c.latest_created_at),
+            )
+            .outerjoin(TaskORM, TaskORM.id == ExecutionAttemptORM.task_id)
+            .order_by(ExecutionAttemptORM.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if worker_id is not None:
+            query = query.where(ExecutionAttemptORM.worker_id == worker_id)
+
+        result = await session.execute(query)
+        rows = result.all()
+        out: list[tuple[ExecutionAttempt, "Task | None"]] = []
+        for attempt_orm, task_orm in rows:
+            attempt = ExecutionAttempt.model_validate(attempt_orm)
+            task = Task.model_validate(task_orm) if task_orm is not None else None
+            out.append((attempt, task))
+        return out
+
+
 class ScheduleRepository:
     """Repository for Schedule operations."""
 

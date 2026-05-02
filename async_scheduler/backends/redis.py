@@ -975,15 +975,15 @@ class RedisQueueBackend(QueueBackend):
 
     async def get_queue_count(self) -> int:
         if self._client_supports_queue_ops:
-            total = 0
-            # Count legacy ready queues
-            for priority in TaskPriority:
-                total += await self._client.llen(self._ready_key(priority.value))
-            # Count capability pending ZSETs
             caps = await self.discover_capabilities()
+            # Use pipeline to batch all zcard + llen calls in a single RTT
+            pipe = self._client.pipeline()
+            for priority in TaskPriority:
+                pipe.llen(self._ready_key(priority.value))
             for cap in caps:
-                total += await self._client.zcard(self._cap_pending_key(cap))
-            return total
+                pipe.zcard(self._cap_pending_key(cap))
+            results = await pipe.execute()
+            return sum(results)
         # In-process: only count _cap_pending (canonical source)
         return sum(len(h) for h in self._cap_pending.values())
 
