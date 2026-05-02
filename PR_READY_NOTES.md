@@ -130,3 +130,140 @@ Recommended review path:
 - include at least one targeted test result block in PR description
 - explicitly call out semantic changes, not just "more tests"
 - if reviewers prefer smaller history, squash by the 3 groups above rather than flattening everything into one commit
+
+---
+
+## Addendum — latest round summary (18:00 update)
+
+### Final review summary (EN)
+
+This branch continues pushing the async scheduler framework toward a **real Redis-backed distributed kernel**, and complements that work with **converged recovery semantics, lease observability, fault-injection coverage, and refreshed README documentation**.
+
+#### What was added in this round
+
+##### 1. Lease observability / debugging surface
+A new lease- and heartbeat-focused debugging surface was added:
+
+- `GET /debug/leases/{task_id}`
+- `GET /debug/leases`
+- `GET /workers/{worker_id}/leases`
+
+`/debug/summary` was also extended with lease-related aggregate signals:
+
+- `locked_count`
+- `running_with_lock_count`
+- `running_without_lock_count`
+- `locked_but_terminal_count`
+- `abandoned_but_running_count`
+- `stale_lease_count`
+
+`/debug/leases` now supports filtering by:
+- `worker_id`
+- `task_status`
+- `attempt_status`
+- `locked_only`
+
+##### 2. High-value fault-injection coverage around finalize / callback / reconciler overlap
+This round also adds recovery-boundary tests that pin down convergence semantics under dirty distributed edges:
+
+- **duplicate finalize overlap + callback failure**
+- **concurrent reconcile overlap**
+- **callback failure + lease loss + reconciler overlap**
+
+These tests further clarify the system’s intended semantics:
+- **at-least-once side effects**
+- **terminal-state-first persistence**
+- **eventual convergence**
+
+##### 3. README refresh
+The README was updated to reflect the current runtime reality more accurately, including:
+
+- the presence of a **real Redis-backed distributed kernel path**
+- real Redis-backed queue / lock / completion dedupe / worker registry paths
+- converged retry exhaustion semantics
+- current live Redis validation flow
+- new observability endpoints and debugging workflow
+- updated deepwiki-alignment boundaries
+- refreshed roadmap and current-status sections
+
+### Key recent commits
+- `9805d53` — `feat: add lease observability debug endpoints`
+- `e19cf69` — `test: cover finalize and reconciler overlap recovery boundaries`
+- `87ae6f2` — `docs: refresh README for current distributed runtime state`
+
+### Recent regression pass
+Executed:
+
+```bash
+pytest -q \
+  tests/test_observability_api.py \
+  tests/integration/test_failure_recovery.py \
+  tests/integration/test_live_redis_retry_exhaustion.py
+```
+
+Result:
+- **16 passed**
+- **1 skipped** (expected live-Redis conditional skip when environment requirements are not present)
+
+### Suggested reviewer reading order
+1. `async_scheduler/api/app.py`
+2. `async_scheduler/platform/services.py`
+3. `async_scheduler/backends/redis.py`
+4. `async_scheduler/persistence/repositories.py`
+5. `tests/test_observability_api.py`
+6. `tests/integration/test_failure_recovery.py`
+7. `README.md`
+
+---
+
+### 超短版提审说明（中文）
+
+这轮主要补了三块：
+
+- **lease observability**
+  - 新增 `/debug/leases`、`/debug/leases/{task_id}`、`/workers/{worker_id}/leases`
+  - `/debug/summary` 补了 lease 相关异常统计
+
+- **fault injection / recovery boundary**
+  - 覆盖 finalize overlap、callback failure、concurrent reconcile、lease loss + reconciler overlap 等关键脏边界
+  - 进一步钉住系统的 **terminal-state-first + eventual convergence** 语义
+
+- **README refresh**
+  - 把当前 real Redis 路径、observability、验证方式和 deepwiki 对齐边界同步到了文档里
+
+最近相关提交：
+- `9805d53`
+- `e19cf69`
+- `87ae6f2`
+
+最近回归：
+- `16 passed, 1 skipped`
+
+---
+
+### Ultra-short review note (EN)
+
+This round mainly adds:
+
+- **lease observability**
+  - `/debug/leases`
+  - `/debug/leases/{task_id}`
+  - `/workers/{worker_id}/leases`
+  - richer lease anomaly summary in `/debug/summary`
+
+- **fault-injection recovery coverage**
+  - finalize overlap
+  - callback failure
+  - concurrent reconciler overlap
+  - lease-loss + reconciler-overlap boundary
+
+- **README refresh**
+  - updated to reflect the current real Redis-backed runtime state and debugging surface
+
+Recent commits:
+- `9805d53`
+- `e19cf69`
+- `87ae6f2`
+
+Recent regression:
+- **16 passed, 1 skipped**
