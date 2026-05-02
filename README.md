@@ -211,21 +211,33 @@ async-scheduler reconcile
 
 ```bash
 curl http://127.0.0.1:8000/health
+# → {"status":"healthy","issues":[],"version":"1.0.0","uptime_seconds":12.3}
+
+# 完整内部指标（供 operator / dashboard 使用）
+curl http://127.0.0.1:8000/health/detail
 curl http://127.0.0.1:8000/queue/stats
 ```
 
 说明：
-- `/health` 提供基础运行状态
+- `/health` 返回简洁信号：`status`（healthy/degraded/starting）+ `issues` 列表，适合负载均衡器和监控告警
+- `/health/detail` 返回完整内部指标（uptime、queue_size、worker_count 等）
 - `/queue/stats` 提供队列大小、调度数量与执行中任务统计
 - 更完整的恢复 / lease / worker 诊断请看下面的 observability 端点
 
-### 创建租户
+### 错误响应
 
-```bash
-curl -X POST http://127.0.0.1:8000/tenants \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"team-a","config":{"max_queued":20,"max_running":5}}'
+所有 4xx/5xx 错误均返回结构化 detail：
+
+```json
+{
+  "detail": {
+    "error_code": "TASK_NOT_FOUND",
+    "message": "Task not found"
+  }
+}
 ```
+
+常用 error_code：`TASK_NOT_FOUND` / `SCHEDULE_NOT_FOUND` / `DAG_NOT_FOUND` / `QUOTA_EXCEEDED` / `SERVICE_UNAVAILABLE` 等。
 
 ### 创建任务
 
@@ -272,30 +284,33 @@ curl -X POST http://127.0.0.1:8000/schedules/<schedule_id>/resume
 curl -X POST http://127.0.0.1:8000/reconciler/run
 ```
 
-### 查看 Attempt / Worker / Lease / Reconciler 诊断信息
+### 创建租户
 
 ```bash
-curl http://127.0.0.1:8000/tasks/<task_id>/attempts
-curl http://127.0.0.1:8000/tasks/<task_id>/attempts/latest
-curl http://127.0.0.1:8000/workers
-curl http://127.0.0.1:8000/workers/<worker_id>
-curl http://127.0.0.1:8000/workers/<worker_id>/leases
-curl http://127.0.0.1:8000/reconciler/history
-curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
-curl 'http://127.0.0.1:8000/reconciler/history?task_id=<task_id>'
-curl http://127.0.0.1:8000/debug/summary
-curl http://127.0.0.1:8000/debug/leases
-curl http://127.0.0.1:8000/debug/leases/anomalies
-curl 'http://127.0.0.1:8000/debug/leases?task_status=running&locked_only=true'
-curl 'http://127.0.0.1:8000/debug/leases?worker_id=<worker_id>'
-curl http://127.0.0.1:8000/debug/leases/<task_id>
+curl -X POST http://127.0.0.1:8000/tenants \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"team-a","config":{"max_queued":20,"max_running":5}}'
 ```
 
-推荐排障顺序：
-- 先看 `/debug/summary`，快速判断是否存在 `running_without_lock_count`、`locked_but_terminal_count`、`abandoned_but_running_count` 这类异常计数
-- 再看 `/debug/leases/anomalies`，直接定位 suspicious states
-- 再用 `/debug/leases` 按 `worker_id` / `task_status` / `attempt_status` / `locked_only` 过滤可疑任务
-- 最后用 `/debug/leases/<task_id>` 看单任务 lease / latest attempt 详情
+### 排障 API
+
+```bash
+# 系统快照（排障推荐入口）
+curl http://127.0.0.1:8000/debug/summary
+
+# 异常 lease 列表（anomaly_types 标注原因）
+curl http://127.0.0.1:8000/debug/leases/anomalies
+curl http://127.0.0.1:8000/debug/leases/anomalies/summary
+
+# 按条件过滤 lease
+curl 'http://127.0.0.1:8000/debug/leases?task_status=running&locked_only=true'
+curl http://127.0.0.1:8000/debug/leases/<task_id>
+
+# 任务执行历史
+curl http://127.0.0.1:8000/tasks/<task_id>/history
+curl http://127.0.0.1:8000/workers/<worker_id>/leases
+curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
+```
 
 ## 端到端 Demo
 

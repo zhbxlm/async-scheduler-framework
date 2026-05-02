@@ -145,17 +145,18 @@ await services.worker_pool.start()
 
 ### Real Redis Transition State
 
-The framework is in **transition state toward Redis-backed distributed semantics**. The following components support real async Redis client injection paths:
+The framework has **production-ready Redis semantics** for core shared state paths:
 
-- `RedisQueueBackend` - Queue operations with Redis
-- `RedisLockBackend` - Distributed locks with Redis
-- `RedisCompletionDedupBackend` - Completion deduplication
-- `WorkerRegistry` - Worker liveness with heartbeat
+- `RedisQueueBackend` — queue operations with Lua/CAS atomic semantics (promote, update_priority, cancel)
+- `RedisLockBackend` — distributed leases with acquire / extend / release / compare-and-act
+- `RedisCompletionDedupBackend` — idempotent completion via claim-once
+- `WorkerRegistry` — worker liveness with heartbeat and TTL-based staleness detection
 
-These are **not yet production-ready** (Lua/CAS atomicity pending), but they have comprehensive test coverage including:
+All four components have comprehensive test coverage:
 - Single component real-Redis tests (`test_real_redis_*.py`)
 - Shared-client integration tests (`tests/integration/test_real_redis_*.py`)
-- Recovery/invariant tests
+- Recovery / invariant / overlap / fault-injection tests
+- Live Redis smoke + suite (`scripts/live_redis_*.py`)
 
 ### Backend Factory
 
@@ -211,7 +212,8 @@ This framework aligns with deepwiki's distributed architecture:
 - Reconciler for stuck task repair
 
 Not yet implemented:
-- Ray/ActorPoolManager
-- Full Lua atomic operations
-- ResourceManager/NodeAgent
-- Async Proxy sidecar
+- Ray/ActorPoolManager (skeleton only)
+- Full ResourceManager/NodeAgent (skeleton only)
+- Async Proxy sidecar (skeleton only)
+- Multi-node PostgreSQL persistence
+- Production-grade side-effect delivery guarantees
