@@ -211,6 +211,18 @@ class TaskConsumer:
         return task, handle, attempt_id
 
     async def _process_single_task(self, task: Task, handle: LockHandle | None = None, attempt_id: str | None = None) -> None:
+        # Inject task context into all log records for this execution
+        capability = task.payload.get("capability") if isinstance(task.payload, dict) else None
+        async with task_context(
+            task_id=task.id,
+            attempt_id=attempt_id,
+            capability=capability,
+            worker_id=self._worker_id,
+            tenant_id=task.tenant_id,
+        ):
+            await self._process_single_task_inner(task, handle=handle, attempt_id=attempt_id)
+
+    async def _process_single_task_inner(self, task: Task, handle: LockHandle | None = None, attempt_id: str | None = None) -> None:
         heartbeat_task: asyncio.Task[None] | None = None
         lease_lost = False
         # P0-TODO-3: per-task lease-lost event

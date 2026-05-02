@@ -15,13 +15,15 @@ from async_scheduler.dag import DAGEngine
 from async_scheduler.executor import TaskExecutor, default_task_handler
 from async_scheduler.persistence import init_db
 from async_scheduler.queue import QueueManager
+from async_scheduler.observability import configure_logging
 from async_scheduler.scheduler import CronScheduler
 from async_scheduler.worker import WorkerPool, create_default_workers
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# Configure structured JSON logging (respects LOG_LEVEL / LOG_FORMAT env vars)
+configure_logging(
+    service=os.environ.get("SERVICE_NAME", "async-scheduler"),
+    node_id=os.environ.get("NODE_ID"),
+    version=os.environ.get("SERVICE_VERSION"),
 )
 logger = logging.getLogger(__name__)
 

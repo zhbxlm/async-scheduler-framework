@@ -3,14 +3,16 @@
 import asyncio
 import json as _json
 import logging
+import os
 import time
 from asyncio import Queue as _Queue
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 
 from async_scheduler.core.models import (
@@ -124,8 +126,15 @@ async def _collect_lease_snapshot(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
-    # Startup
     global services
+
+    # Ensure structured logging is configured even when started via uvicorn directly
+    from async_scheduler.observability import configure_logging as _configure_logging
+    _configure_logging(
+        service=os.environ.get("SERVICE_NAME", "scheduler-api"),
+        node_id=os.environ.get("NODE_ID"),
+        version=os.environ.get("SERVICE_VERSION"),
+    )
 
     logger.info("Starting Async Scheduler API...")
 
@@ -156,6 +165,36 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# Request-ID middleware — injects X-Request-ID into every log record
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+from async_scheduler.observability import _ctx_request_id as _log_request_id
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Attach a unique request ID to every request and propagate it via contextvars.
+
+    The request ID is taken from the incoming X-Request-ID header (for distributed
+    tracing continuity) or generated fresh. It is returned in the response header
+    and automatically injected into all log records for the duration of the request.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        token = _log_request_id.set(req_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = req_id
+            return response
+        finally:
+            _log_request_id.reset(token)
+
+
+app.add_middleware(RequestContextMiddleware)
 
 
 # Pydantic request/response models - simple aliases; extend when response shapes diverge
