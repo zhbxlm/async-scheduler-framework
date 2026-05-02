@@ -353,6 +353,7 @@ curl http://127.0.0.1:8000/debug/leases/<task_id>
 - live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证
 - multi-worker overlap / dead-owner recovery / delayed promotion 验证
 - finalize / callback / reconciler overlap fault-injection tests
+- control-point failure hardening for heartbeat / completion dedupe / reconciler liveness lookup / requeue enqueue paths
 
 这意味着当前仓库已经不再是“只有 Redis-shaped 接口”的过渡原型，而是已经具备真正多进程 / 多节点部署所需的关键语义与一组比较扎实的验证护栏。
 

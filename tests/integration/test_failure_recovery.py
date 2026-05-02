@@ -176,6 +176,27 @@ class FailOnceWorkerRegistry:
         return await self._inner.is_live(worker_id)
 
 
+class FailOnceEnqueueQueueManager:
+    def __init__(self, inner: QueueManager) -> None:
+        self._inner = inner
+        self.enqueue_calls = 0
+
+    async def enqueue(self, task, scheduled_at=None):
+        self.enqueue_calls += 1
+        if self.enqueue_calls == 1:
+            raise RuntimeError("transient enqueue outage")
+        return await self._inner.enqueue(task, scheduled_at)
+
+    async def dequeue(self, timeout=None):
+        return await self._inner.dequeue(timeout=timeout)
+
+    async def get_queue_count(self):
+        return await self._inner.get_queue_count()
+
+    async def size(self):
+        return await self._inner.size()
+
+
 @pytest.mark.asyncio
 async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_task() -> None:
     await drop_db()
@@ -640,6 +661,81 @@ async def test_concurrent_reconcile_does_not_double_requeue_same_orphan_task() -
     assert len(repair_history) == 1
     assert repair_history[0]["task_id"] == task.id
     assert repair_history[0]["action"] == "requeue"
+
+
+@pytest.mark.asyncio
+async def test_transient_requeue_enqueue_failure_does_not_commit_false_queued_state() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.05,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    raw_queue_manager = QueueManager(factory.create_queue_backend())
+    queue_manager = FailOnceEnqueueQueueManager(raw_queue_manager)
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.1)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="transient-requeue-enqueue-failure", payload={}))
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            updated_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-transient-requeue",
+                retry_index=0,
+                lease_token="lease-transient-requeue",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+
+    await worker_registry.register(WorkerInfo(worker_id="worker-transient-requeue", name="transient-requeue"))
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+    await asyncio.sleep(0.12)
+    await worker_registry.deregister("worker-transient-requeue")
+
+    repaired = await reconciler.reconcile()
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert repaired == 0
+    assert queue_manager.enqueue_calls == 1
+    assert final_task is not None
+    assert final_task.status == TaskStatus.RUNNING
+    assert final_task.retry_count == 0
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.RUNNING
+    assert await raw_queue_manager.dequeue(timeout=0.01) is None
 
 
 @pytest.mark.asyncio

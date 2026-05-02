@@ -198,6 +198,7 @@ The README was updated to reflect the current runtime reality more accurately, i
 - added `docs/runtime/distributed-deployment-guide.md` (now with single-host multi-process and small multi-node examples)
 - added `docs/reference/non-critical-shared-state-boundary.md`
 - added `docs/reference/next-phase-gap-analysis.md`
+- extended P2 control-point failure coverage across heartbeat, completion dedupe, reconciler liveness lookup, and requeue enqueue paths
 - refreshed deepwiki reference to reflect completed observability/fault-injection progress
 
 ### Recent regression pass
@@ -346,6 +347,7 @@ README 已更新：
 - 新增 `docs/runtime/distributed-deployment-guide.md`（含单机多进程 / 小规模多节点示例）
 - 新增 `docs/reference/non-critical-shared-state-boundary.md`
 - 新增 `docs/reference/next-phase-gap-analysis.md`
+- 扩展 P2 control-point failure 覆盖：heartbeat / completion dedupe / reconciler liveness lookup / requeue enqueue
 - 更新 deepwiki distributed reference，重排当前剩余 gap 与 next iteration
 
 ### 定向回归结果

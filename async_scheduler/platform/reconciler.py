@@ -205,6 +205,23 @@ class TaskReconciler:
                 return True
 
             if self.config.repair_strategy == RepairStrategy.REQUEUE:
+                refreshed = await TaskRepository.get(session, task.id)
+                if refreshed is None:
+                    return False
+
+                if self.queue_manager is not None:
+                    current_queue_count = await self.queue_manager.get_queue_count()
+                    if current_queue_count == 0:
+                        try:
+                            await self.queue_manager.enqueue(refreshed)
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to enqueue repaired task %s during reconcile; leaving task running for retry: %s",
+                                task.id,
+                                exc,
+                            )
+                            return False
+
                 await TaskRepository.update(
                     session,
                     task.id,
@@ -220,10 +237,6 @@ class TaskReconciler:
                         status=ExecutionAttemptStatus.ABANDONED,
                         error_message=error_message,
                     )
-                if self.queue_manager is not None:
-                    refreshed = await TaskRepository.get(session, task.id)
-                    if refreshed is not None and await self.queue_manager.get_queue_count() == 0:
-                        await self.queue_manager.enqueue(refreshed)
                 self._record_repair(
                     task_id=task.id,
                     action="requeue",
