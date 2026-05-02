@@ -24,7 +24,7 @@ code review, and gap tracking.
 - **observability expansion**: worker listing & detail, latest‑attempt, attempt history, repair‑history filtering,
   health/queue‑stats improvements, and a unified `/debug/summary` endpoint are now available.
 - **semantic refinement**: lease‑loss path now leads to `TaskStatus.FAILED` and `ExecutionAttemptStatus.ABANDONED`;
-  ordinary handler failure leads to `TaskStatus.RETRY` and `ExecutionAttemptStatus.FAILED`.
+  ordinary retry‑budget exhaustion now converges to `TaskStatus.FAILED` and `ExecutionAttemptStatus.FAILED`.
 
 These updates move the repository from a **pure transition‑state skeleton** to a **partial real‑Redis‑backed
 kernel with validated concurrency/recovery semantics**.
@@ -240,12 +240,18 @@ Remaining gaps to stronger parity:
 
 ### 5.2 Stronger failure injection
 
-Recommended additional scenarios:
-- lease lost during callback dispatch
-- duplicated completion + reconciler overlap
+Progress since last version:
+- **lease lost during callback dispatch is now covered**
+- **duplicate finalize/completion overlap + callback failure is now covered**
+- **concurrent reconciler overlap without double requeue is now covered**
+- **callback failure + lease loss + reconciler overlap is now covered**
+- **partial recovery with retry exhaustion is now covered**
+
+Remaining recommended scenarios:
 - worker death during long DAG branch execution
-- delayed task promotion under concurrent workers
-- partial recovery with retry exhaustion
+- long-running DAG branch with heartbeat jitter / lease pressure
+- Redis transient failure / network partition style simulation
+- sustained delayed-task promotion under heavier concurrent load
 
 ### 5.3 Control-plane observability
 
@@ -253,13 +259,17 @@ Progress since last version:
 - **worker listing endpoint (`/workers`) with detail (`/workers/{id}`)**
 - **attempt inspection endpoints (`/tasks/{id}/attempts/latest`, `/tasks/{id}/attempts`)**
 - **repair audit log view (`/reconciler/history`) with filtering by action/task_id**
-- **health/queue‑stats now include worker and repair‑history counts**
-- **unified debug summary endpoint (`/debug/summary`) that aggregates health, queue, workers, and reconciler data**
+- **unified debug summary endpoint (`/debug/summary`) that aggregates health, queue, workers, reconciler, and lease anomaly signals**
+- **lease / heartbeat debug endpoints are now available:**
+  - `/debug/leases`
+  - `/debug/leases/{task_id}`
+- **worker‑specific current lease / attempt listing is now available:**
+  - `/workers/{worker_id}/leases`
 
 Useful future additions:
-- lease / heartbeat debug endpoint
-- real‑time queue depth monitoring (WebSocket)
-- worker‑specific current lease / attempt listing
+- anomaly-focused lease/debug endpoint (e.g. suspicious states only)
+- real‑time queue depth / lease change monitoring (WebSocket/SSE)
+- stronger worker / task / lease correlation summaries for operators
 
 ---
 
@@ -293,8 +303,20 @@ So the correct description today is:
 
 ## 7. Recommended Next Iteration
 
-1. **complete replacement of Redis‑shaped backends with real redis‑py implementations**
-2. keep current tests as semantic contract tests and **extend live Redis verification suite**
-3. **strengthen fault‑injection matrix** (e.g., partial work + crash, network partition simulations)
-4. **expand operational observability endpoints** (lease/heartbeat debug, real‑time monitoring)
-5. document runtime configuration for true distributed deployment (multi‑process, multi‑node, Redis connection pooling)
+1. **document true distributed deployment/runtime guidance**
+   - multi-process / multi-node topology
+   - Redis connection / pooling expectations
+   - lease TTL / heartbeat tuning guidance
+   - fallback mode vs real Redis mode behavior
+2. **clarify remaining non-critical shared-state gaps**
+   - identify which fallback-oriented paths should stay local
+   - identify which should be promoted to true shared-state Redis paths
+3. keep current tests as semantic contract tests and **extend live Redis verification / stress coverage**
+4. **expand operational observability**
+   - anomaly-oriented lease views
+   - richer operator summaries
+   - optional real-time monitoring
+5. **strengthen the remaining fault-injection matrix**
+   - worker death during long DAG branch execution
+   - Redis transient failure / partition-like simulation
+   - heavier-load delayed-promotion / concurrency stress

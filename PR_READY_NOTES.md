@@ -190,6 +190,13 @@ The README was updated to reflect the current runtime reality more accurately, i
 - `9805d53` — `feat: add lease observability debug endpoints`
 - `e19cf69` — `test: cover finalize and reconciler overlap recovery boundaries`
 - `87ae6f2` — `docs: refresh README for current distributed runtime state`
+- `ba69613` — `docs: sync final PR body into handoff notes`
+
+### Additional follow-up now completed
+- added `GET /debug/leases/anomalies` for anomaly-oriented lease/debug inspection
+- added `docs/runtime/distributed-deployment-guide.md`
+- added `docs/reference/non-critical-shared-state-boundary.md`
+- refreshed deepwiki reference to reflect completed observability/fault-injection progress
 
 ### Recent regression pass
 Executed:
@@ -329,6 +336,13 @@ README 已更新：
 - `e19cf69` — `test: cover finalize and reconciler overlap recovery boundaries`
 - `87ae6f2` — `docs: refresh README for current distributed runtime state`
 - `1fe6f85` — `docs: update PR handoff notes with observability addendum`
+- `ba69613` — `docs: sync final PR body into handoff notes`
+
+### 本轮后续补充（已完成）
+- 新增 `GET /debug/leases/anomalies`，用于 anomaly-oriented lease / recovery 排障
+- 新增 `docs/runtime/distributed-deployment-guide.md`
+- 新增 `docs/reference/non-critical-shared-state-boundary.md`
+- 更新 deepwiki distributed reference，重排当前剩余 gap 与 next iteration
 
 ### 定向回归结果
 ```bash

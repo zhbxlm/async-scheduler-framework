@@ -285,6 +285,7 @@ curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
 curl 'http://127.0.0.1:8000/reconciler/history?task_id=<task_id>'
 curl http://127.0.0.1:8000/debug/summary
 curl http://127.0.0.1:8000/debug/leases
+curl http://127.0.0.1:8000/debug/leases/anomalies
 curl 'http://127.0.0.1:8000/debug/leases?task_status=running&locked_only=true'
 curl 'http://127.0.0.1:8000/debug/leases?worker_id=<worker_id>'
 curl http://127.0.0.1:8000/debug/leases/<task_id>
@@ -292,6 +293,7 @@ curl http://127.0.0.1:8000/debug/leases/<task_id>
 
 推荐排障顺序：
 - 先看 `/debug/summary`，快速判断是否存在 `running_without_lock_count`、`locked_but_terminal_count`、`abandoned_but_running_count` 这类异常计数
+- 再看 `/debug/leases/anomalies`，直接定位 suspicious states
 - 再用 `/debug/leases` 按 `worker_id` / `task_status` / `attempt_status` / `locked_only` 过滤可疑任务
 - 最后用 `/debug/leases/<task_id>` 看单任务 lease / latest attempt 详情
 
@@ -342,7 +344,7 @@ curl http://127.0.0.1:8000/debug/leases/<task_id>
 - `TaskReconciler`：orphan recovery / distributed repair gating
 - `TaskCompletionNode`：终态持久化优先、回调失败不回滚终态
 - executor / consumer / worker：retry exhaustion 语义已经对齐收敛
-- observability：已有 `/debug/summary`、`/debug/leases`、`/workers/<worker_id>/leases` 等排障端点
+- observability：已有 `/debug/summary`、`/debug/leases`、`/debug/leases/anomalies`、`/workers/<worker_id>/leases` 等排障端点
 
 ### 当前验证覆盖
 
@@ -516,6 +518,12 @@ registry.register(
     enabled=True,
 )
 ```
+
+## 运行与架构参考文档
+
+- `docs/runtime/distributed-deployment-guide.md`：如何以 true distributed mode 运行当前仓库
+- `docs/reference/non-critical-shared-state-boundary.md`：哪些路径必须共享状态，哪些路径可以继续保持本地/聚合视图
+- `docs/reference/deepwiki-distributed-architecture-reference.md`：deepwiki 对齐状态、剩余 gap 与下一步建议
 
 ## DeepWiki 分布式对齐路线图
 

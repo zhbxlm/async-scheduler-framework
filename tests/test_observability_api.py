@@ -7,7 +7,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from async_scheduler.api.app import app
-from async_scheduler.core.models import ExecutionAttemptCreate, TaskCreate, TaskStatus
+from async_scheduler.core.models import ExecutionAttemptCreate, ExecutionAttemptStatus, TaskCreate, TaskStatus
 from async_scheduler.distributed.worker_registry import WorkerInfo
 from async_scheduler.persistence import (
     ExecutionAttemptRepository,
@@ -317,6 +317,43 @@ class TestObservabilityApi:
         assert filtered_body["items"][0]["task_id"] == task_a.id
         assert filtered_body["filters"]["worker_id"] == "worker-list-a"
         assert filtered_body["filters"]["locked_only"] is True
+
+    async def test_debug_lease_anomalies_endpoint_lists_suspicious_states(self) -> None:
+        transport = ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            from async_scheduler.api.app import services
+
+            assert services is not None
+            assert services.lock_backend is not None
+
+            async with get_session() as session:
+                task = await TaskRepository.create(session, TaskCreate(name="anomaly-task", payload={}))
+                await TaskRepository.update(session, task.id, status=TaskStatus.RUNNING)
+                attempt = await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task.id,
+                        worker_id="worker-anomaly",
+                        retry_index=0,
+                        lease_token="lease-anomaly",
+                    ),
+                )
+                await ExecutionAttemptRepository.update(
+                    session,
+                    attempt.id,
+                    status=ExecutionAttemptStatus.ABANDONED,
+                )
+
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/debug/leases/anomalies")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] >= 1
+        matching = [item for item in body["items"] if item["task_id"] == task.id]
+        assert matching
+        assert "running_without_lock" in matching[0]["anomaly_types"]
+        assert "abandoned_but_running" in matching[0]["anomaly_types"]
 
     async def test_health_and_queue_stats_include_observability_counts(self) -> None:
         transport = ASGITransport(app=app)
