@@ -130,6 +130,10 @@ class TaskExecutor:
                 break
 
             finally:
+                if 'cancel_wait_task' in locals() and not cancel_wait_task.done():
+                    cancel_wait_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await cancel_wait_task
                 self._running_tasks.pop(task.id, None)
                 self._cancellation_events.pop(task.id, None)
 
@@ -140,7 +144,11 @@ class TaskExecutor:
         ):
             result.should_retry = False
         else:
-            result.should_retry = task.max_retries > 0
+            # execute() already consumes the full retry budget internally.
+            # When it returns a failed result, there is no remaining in-executor
+            # retry opportunity, so the caller must not requeue solely based on
+            # max_retries being configured.
+            result.should_retry = False
         return result
 
     async def cancel(self, task_id: str) -> bool:

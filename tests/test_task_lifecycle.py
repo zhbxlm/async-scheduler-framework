@@ -177,7 +177,7 @@ class TestTaskLifecycle:
         assert result.should_retry is False
 
     async def test_executor_retry(self, executor):
-        """Test executor retry on failure."""
+        """Test executor reports no further retry after retries are exhausted."""
 
         async def failing_handler(payload):
             raise Exception("Task failed")
@@ -193,7 +193,7 @@ class TestTaskLifecycle:
 
         assert result.success is False
         assert result.error is not None
-        assert result.should_retry is True  # Should retry after first failure
+        assert result.should_retry is False
 
     async def test_executor_timeout(self, executor):
         """Test executor timeout."""

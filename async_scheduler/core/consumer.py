@@ -173,20 +173,21 @@ class TaskConsumer:
                 error_message = None
                 result_data = result.result
                 attempt_status = ExecutionAttemptStatus.SUCCEEDED
-            elif result.should_retry:
-                final_status = TaskStatus.RETRY
-                error_message = str(result.error) if result.error else "Unknown error"
-                result_data = None
-                attempt_status = ExecutionAttemptStatus.FAILED
             else:
                 final_status = TaskStatus.FAILED
                 error_message = str(result.error) if result.error else "Unknown error"
                 result_data = None
                 attempt_status = ExecutionAttemptStatus.FAILED
 
-            await self._completion_node.finalize(task, final_status, error_message=error_message, result=result_data)
+            await self._completion_node.finalize(
+                task,
+                final_status,
+                error_message=error_message,
+                result=result_data,
+                finalize_latest_attempt=attempt_id is not None and attempt_status != ExecutionAttemptStatus.ABANDONED,
+            )
 
-            if attempt_id is not None:
+            if attempt_id is not None and attempt_status == ExecutionAttemptStatus.ABANDONED:
                 async with get_session() as session:
                     await ExecutionAttemptRepository.finalize(
                         session,
@@ -196,21 +197,15 @@ class TaskConsumer:
                         result_payload=result_data,
                     )
 
-            if final_status == TaskStatus.RETRY:
-                task.retry_count += 1
-                await self._queue_manager.enqueue(task)
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
-            await self._completion_node.finalize(task, TaskStatus.FAILED, error_message=str(e))
-            if attempt_id is not None:
-                async with get_session() as session:
-                    await ExecutionAttemptRepository.finalize(
-                        session,
-                        attempt_id,
-                        status=ExecutionAttemptStatus.FAILED,
-                        error_message=str(e),
-                    )
+            await self._completion_node.finalize(
+                task,
+                TaskStatus.FAILED,
+                error_message=str(e),
+                finalize_latest_attempt=attempt_id is not None,
+            )
         finally:
             if heartbeat_task is not None:
                 heartbeat_task.cancel()

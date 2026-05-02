@@ -1,8 +1,8 @@
 # Deepwiki Distributed Architecture Reference
 
-Date: 2026-05-01
+Date: 2026-05-02
 Project: async-scheduler-framework
-Status: Working reference
+Status: Updated to reflect current progress
 
 ## Purpose
 
@@ -12,6 +12,22 @@ in this codebase.
 
 It is not a product spec. It is an engineering reference for future iteration,
 code review, and gap tracking.
+
+## Key Updates Since Last Version
+
+- **Lua/CAS‑style atomicity**: lock release/extend and queue promote/reprioritize/cancel operations now have
+  Redis‑backed Lua‑atomic implementations.
+- **live Redis verification**: optional live‑Redis smoke, recovery, overlap, multi‑worker race, and end‑to‑end
+  consumer‑loop tests are now part of the repository (run when `TEST_REDIS_URL` is set).
+- **attempt‑task consistency**: completion path now converges the latest non‑terminal execution attempt together
+  with task terminalization; consumer, reconciler, and completion are aligned.
+- **observability expansion**: worker listing & detail, latest‑attempt, attempt history, repair‑history filtering,
+  health/queue‑stats improvements, and a unified `/debug/summary` endpoint are now available.
+- **semantic refinement**: lease‑loss path now leads to `TaskStatus.FAILED` and `ExecutionAttemptStatus.ABANDONED`;
+  ordinary handler failure leads to `TaskStatus.RETRY` and `ExecutionAttemptStatus.FAILED`.
+
+These updates move the repository from a **pure transition‑state skeleton** to a **partial real‑Redis‑backed
+kernel with validated concurrency/recovery semantics**.
 
 ---
 
@@ -47,8 +63,10 @@ Current repository mapping:
 
 Current status:
 - queue contract is implemented
-- current backend is Redis-shaped / process-local
-- not yet backed by real external Redis server state
+- **queue promote, reprioritize, cancel operations are backed by Lua‑atomic Redis‑backed implementation**
+- queue size, scheduled membership, task payload storage, and delayed‑task promotion are backed by real Redis keys
+- **opt‑in live Redis verification passes multi‑worker race and delayed‑promotion scenarios**
+- process‑local state is retained only as a deterministic fallback path when no Redis client is available
 
 ### 2.2 Ownership semantics
 
@@ -64,8 +82,10 @@ Current repository mapping:
 
 Current status:
 - lease contract is implemented
-- token-safe acquire / extend / release works
-- current lock backend is Redis-shaped / process-local
+- **release and extend operations are backed by Lua‑atomic Redis‑backed implementation**
+- **opt‑in live Redis verification passes lease‑loss, duplicate‑completion, and dead‑owner recovery scenarios**
+- token‑safe acquire / extend / release / is_locked work with real Redis keys
+- process‑local lease state is retained only as a deterministic fallback path when no Redis client is available
 
 ### 2.3 Worker liveness semantics
 
@@ -81,7 +101,8 @@ Current repository mapping:
 
 Current status:
 - registration / heartbeat / stale detection implemented
-- current backend is Redis-shaped / process-local
+- worker liveness keys are backed by real Redis hashes + ttl when a Redis client is available
+- process‑local worker state is retained only as a deterministic fallback path when no Redis client is available
 
 ### 2.4 Execution attempt semantics
 
@@ -98,6 +119,11 @@ Current repository mapping:
 Current status:
 - durable attempt modeling implemented
 - attempt claim / running / terminal transitions are persisted
+- latest-attempt convergence rules are now partially enforced by completion + consumer paths
+- important semantic split is preserved:
+  - task `FAILED` after executor retry-budget exhaustion corresponds to attempt `FAILED`
+  - task `FAILED` due to lease loss corresponds to attempt `ABANDONED`
+  - task `SUCCESS` should converge latest non-terminal attempt to `SUCCEEDED`
 
 ### 2.5 Completion semantics
 
@@ -113,15 +139,17 @@ Current repository mapping:
 Current status:
 - idempotent completion semantics implemented
 - dedupe backend is injectable
-- default runtime can use Redis-shaped shared dedupe semantics in-process
-- still not real external Redis-backed shared state
+- **completion‑dedup keys are backed by real Redis storage**
+- completion path can optionally converge the latest non‑terminal execution attempt together with task terminalization
+- **opt‑in live Redis verification passes duplicate‑completion, completion‑overlap, and multi‑worker race scenarios**
+- process‑local dedupe state is retained only as a deterministic fallback path when no Redis client is available
 
 ### 2.6 Repair semantics
 
 Expected behavior:
 - stale running task with dead worker + dead lease gets repaired
 - live worker / live lease task must not be stolen
-- concurrent reconcilers must not double-repair same task
+- concurrent reconcilers must not double‑repair same task
 - repair must update durable task and attempt records
 
 Current repository mapping:
@@ -130,7 +158,8 @@ Current repository mapping:
 Current status:
 - distributed repair v2 minimal version implemented
 - reconciler repair lock implemented
-- stale-task requeue and abandoned-attempt marking implemented
+- stale‑task requeue and abandoned‑attempt marking implemented
+- **repair audit history (up to 1000 entries) is now available via `/reconciler/history` endpoint with filtering by action/task_id**
 
 ---
 
@@ -167,15 +196,31 @@ Covered today by repository tests:
 - lock acquire / extend / release / expiry semantics
 - worker heartbeat / stale detection
 - execution attempt persistence lifecycle
-- two-worker claim race converges to single executor
+- two‑worker claim race converges to single executor
 - heartbeat updates running attempt state
 - duplicate completion converges safely
 - stale leased task can be requeued by reconciler
 - active leased task is not stolen
-- two reconcilers do not double-repair same task
-- multi-worker integration path works
-- dead-worker recovery path works
-- lease-loss path ends in controlled failure
+- two reconcilers do not double‑repair same task
+- multi‑worker integration path works
+- dead‑worker recovery path works
+- lease‑loss path ends in controlled failure (`TaskStatus.FAILED` + `ExecutionAttemptStatus.ABANDONED`)
+- latest‑attempt convergence for success / retry / lease‑loss paths
+- completion / reconciler overlap convergence semantics
+- duplicate completion / reconciler overlap convergence semantics
+- **live Redis verification suite now includes:**
+  - smoke (atomic lock/queue Lua operations)
+  - recovery (dead worker, dead lease)
+  - overlap (completion + reconciler races)
+  - duplicate completion + reconciler overlap
+  - lease loss + final‑completion race
+  - attempt‑consistency overlap (reconciler marks `ABANDONED` first)
+  - multi‑worker + duplicate‑completion overlap
+  - delayed‑promotion + multi‑worker race
+  - dead‑owner + new‑worker recovery
+  - end‑to‑end consumer loop (queue → lock → dedup → registry → reconciler)
+  - external‑job crash & recovery
+  - retry‑budget exhaustion converging to terminal failure without requeue
 
 ---
 
@@ -183,12 +228,15 @@ Covered today by repository tests:
 
 ### 5.1 Real Redis-backed shared state
 
-Still needed for stronger parity:
-- real Redis client wiring
-- shared queue keys in Redis
-- shared lease keys in Redis
-- shared worker heartbeat keys in Redis
-- shared completion dedupe keys in Redis
+Progress since last version:
+- **critical lock/queue Lua‑atomic paths are now backed by real Redis keys**
+- **worker heartbeat keys are already backed by real Redis keys**
+- **completion dedupe keys are already backed by real Redis keys**
+- **live Redis verification suite provides confidence that these paths work under real Redis**
+
+Remaining gaps to stronger parity:
+- real Redis client wiring for remaining non‑critical runtime paths outside the critical distributed kernel
+- complete replacement of remaining Redis-shaped fallback-oriented code paths where true shared state is still desired
 
 ### 5.2 Stronger failure injection
 
@@ -201,11 +249,17 @@ Recommended additional scenarios:
 
 ### 5.3 Control-plane observability
 
+Progress since last version:
+- **worker listing endpoint (`/workers`) with detail (`/workers/{id}`)**
+- **attempt inspection endpoints (`/tasks/{id}/attempts/latest`, `/tasks/{id}/attempts`)**
+- **repair audit log view (`/reconciler/history`) with filtering by action/task_id**
+- **health/queue‑stats now include worker and repair‑history counts**
+- **unified debug summary endpoint (`/debug/summary`) that aggregates health, queue, workers, and reconciler data**
+
 Useful future additions:
-- worker listing endpoint
-- attempt inspection endpoint
-- repair audit log view
 - lease / heartbeat debug endpoint
+- real‑time queue depth monitoring (WebSocket)
+- worker‑specific current lease / attempt listing
 
 ---
 
@@ -217,24 +271,30 @@ This repository has already crossed from:
 
 into:
 
-- a working distributed-kernel skeleton with recovery semantics
+- a working distributed‑kernel skeleton with recovery semantics
+- a **partial real‑Redis transition state with atomic lock/queue critical paths and opt‑in live Redis verification**
+- **a verified concurrency matrix covering duplicate‑completion, lease‑loss, dead‑owner recovery, multi‑worker race, and end‑to‑end consumer loop scenarios**
 
 But it has not fully crossed into:
 
-- real external Redis-backed multi-process shared-state implementation
+- real external Redis‑backed multi‑process shared‑state implementation for all non‑critical paths
 
 So the correct description today is:
 
-> deepwiki-aligned distributed execution kernel skeleton with tested claim,
-> lease, liveness, attempt, idempotency, and repair semantics; current Redis
-> components remain Redis-shaped stand-ins pending real shared-state wiring.
+> deepwiki‑aligned distributed execution kernel with tested claim,
+> lease, liveness, attempt, idempotency, repair, and attempt‑consistency semantics;
+> the repository now includes **real Redis‑backed critical shared-state paths,
+> Lua/CAS‑style atomicity for lock/queue operations, opt‑in live Redis verification
+> covering overlap/recovery/multi‑worker/delayed‑promotion/retry‑exhaustion scenarios,
+> and a growing control‑plane observability layer** – but it is not yet a fully
+> production‑grade distributed runtime across every non‑critical path.
 
 ---
 
 ## 7. Recommended Next Iteration
 
-1. replace Redis-shaped backends with real redis-py backed implementations
-2. keep current tests as semantic contract tests
-3. add stronger fault injection matrix
-4. add operational observability endpoints
-5. document runtime configuration for true distributed deployment
+1. **complete replacement of Redis‑shaped backends with real redis‑py implementations**
+2. keep current tests as semantic contract tests and **extend live Redis verification suite**
+3. **strengthen fault‑injection matrix** (e.g., partial work + crash, network partition simulations)
+4. **expand operational observability endpoints** (lease/heartbeat debug, real‑time monitoring)
+5. document runtime configuration for true distributed deployment (multi‑process, multi‑node, Redis connection pooling)
