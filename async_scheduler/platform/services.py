@@ -92,8 +92,10 @@ async def build_service_container(
             )
         else:
             queue_backend = factory.create_queue_backend()
+            worker_registry = WorkerRegistry(redis_url=backend_config.redis_url or "redis://localhost:6379/0")
     else:
         queue_backend = None
+        worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0")
 
     step_executors = StepExecutors(enable_metrics=True)
     callback_dispatcher = CallbackDispatcher()

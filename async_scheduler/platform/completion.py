@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Any, Callable
 
 from async_scheduler.backends.base import CompletionDedupBackend
-from async_scheduler.core.models import Task, TaskStatus
-from async_scheduler.persistence import TaskRepository, get_session, get_session_no_context
+from async_scheduler.core.models import ExecutionAttemptStatus, Task, TaskStatus
+from async_scheduler.persistence import ExecutionAttemptRepository, TaskRepository, get_session, get_session_no_context
 from async_scheduler.platform.callback import CallbackDispatcher
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ class TaskCompletionNode:
         *,
         error_message: str | None = None,
         result: dict[str, Any] | None = None,
+        finalize_latest_attempt: bool = False,
     ) -> Task | None:
         completion_key = f"{task.id}:{status.value}"
 
@@ -114,6 +115,24 @@ class TaskCompletionNode:
                 error_message=error_message,
                 result=result,
             )
+            if updated is not None and finalize_latest_attempt:
+                latest_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+                attempt_status = self._map_attempt_status(status)
+                if latest_attempt is not None and attempt_status is not None:
+                    terminal_attempt_statuses = {
+                        ExecutionAttemptStatus.SUCCEEDED,
+                        ExecutionAttemptStatus.FAILED,
+                        ExecutionAttemptStatus.CANCELLED,
+                        ExecutionAttemptStatus.ABANDONED,
+                    }
+                    if latest_attempt.status not in terminal_attempt_statuses:
+                        await ExecutionAttemptRepository.finalize(
+                            session,
+                            latest_attempt.id,
+                            status=attempt_status,
+                            error_message=error_message,
+                            result_payload=result,
+                        )
 
         if not updated:
             logger.warning("Failed to persist final state for task %s", task.id)
@@ -140,6 +159,15 @@ class TaskCompletionNode:
                 logger.exception("Completion handler failed for task %s", task.id)
 
         return updated
+
+    def _map_attempt_status(self, status: TaskStatus) -> ExecutionAttemptStatus | None:
+        if status == TaskStatus.SUCCESS:
+            return ExecutionAttemptStatus.SUCCEEDED
+        if status in {TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.RETRY}:
+            return ExecutionAttemptStatus.FAILED
+        if status == TaskStatus.CANCELLED:
+            return ExecutionAttemptStatus.CANCELLED
+        return None
 
     async def _dispatch_callback(
         self,

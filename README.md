@@ -2,7 +2,7 @@
 
 一个本地可运行并已演进到 **分布式执行内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
 
-> 当前仓库已具备 **Redis transition-state distributed kernel semantics**：包括 queue、lease、worker heartbeat、execution attempts、completion idempotency、distributed reconciler 和 multi-worker / recovery 测试覆盖。当前状态不是纯 stand-in：queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径，并有 shared-client integration 与 recovery invariant 测试保护；但它也还不是生产级真实 Redis 方案，Lua/CAS 级原子化与 live Redis integration 仍未完成。
+> 当前仓库已具备 **partial real-Redis transition-state distributed kernel semantics**：包括 queue、lease、worker heartbeat、execution attempts、completion idempotency、distributed reconciler、attempt-consistency 收敛，以及 multi-worker / recovery / overlap 测试覆盖。当前状态已经不再是纯 stand-in：queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径；lock 与 queue 的关键路径已补入 Lua/CAS-style 原子化；并且已经提供 shared-client integration、recovery invariant、以及 opt-in 的 live Redis smoke / recovery / overlap / consumer-recovery 验证套件。与此同时，它仍然不是最终形态的生产级外部 Redis 共享状态运行时：更完整的 live Redis 矩阵、可观测性、以及进一步的生产硬化仍在后续阶段。
 
 - FastAPI 任务 API
 - SQLite 持久化
@@ -115,6 +115,34 @@ python3 scripts/distributed_smoke_test.py
 - 如果环境中可用 `fakeredis.aioredis`，再追加跑一层 fakeredis compatibility smoke
 - 在缺少 fakeredis 模块时以 skip 方式降级，而不是报错失败
 
+如果你已经准备了可访问的真实 Redis / Redis-compatible 环境，还可以执行：
+
+```bash
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_smoke_test.py
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py                 # all
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py smoke           # smoke only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py recovery        # recovery only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap         # overlap/race only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap --fail-fast
+
+# or run individual live Redis segments
+pytest -q tests/integration/test_live_redis_smoke.py
+pytest -q tests/integration/test_live_redis_recovery.py
+pytest -q tests/integration/test_live_redis_completion_overlap.py
+pytest -q tests/integration/test_live_redis_duplicate_completion_overlap.py
+pytest -q tests/integration/test_live_redis_lease_loss_completion_race.py
+pytest -q tests/integration/test_live_redis_attempt_consistency_overlap.py
+pytest -q tests/integration/test_live_redis_multi_worker_overlap.py
+pytest -q tests/integration/test_live_redis_multi_worker_delayed_promotion.py
+pytest -q tests/integration/test_live_redis_multi_worker_dead_owner_recovery.py
+pytest -q tests/integration/test_live_redis_end_to_end_consumer_loop.py
+pytest -q tests/integration/test_live_redis_consumer_recovery.py
+```
+
+说明：
+- `tests/integration/test_live_redis_smoke.py` 仅在设置 `TEST_REDIS_URL` 时运行
+- 未设置环境变量时会自动 skip，不影响默认本地回归
+
 ## 常用 CLI
 
 ### 创建任务
@@ -147,7 +175,12 @@ async-scheduler reconcile
 
 ```bash
 curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/queue/stats
 ```
+
+说明：
+- `/health` 现在包含 `worker_count` 与 `repair_history_count`
+- `/queue/stats` 现在包含 `worker_count` 与 `reconciler_running`
 
 ### 创建租户
 
@@ -200,6 +233,19 @@ curl -X POST http://127.0.0.1:8000/schedules/<schedule_id>/resume
 
 ```bash
 curl -X POST http://127.0.0.1:8000/reconciler/run
+```
+
+### 查看 Attempt 与 Worker / Repair 诊断信息
+
+```bash
+curl http://127.0.0.1:8000/tasks/<task_id>/attempts
+curl http://127.0.0.1:8000/tasks/<task_id>/attempts/latest
+curl http://127.0.0.1:8000/workers
+curl http://127.0.0.1:8000/workers/<worker_id>
+curl http://127.0.0.1:8000/reconciler/history
+curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
+curl 'http://127.0.0.1:8000/reconciler/history?task_id=<task_id>'
+curl http://127.0.0.1:8000/debug/summary
 ```
 
 ## 端到端 Demo

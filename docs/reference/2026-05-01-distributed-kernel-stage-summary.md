@@ -44,6 +44,13 @@ The repository now has:
 - partial real Redis-backed client paths for queue / lock / completion dedupe / worker registry
 - shared coordination-path integration proof for the Redis transition state
 - queue / lock concurrency invariant coverage for the Redis transition state
+- latest-attempt convergence rules on core completion / consumer paths
+- explicit semantic split between task terminal state and attempt terminal state:
+  - task `RETRY` can mean attempt `FAILED`
+  - task `FAILED` after lease loss should mean attempt `ABANDONED`
+  - task `SUCCESS` should converge latest non-terminal attempt to `SUCCEEDED`
+- opt-in live Redis verification for smoke / overlap / recovery / consumer recovery paths
+- unified live Redis suite entrypoint via `scripts/live_redis_suite.py`
 
 ## What Is Not Yet True
 
@@ -51,7 +58,8 @@ The project is not yet at a production-grade real external Redis shared-state ru
 Current Redis support is a transition state:
 - the main coordination components now support real async Redis client paths
 - deterministic fake-client integration tests prove the shared-state coordination flow
-- but full live-Redis integration, Lua/CAS-grade atomicity, and production hardening are not finished yet
+- opt-in live Redis tests now cover smoke / overlap / recovery scenarios
+- but full production deployment hardening, broader live-Redis matrices, and complete observability are not finished yet
 
 ## Recommended Next Stage
 

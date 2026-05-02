@@ -185,6 +185,22 @@ class ExecutionAttemptRepository:
         db_attempt = result.scalar_one_or_none()
         return ExecutionAttempt.model_validate(db_attempt) if db_attempt else None
 
+    @staticmethod
+    async def list_for_task(
+        session: AsyncSession,
+        task_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ExecutionAttempt]:
+        result = await session.execute(
+            select(ExecutionAttemptORM)
+            .where(ExecutionAttemptORM.task_id == task_id)
+            .order_by(ExecutionAttemptORM.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [ExecutionAttempt.model_validate(row) for row in result.scalars().all()]
+
 
 class ScheduleRepository:
     """Repository for Schedule operations."""

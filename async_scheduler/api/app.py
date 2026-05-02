@@ -14,6 +14,7 @@ from async_scheduler.core.models import (
     DAGCreate,
     DAGNode,
     DAGNodeExecution,
+    ExecutionAttempt,
     Schedule,
     ScheduleCreate,
     ScheduleStatus,
@@ -22,7 +23,14 @@ from async_scheduler.core.models import (
     TaskStatus,
 )
 from async_scheduler.core.models import Tenant, TenantCreate, TenantUpdate
-from async_scheduler.persistence import DAGRepository, get_session, ScheduleRepository, TaskRepository, TenantRepository
+from async_scheduler.persistence import (
+    DAGRepository,
+    ExecutionAttemptRepository,
+    ScheduleRepository,
+    TaskRepository,
+    TenantRepository,
+    get_session,
+)
 from async_scheduler.platform import QuotaExceededError
 from async_scheduler.platform import ServiceContainer, build_service_container
 
@@ -105,6 +113,11 @@ class DAGExecuteResponse(BaseModel):
     status: str
 
 
+class ExecutionAttemptResponse(ExecutionAttempt):
+    """Execution attempt response model."""
+    pass
+
+
 # API Routes
 
 
@@ -121,6 +134,12 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    worker_count = 0
+    if services and services.worker_registry is not None:
+        worker_count = len(await services.worker_registry.list_workers(include_stale=False))
+    repair_history_count = 0
+    if services:
+        repair_history_count = len(services.reconciler.list_repair_history(limit=1000, offset=0))
     return {
         "status": "healthy",
         "queue_size": services.queue_manager.get_queue_count() if services else 0,
@@ -128,6 +147,8 @@ async def health():
         "consumer_running": services.task_consumer.is_running() if services else False,
         "scheduler_running": services.cron_scheduler.is_running() if services else False,
         "reconciler_running": services.reconciler.is_running() if services else False,
+        "worker_count": worker_count,
+        "repair_history_count": repair_history_count,
     }
 
 
@@ -167,6 +188,34 @@ async def list_tasks(
     async with get_session() as session:
         tasks = await TaskRepository.list_all(session, status=status, limit=limit, offset=offset)
         return [TaskResponse.model_validate(t) for t in tasks]
+
+
+@app.get("/tasks/{task_id}/attempts", response_model=list[ExecutionAttemptResponse])
+async def list_attempts_for_task(
+    task_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """List execution attempts for a task."""
+    async with get_session() as session:
+        task = await TaskRepository.get(session, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        attempts = await ExecutionAttemptRepository.list_for_task(session, task_id, limit=limit, offset=offset)
+        return [ExecutionAttemptResponse.model_validate(attempt) for attempt in attempts]
+
+
+@app.get("/tasks/{task_id}/attempts/latest", response_model=ExecutionAttemptResponse)
+async def get_latest_attempt(task_id: str):
+    """Get the latest execution attempt for a task."""
+    async with get_session() as session:
+        task = await TaskRepository.get(session, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task_id)
+        if not attempt:
+            raise HTTPException(status_code=404, detail="Execution attempt not found")
+        return ExecutionAttemptResponse.model_validate(attempt)
 
 
 @app.post("/tasks/{task_id}/cancel")
@@ -367,12 +416,61 @@ async def queue_stats():
         raise HTTPException(status_code=503, detail="Queue manager not available")
 
     sizes = await services.queue_manager.size()
+    worker_count = 0
+    if services.worker_registry is not None:
+        worker_count = len(await services.worker_registry.list_workers(include_stale=False))
 
     return {
         "queue_sizes": sizes,
         "total_queued": services.queue_manager.get_queue_count(),
         "scheduled_count": services.queue_manager.get_scheduled_count(),
         "running_tasks": services.task_executor.get_running_count(),
+        "worker_count": worker_count,
+        "reconciler_running": services.reconciler.is_running(),
+    }
+
+
+@app.get("/debug/summary")
+async def debug_summary():
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    queue_sizes = await services.queue_manager.size()
+    workers = []
+    if services.worker_registry is not None:
+        workers = await services.worker_registry.list_workers(include_stale=True)
+    repair_metrics = services.reconciler.get_metrics()
+    repair_history = services.reconciler.list_repair_history(limit=10, offset=0)
+
+    return {
+        "health": {
+            "consumer_running": services.task_consumer.is_running(),
+            "scheduler_running": services.cron_scheduler.is_running(),
+            "reconciler_running": services.reconciler.is_running(),
+        },
+        "queue": {
+            "sizes": queue_sizes,
+            "total_queued": services.queue_manager.get_queue_count(),
+            "scheduled_count": services.queue_manager.get_scheduled_count(),
+            "running_tasks": services.task_executor.get_running_count(),
+        },
+        "workers": {
+            "count": len(workers),
+            "items": [worker.__dict__ for worker in workers],
+        },
+        "reconciler": {
+            "metrics": {
+                "total_runs": repair_metrics.total_runs,
+                "stuck_tasks_found": repair_metrics.stuck_tasks_found,
+                "tasks_repaired": repair_metrics.tasks_repaired,
+                "tasks_ignored": repair_metrics.tasks_ignored,
+                "tasks_requeued": repair_metrics.tasks_requeued,
+                "last_run_at": repair_metrics.last_run_at,
+                "last_repaired_count": repair_metrics.last_repaired_count,
+                "repair_rate": repair_metrics.get_repair_rate(),
+            },
+            "recent_history": repair_history,
+        },
     }
 
 
@@ -401,12 +499,57 @@ async def reconciler_stats():
     }
 
 
+@app.get("/workers")
+async def list_workers(include_stale: bool = Query(False)):
+    if not services or services.worker_registry is None:
+        raise HTTPException(status_code=503, detail="Worker registry not available")
+    workers = await services.worker_registry.list_workers(include_stale=include_stale)
+    return {
+        "items": [worker.__dict__ for worker in workers],
+        "count": len(workers),
+        "include_stale": include_stale,
+    }
+
+
+@app.get("/workers/{worker_id}")
+async def get_worker(worker_id: str):
+    if not services or services.worker_registry is None:
+        raise HTTPException(status_code=503, detail="Worker registry not available")
+    workers = await services.worker_registry.list_workers(include_stale=True)
+    for worker in workers:
+        if worker.worker_id == worker_id:
+            return worker.__dict__
+    raise HTTPException(status_code=404, detail="Worker not found")
+
+
 @app.post("/reconciler/run")
 async def run_reconciler_once():
     if not services:
         raise HTTPException(status_code=503, detail="Services not available")
     repaired = await services.reconciler.reconcile()
     return {"repaired": repaired}
+
+
+@app.get("/reconciler/history")
+async def reconciler_history(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    action: str | None = Query(None),
+    task_id: str | None = Query(None),
+):
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+    items = services.reconciler.list_repair_history(
+        limit=limit,
+        offset=offset,
+        action=action,
+        task_id=task_id,
+    )
+    return {
+        "items": items,
+        "count": len(items),
+        "filters": {"action": action, "task_id": task_id},
+    }
 
 
 @app.get("/capabilities")

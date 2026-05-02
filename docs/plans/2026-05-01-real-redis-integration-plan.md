@@ -44,7 +44,7 @@ and completion dedupe can work together as one distributed coordination chain.
 - [x] document how to plug a real async Redis client
 - [x] document Redis transition integration test entrypoints and fakeredis skip behavior
 - [x] add dedicated distributed smoke variant for shared fake-client path with optional fakeredis compatibility check
-- [ ] add dedicated distributed smoke variant against a live Redis-compatible backend
+- [x] add dedicated distributed smoke variant against a live Redis-compatible backend
 
 ## Verification
 - `pytest -q tests/integration/test_real_redis_coordination.py`

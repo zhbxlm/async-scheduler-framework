@@ -46,6 +46,11 @@ async def drop_db() -> None:
         await conn.run_sync(Base.metadata.drop_all)
 
 
+async def close_db() -> None:
+    """Dispose database engine and close pooled connections."""
+    await engine.dispose()
+
+
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Get a database session."""

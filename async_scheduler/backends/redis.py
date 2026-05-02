@@ -14,6 +14,7 @@ import asyncio
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta
+from textwrap import dedent
 from typing import Any
 
 try:
@@ -72,6 +73,63 @@ class RedisCompletionDedupBackend(CompletionDedupBackend):
         return f"{self._namespace}:completion:{key}"
 
 
+COMPARE_DELETE_SCRIPT = dedent(
+    """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    end
+    return 0
+    """
+).strip()
+
+COMPARE_EXPIRE_SCRIPT = dedent(
+    """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('expire', KEYS[1], tonumber(ARGV[2]))
+    end
+    return 0
+    """
+).strip()
+
+QUEUE_PROMOTE_SCRIPT = dedent(
+    """
+    if redis.call('zrem', KEYS[1], ARGV[1]) == 1 then
+        redis.call('srem', KEYS[2], ARGV[2])
+        redis.call('rpush', KEYS[3], ARGV[2])
+        redis.call('hset', KEYS[4], ARGV[2], ARGV[1])
+        return 1
+    end
+    return 0
+    """
+).strip()
+
+QUEUE_REPRIORITIZE_SCRIPT = dedent(
+    """
+    if redis.call('lrem', KEYS[1], 1, ARGV[1]) == 1 then
+        redis.call('rpush', KEYS[2], ARGV[2])
+        return 1
+    end
+    return 0
+    """
+).strip()
+
+QUEUE_REMOVE_READY_SCRIPT = dedent(
+    """
+    return redis.call('lrem', KEYS[1], 1, ARGV[1])
+    """
+).strip()
+
+QUEUE_REMOVE_DELAYED_SCRIPT = dedent(
+    """
+    if redis.call('zrem', KEYS[1], ARGV[1]) == 1 then
+        redis.call('srem', KEYS[2], ARGV[2])
+        return 1
+    end
+    return 0
+    """
+).strip()
+
+
 class RedisLockBackend(LockBackend):
     def __init__(
         self,
@@ -93,6 +151,8 @@ class RedisLockBackend(LockBackend):
         self._guard = asyncio.Lock()
         self._leases: dict[str, LockHandle] = {}
         self._token_counter = 0
+        self._compare_delete_script = None
+        self._compare_expire_script = None
 
     async def acquire(self, key: str, ttl: float | None = None, wait: float | None = None) -> LockHandle | None:
         effective_ttl = self._lease_ttl_seconds if ttl is None else ttl
@@ -119,15 +179,7 @@ class RedisLockBackend(LockBackend):
     async def release(self, handle: LockHandle) -> bool:
         if self._client_supports_basic_ops:
             key = self._redis_key(handle.key)
-            if hasattr(self._client, "compare_delete"):
-                return bool(await self._client.compare_delete(key, handle.token))
-            current = await self._client.get(key)
-            if current != handle.token:
-                return False
-            current_after_check = await self._client.get(key)
-            if current_after_check != handle.token:
-                return False
-            deleted = await self._client.delete(key)
+            deleted = await self._compare_delete(key, handle.token)
             return bool(deleted)
         async with self._guard:
             self._purge_if_expired(handle.key)
@@ -141,19 +193,7 @@ class RedisLockBackend(LockBackend):
         if self._client_supports_basic_ops:
             key = self._redis_key(handle.key)
             ttl_int = max(1, int(ttl))
-            if hasattr(self._client, "compare_expire"):
-                extended = await self._client.compare_expire(key, handle.token, ttl_int)
-                if not extended:
-                    return False
-                handle.expires_at = datetime.utcnow() + timedelta(seconds=ttl)
-                return True
-            current = await self._client.get(key)
-            if current != handle.token:
-                return False
-            current_after_check = await self._client.get(key)
-            if current_after_check != handle.token:
-                return False
-            extended = await self._client.expire(key, ttl_int)
+            extended = await self._compare_expire(key, handle.token, ttl_int)
             if not extended:
                 return False
             handle.expires_at = datetime.utcnow() + timedelta(seconds=ttl)
@@ -174,6 +214,32 @@ class RedisLockBackend(LockBackend):
         async with self._guard:
             self._purge_if_expired(key)
             return key in self._leases
+
+    async def _compare_delete(self, key: str, token: str) -> int:
+        if hasattr(self._client, "compare_delete"):
+            return int(await self._client.compare_delete(key, token))
+        if hasattr(self._client, "eval"):
+            return int(await self._client.eval(COMPARE_DELETE_SCRIPT, 1, key, token))
+        current = await self._client.get(key)
+        if current != token:
+            return 0
+        current_after_check = await self._client.get(key)
+        if current_after_check != token:
+            return 0
+        return int(await self._client.delete(key))
+
+    async def _compare_expire(self, key: str, token: str, ttl_int: int) -> bool:
+        if hasattr(self._client, "compare_expire"):
+            return bool(await self._client.compare_expire(key, token, ttl_int))
+        if hasattr(self._client, "eval"):
+            return bool(await self._client.eval(COMPARE_EXPIRE_SCRIPT, 1, key, token, ttl_int))
+        current = await self._client.get(key)
+        if current != token:
+            return False
+        current_after_check = await self._client.get(key)
+        if current_after_check != token:
+            return False
+        return bool(await self._client.expire(key, ttl_int))
 
     def _build_handle(self, key: str, ttl: float | None) -> LockHandle:
         self._token_counter += 1
@@ -207,9 +273,12 @@ class RedisQueueBackend(QueueBackend):
         self._namespace = namespace
         self._client = client or (Redis.from_url(redis_url, decode_responses=True) if Redis is not None else None)
         self._client_supports_queue_ops = self._client is not None and all(
-            hasattr(self._client, attr) for attr in ("rpush", "lpop", "llen", "zadd", "zrangebyscore", "zrem", "delete")
+            hasattr(self._client, attr) for attr in ("rpush", "lpop", "llen", "zadd", "zrangebyscore", "zrem", "delete", "exists", "scard", "sadd", "srem", "sismember")
         )
         self._lock = asyncio.Lock()
+        self._cancelled_set_key = f"{namespace}:queue:cancelled"
+        self._task_data_key = f"{namespace}:queue:task_data"
+        self._scheduled_set_key = f"{namespace}:queue:scheduled_ids"
         self._queue_counts: defaultdict[int, int] = defaultdict(int)
         self._scheduled_ids: set[str] = set()
         self._task_index: dict[str, Task] = {}
@@ -217,25 +286,21 @@ class RedisQueueBackend(QueueBackend):
         self._ready_store: defaultdict[int, list[str]] = defaultdict(list)
         self._delayed_store: dict[str, float] = {}
 
+
     async def enqueue(self, task: Task, scheduled_at: datetime | None = None) -> None:
         serialized = self._serialize_task(task)
         if self._client_supports_queue_ops:
-            self._task_index[task.id] = task
-            self._cancelled_ids.discard(task.id)
+            await self._client.srem(self._cancelled_set_key, task.id)
             if scheduled_at and scheduled_at > datetime.utcnow():
                 await self._client.zadd(self._delayed_key(), {serialized: scheduled_at.timestamp()})
-                self._scheduled_ids.add(task.id)
+                await self._client.sadd(self._scheduled_set_key, task.id)
                 return
-            await self._client.rpush(self._ready_key(task.priority.value), serialized)
+            await self._client.hset(self._task_data_key, task.id, serialized)
+            await self._client.rpush(self._ready_key(task.priority.value), task.id)
             return
-        async with self._lock:
-            self._task_index[task.id] = task
-            self._cancelled_ids.discard(task.id)
-            if scheduled_at and scheduled_at > datetime.utcnow():
-                self._delayed_store[serialized] = scheduled_at.timestamp()
-                self._scheduled_ids.add(task.id)
-                return
-            await self._push_ready(serialized, task.priority.value)
+        if not self._client_supports_queue_ops:
+            async with self._lock:
+                await self._push_ready(serialized, task.priority.value, scheduled_at)
 
     async def dequeue(self, timeout: float | None = None) -> Task | None:
         await self._promote_due_tasks()
@@ -243,16 +308,19 @@ class RedisQueueBackend(QueueBackend):
         while True:
             if self._client_supports_queue_ops:
                 for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
-                    payload = await self._client.lpop(self._ready_key(priority.value))
-                    if payload is None:
+                    task_id = await self._client.lpop(self._ready_key(priority.value))
+                    if task_id is None:
                         continue
-                    task = self._deserialize_task(payload)
-                    if task.id in self._cancelled_ids:
-                        self._cancelled_ids.discard(task.id)
-                        self._task_index.pop(task.id, None)
+                    is_cancelled = await self._client.sismember(self._cancelled_set_key, task_id)
+                    if is_cancelled:
+                        await self._client.srem(self._cancelled_set_key, task_id)
+                        await self._client.hdel(self._task_data_key, task_id)
                         continue
-                    self._task_index.pop(task.id, None)
-                    return task
+                    payload = await self._client.hget(self._task_data_key, task_id)
+                    if not payload:
+                        continue
+                    await self._client.hdel(self._task_data_key, task_id)
+                    return self._deserialize_task(payload)
             else:
                 for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
                     queue = self._ready_store[priority.value]
@@ -274,6 +342,20 @@ class RedisQueueBackend(QueueBackend):
 
     async def peek(self, limit: int = 10) -> list[Task]:
         await self._promote_due_tasks()
+        if self._client_supports_queue_ops:
+            tasks: list[Task] = []
+            for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+                task_ids = await self._client.lrange(self._ready_key(priority.value), 0, limit - len(tasks) - 1)
+                for task_id in task_ids:
+                    is_cancelled = await self._client.sismember(self._cancelled_set_key, task_id)
+                    if is_cancelled:
+                        continue
+                    payload = await self._client.hget(self._task_data_key, task_id)
+                    if payload:
+                        tasks.append(self._deserialize_task(payload))
+                        if len(tasks) >= limit:
+                            return tasks
+            return tasks
         tasks: list[Task] = []
         for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
             values = self._ready_store[priority.value][:limit]
@@ -288,18 +370,19 @@ class RedisQueueBackend(QueueBackend):
 
     async def cancel(self, task_id: str) -> bool:
         if self._client_supports_queue_ops:
-            task = self._task_index.get(task_id)
-            if task is None:
+            await self._client.sadd(self._cancelled_set_key, task_id)
+            task_exists = await self._client.hexists(self._task_data_key, task_id)
+            if not task_exists:
                 return False
-            payload = self._serialize_task(task)
-            self._cancelled_ids.add(task_id)
+            payload = await self._client.hget(self._task_data_key, task_id)
+            if not payload:
+                return False
+            task = self._deserialize_task(payload)
             removed = 0
-            if task_id in self._scheduled_ids:
-                self._scheduled_ids.remove(task_id)
-                removed = await self._client.zrem(self._delayed_key(), payload)
+            if await self._client.sismember(self._scheduled_set_key, task_id):
+                removed = await self._remove_delayed_atomic(payload)
             else:
-                removed = await self._client.lrem(self._ready_key(task.priority.value), 1, payload)
-            self._task_index.pop(task_id, None)
+                removed = await self._remove_ready_atomic(task.priority.value, task_id)
             return bool(removed)
         async with self._lock:
             task = self._task_index.get(task_id)
@@ -316,16 +399,20 @@ class RedisQueueBackend(QueueBackend):
 
     async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
         if self._client_supports_queue_ops:
-            task = self._task_index.get(task_id)
-            if task is None or task_id in self._scheduled_ids:
+            is_scheduled = await self._client.sismember(self._scheduled_set_key, task_id)
+            if is_scheduled:
                 return False
-            old_payload = self._serialize_task(task)
-            removed = await self._client.lrem(self._ready_key(task.priority.value), 1, old_payload)
-            if not removed:
+            payload = await self._client.hget(self._task_data_key, task_id)
+            if not payload:
                 return False
+            task = self._deserialize_task(payload)
+            original_priority = task.priority
             task.priority = new_priority
-            self._task_index[task.id] = task
-            await self._client.rpush(self._ready_key(new_priority.value), self._serialize_task(task))
+            new_payload = self._serialize_task(task)
+            moved = await self._reprioritize_atomic(original_priority.value, new_priority.value, task_id, new_payload)
+            if not moved:
+                return False
+            await self._client.hset(self._task_data_key, task_id, new_payload)
             return True
         async with self._lock:
             task = self._task_index.get(task_id)
@@ -348,10 +435,10 @@ class RedisQueueBackend(QueueBackend):
         if self._client_supports_queue_ops:
             keys = [self._ready_key(priority.value) for priority in TaskPriority]
             keys.append(self._delayed_key())
+            keys.append(self._cancelled_set_key)
+            keys.append(self._task_data_key)
+            keys.append(self._scheduled_set_key)
             await self._client.delete(*keys)
-            self._scheduled_ids.clear()
-            self._task_index.clear()
-            self._cancelled_ids.clear()
             return
         async with self._lock:
             for priority in TaskPriority:
@@ -362,16 +449,31 @@ class RedisQueueBackend(QueueBackend):
             self._task_index.clear()
             self._cancelled_ids.clear()
 
-    def is_scheduled(self, task_id: str) -> bool:
+    async def is_scheduled(self, task_id: str) -> bool:
+        if self._client_supports_queue_ops:
+            return await self._client.sismember(self._scheduled_set_key, task_id)
         return task_id in self._scheduled_ids
 
-    def get_scheduled_count(self) -> int:
+    async def get_scheduled_count(self) -> int:
+        if self._client_supports_queue_ops:
+            return await self._client.scard(self._scheduled_set_key)
         return len(self._scheduled_ids)
 
-    def get_queue_count(self) -> int:
+    async def get_queue_count(self) -> int:
+        if self._client_supports_queue_ops:
+            total = 0
+            for priority in TaskPriority:
+                total += await self._client.llen(self._ready_key(priority.value))
+            return total
         return sum(self._queue_counts.values())
 
-    async def _push_ready(self, serialized: str, priority: int) -> None:
+    async def _push_ready(self, serialized: str, priority: int, scheduled_at: datetime | None = None) -> None:
+        if scheduled_at and scheduled_at > datetime.utcnow():
+            self._delayed_store[serialized] = scheduled_at.timestamp()
+            task = self._deserialize_task(serialized)
+            self._scheduled_ids.add(task.id)
+            self._task_index[task.id] = task
+            return
         self._ready_store[priority].append(serialized)
         task = self._deserialize_task(serialized)
         task.status = TaskStatus.QUEUED
@@ -383,24 +485,23 @@ class RedisQueueBackend(QueueBackend):
         if self._client_supports_queue_ops:
             due_payloads = await self._client.zrangebyscore(self._delayed_key(), float("-inf"), now)
             for payload in due_payloads:
-                removed = await self._client.zrem(self._delayed_key(), payload)
-                if not removed:
-                    continue
                 task = self._deserialize_task(payload)
-                self._scheduled_ids.discard(task.id)
-                await self._client.rpush(self._ready_key(task.priority.value), payload)
-            return
-        due_payloads = [payload for payload, score in self._delayed_store.items() if score <= now]
-        if not due_payloads:
-            return
-        async with self._lock:
-            for payload in due_payloads:
-                if payload not in self._delayed_store:
+                moved = await self._promote_due_atomic(task.priority.value, payload)
+                if not moved:
                     continue
-                del self._delayed_store[payload]
-                task = self._deserialize_task(payload)
-                self._scheduled_ids.discard(task.id)
-                await self._push_ready(payload, task.priority.value)
+            return
+        if not self._client_supports_queue_ops:
+            due_payloads = [payload for payload, score in self._delayed_store.items() if score <= now]
+            if not due_payloads:
+                return
+            async with self._lock:
+                for payload in due_payloads:
+                    if payload not in self._delayed_store:
+                        continue
+                    del self._delayed_store[payload]
+                    task = self._deserialize_task(payload)
+                    self._scheduled_ids.discard(task.id)
+                    await self._push_ready(payload, task.priority.value)
 
     def _remove_from_delayed(self, task_id: str) -> None:
         for payload in list(self._delayed_store.keys()):
@@ -418,6 +519,51 @@ class RedisQueueBackend(QueueBackend):
                     del queue[idx]
                     self._queue_counts[priority.value] = max(0, self._queue_counts[priority.value] - 1)
                     return
+
+    async def _promote_due_atomic(self, priority: int, payload: str) -> int:
+        delayed_key = self._delayed_key()
+        scheduled_key = self._scheduled_set_key
+        ready_key = self._ready_key(priority)
+        task = self._deserialize_task(payload)
+        if hasattr(self._client, "eval"):
+            return int(await self._client.eval(QUEUE_PROMOTE_SCRIPT, 4, delayed_key, scheduled_key, ready_key, self._task_data_key, payload, task.id))
+        removed = await self._client.zrem(delayed_key, payload)
+        if not removed:
+            return 0
+        await self._client.srem(scheduled_key, task.id)
+        await self._client.rpush(ready_key, task.id)
+        await self._client.hset(self._task_data_key, task.id, payload)
+        return 1
+
+    async def _reprioritize_atomic(self, old_priority: int, new_priority: int, task_id: str, new_payload: str) -> int:
+        old_key = self._ready_key(old_priority)
+        new_key = self._ready_key(new_priority)
+        if hasattr(self._client, "eval"):
+            return int(await self._client.eval(QUEUE_REPRIORITIZE_SCRIPT, 2, old_key, new_key, task_id))
+        removed = await self._client.lrem(old_key, 1, task_id)
+        if not removed:
+            return 0
+        await self._client.rpush(new_key, task_id)
+        await self._client.hset(self._task_data_key, task_id, new_payload)
+        return 1
+
+    async def _remove_ready_atomic(self, priority: int, task_id: str) -> int:
+        ready_key = self._ready_key(priority)
+        if hasattr(self._client, "eval"):
+            return int(await self._client.eval(QUEUE_REMOVE_READY_SCRIPT, 1, ready_key, task_id))
+        return int(await self._client.lrem(ready_key, 1, task_id))
+
+    async def _remove_delayed_atomic(self, payload: str) -> int:
+        delayed_key = self._delayed_key()
+        scheduled_key = self._scheduled_set_key
+        task = self._deserialize_task(payload)
+        if hasattr(self._client, "eval"):
+            return int(await self._client.eval(QUEUE_REMOVE_DELAYED_SCRIPT, 2, delayed_key, scheduled_key, payload, task.id))
+        removed = await self._client.zrem(delayed_key, payload)
+        if not removed:
+            return 0
+        await self._client.srem(scheduled_key, task.id)
+        return 1
 
     def _serialize_task(self, task: Task) -> str:
         return json.dumps(task.model_dump(mode="json"), sort_keys=True)
