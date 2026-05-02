@@ -969,3 +969,88 @@ async def update_tenant(tenant_id: str, update: TenantUpdate):
                 max_running=tenant.config.get("max_running"),
             )
         return tenant
+
+
+# ---------------------------------------------------------------------------
+# P2 G9: Actor Pool endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/actors/capabilities")
+async def list_actor_capabilities():
+    """List capabilities registered in the actor pool."""
+    if not services or services.actor_pool_manager is None:
+        raise HTTPException(status_code=404, detail="Actor pool not available")
+    return {"capabilities": services.actor_pool_manager.list_capabilities()}
+
+
+@app.get("/actors/{capability}/stats")
+async def get_actor_pool_stats(capability: str):
+    """Get stats for an actor pool capability."""
+    if not services or services.actor_pool_manager is None:
+        raise HTTPException(status_code=404, detail="Actor pool not available")
+    return services.actor_pool_manager.get_pool_stats(capability)
+
+
+# ---------------------------------------------------------------------------
+# P2 G10: Resource Manager endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/resources/stats")
+async def get_resource_manager_stats():
+    """Get resource manager scaling stats."""
+    if not services or services.resource_manager is None:
+        raise HTTPException(status_code=404, detail="Resource manager not available")
+    return services.resource_manager.get_stats()
+
+
+@app.get("/resources/scale-history")
+async def get_scale_history(limit: int = Query(50, ge=1, le=500)):
+    """Get recent scaling events."""
+    if not services or services.resource_manager is None:
+        raise HTTPException(status_code=404, detail="Resource manager not available")
+    return {"events": services.resource_manager.get_scale_history(limit)}
+
+
+# ---------------------------------------------------------------------------
+# P2 G11: Async Proxy Sidecar endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/async-proxy/stats")
+async def get_async_proxy_stats():
+    """Get async proxy sidecar stats."""
+    if not services or services.async_proxy_sidecar is None:
+        raise HTTPException(status_code=404, detail="Async proxy not available")
+    return services.async_proxy_sidecar.get_stats()
+
+
+# ---------------------------------------------------------------------------
+# P2 G12: Cluster Registry endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/clusters")
+async def list_clusters():
+    """List all registered clusters."""
+    if not services or services.cluster_registry is None:
+        raise HTTPException(status_code=404, detail="Cluster registry not available")
+    clusters = await services.cluster_registry.list_clusters()
+    return {"clusters": [c.to_dict() for c in clusters]}
+
+
+@app.get("/clusters/{cluster_id}")
+async def get_cluster(cluster_id: str):
+    """Get a specific cluster by ID."""
+    if not services or services.cluster_registry is None:
+        raise HTTPException(status_code=404, detail="Cluster registry not available")
+    cluster = await services.cluster_registry.get_cluster(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail=f"Cluster {cluster_id!r} not found")
+    return cluster.to_dict()
+
+
+@app.get("/clusters/by-capability/{capability}")
+async def get_clusters_for_capability(capability: str):
+    """Get all clusters that support a given capability."""
+    if not services or services.cluster_registry is None:
+        raise HTTPException(status_code=404, detail="Cluster registry not available")
+    clusters = await services.cluster_registry.get_clusters_for_capability(capability)
+    return {"capability": capability, "clusters": [c.to_dict() for c in clusters]}

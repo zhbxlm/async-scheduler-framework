@@ -21,11 +21,15 @@ from async_scheduler.core.consumer import TaskConsumer
 from async_scheduler.dag import DAGEngine, StepExecutors
 from async_scheduler.distributed import WorkerRegistry
 from async_scheduler.executor import TaskExecutor, default_task_handler
+from async_scheduler.platform.actor_pool import ActorPoolManager, ActorPoolConfig
+from async_scheduler.platform.async_proxy import AsyncProxySidecar
 from async_scheduler.platform.callback import CallbackDispatcher
+from async_scheduler.platform.cluster_registry import ClusterRegistry
 from async_scheduler.platform.completion import TaskCompletionNode
 from async_scheduler.platform.handlers import RegistryDagHandler, RegistryTaskHandler
 from async_scheduler.platform.quota import TenantQuotaManager
 from async_scheduler.platform.reconciler import TaskReconciler
+from async_scheduler.platform.resource_manager import ResourceManager, ResourcePolicy
 from async_scheduler.platform.router import TaskRouter
 from async_scheduler.queue import QueueManager
 from async_scheduler.registry import CapabilityRegistry
@@ -60,6 +64,14 @@ class ServiceContainer:
     step_executors: StepExecutors
     distributed_settings: DistributedSettings | None = None
     worker_registry: WorkerRegistry | None = None
+    # G9: Actor pool
+    actor_pool_manager: ActorPoolManager | None = None
+    # G10: Resource manager
+    resource_manager: ResourceManager | None = None
+    # G11: Async proxy sidecar
+    async_proxy_sidecar: AsyncProxySidecar | None = None
+    # G12: Cluster registry
+    cluster_registry: ClusterRegistry | None = None
 
 
 async def _build_default_registry() -> CapabilityRegistry:
@@ -70,6 +82,17 @@ async def _build_default_registry() -> CapabilityRegistry:
     registry.register("io", default_task_handler, description="I/O capability", tags=["io"])
     registry.register("email", default_task_handler, description="Email capability", tags=["notify"])
     return registry
+
+
+def _try_redis_client(distributed_settings: "DistributedSettings | None") -> "Any | None":
+    """Try to create a redis.asyncio client; return None if redis is unavailable."""
+    if distributed_settings is None:
+        return None
+    try:
+        from redis.asyncio import Redis  # type: ignore
+        return Redis.from_url(distributed_settings.redis_url, decode_responses=True)
+    except (ImportError, Exception):
+        return None
 
 
 async def build_service_container(
@@ -156,4 +179,18 @@ async def build_service_container(
         step_executors=step_executors,
         distributed_settings=distributed_settings,
         worker_registry=worker_registry,
+        # G9: ActorPoolManager (in-process, capabilities registered on demand)
+        actor_pool_manager=ActorPoolManager(),
+        # G10: ResourceManager (monitors queue depths, drives scaling)
+        resource_manager=ResourceManager(
+            queue_manager=queue_manager,
+        ),
+        # G11: AsyncProxySidecar (Redis pub/sub or in-process fallback)
+        async_proxy_sidecar=AsyncProxySidecar(
+            redis_client=_try_redis_client(distributed_settings),
+        ),
+        # G12: ClusterRegistry (multi-cluster routing)
+        cluster_registry=ClusterRegistry(
+            redis_client=_try_redis_client(distributed_settings),
+        ),
     )
