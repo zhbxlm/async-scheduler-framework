@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import inspect
+import random
 from typing import Any, Callable
 
 from async_scheduler.core.models import Task, TaskStatus
@@ -154,14 +155,14 @@ class TaskExecutor:
             except TimeoutError as e:
                 result.error = e
                 if attempt < task.max_retries:
-                    await asyncio.sleep(min(2**attempt, 60))  # Exponential backoff
+                    base = min(2**attempt, 60); await asyncio.sleep(base + random.uniform(0, base * 0.2))  # Exponential backoff with jitter
                     continue
                 break
 
             except Exception as e:
                 result.error = e
                 if attempt < task.max_retries:
-                    await asyncio.sleep(min(2**attempt, 60))  # Exponential backoff
+                    base = min(2**attempt, 60); await asyncio.sleep(base + random.uniform(0, base * 0.2))  # Exponential backoff with jitter
                     continue
                 break
 

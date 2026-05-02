@@ -179,6 +179,18 @@ class QueueManager:
         else:
             await cb.record_failure()
 
+    async def acquire_concurrency_slot(self, capability: str) -> bool:
+        """A2/G5: Try to acquire a concurrency slot for capability.
+
+        Returns True if the circuit is CLOSED and a slot is conceptually
+        acquired (caller should call record_result + try_recover_concurrent
+        when done). Returns False if circuit is OPEN (backpressure).
+        """
+        cb = await self._get_circuit_breaker(capability)
+        if await cb.is_open():
+            return False
+        return True
+
     async def is_circuit_open(self, capability: str) -> bool:
         """Return True if requests to *capability* should be rejected (circuit OPEN)."""
         cb = await self._get_circuit_breaker(capability)

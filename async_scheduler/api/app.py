@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
@@ -37,6 +38,9 @@ from async_scheduler.platform import QuotaExceededError
 from async_scheduler.platform import ServiceContainer, build_service_container
 
 logger = logging.getLogger(__name__)
+
+_APP_START_TIME: float = time.time()  # O6: uptime tracking
+_APP_VERSION = "1.0.0"
 
 # Global service container
 services: ServiceContainer | None = None
@@ -135,15 +139,22 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint with uptime, version, and readiness info."""
     worker_count = 0
     if services and services.worker_registry is not None:
         worker_count = len(await services.worker_registry.list_workers(include_stale=False))
     repair_history_count = 0
     if services:
         repair_history_count = len(services.reconciler.list_repair_history(limit=1000, offset=0))
+
+    ready = services is not None
+    uptime_seconds = round(time.time() - _APP_START_TIME, 1)
+
     return {
-        "status": "healthy",
+        "status": "healthy" if ready else "starting",
+        "ready": ready,
+        "version": _APP_VERSION,
+        "uptime_seconds": uptime_seconds,
         "queue_size": await services.queue_manager.get_queue_count() if services else 0,
         "scheduled_count": await services.queue_manager.get_scheduled_count() if services else 0,
         "consumer_running": services.task_consumer.is_running() if services else False,
@@ -152,6 +163,20 @@ async def health():
         "worker_count": worker_count,
         "repair_history_count": repair_history_count,
     }
+
+
+@app.get("/readiness")
+async def readiness():
+    """Kubernetes readiness probe: 200 when services are initialized."""
+    if services is None:
+        raise HTTPException(status_code=503, detail="Services not yet initialized")
+    return {"ready": True}
+
+
+@app.get("/liveness")
+async def liveness():
+    """Kubernetes liveness probe: always 200 while process is running."""
+    return {"alive": True, "uptime_seconds": round(time.time() - _APP_START_TIME, 1)}
 
 
 # Task endpoints
@@ -168,6 +193,42 @@ async def create_task(task: TaskCreate):
         except QuotaExceededError as e:
             raise HTTPException(status_code=429, detail=str(e)) from e
         return TaskResponse.model_validate(db_task)
+
+
+class BatchTaskCreate(BaseModel):
+    """Request body for batch task creation."""
+    tasks: list[TaskCreate] = Field(..., min_length=1, max_length=100)
+
+
+class BatchTaskResponse(BaseModel):
+    """Response for batch task creation."""
+    created: list[TaskResponse]
+    failed: list[dict]  # {index, error}
+    total: int
+    succeeded: int
+
+
+@app.post("/tasks/batch", response_model=BatchTaskResponse, status_code=201)
+async def create_tasks_batch(body: BatchTaskCreate):
+    """U7: Batch create up to 100 tasks atomically (best-effort; partial failures reported)."""
+    if services is None:
+        raise HTTPException(status_code=503, detail="Services not available")
+    created: list[TaskResponse] = []
+    failed: list[dict] = []
+    for idx, task_create in enumerate(body.tasks):
+        try:
+            db_task = await services.task_router.create_task(task_create)
+            created.append(TaskResponse.model_validate(db_task))
+        except QuotaExceededError as e:
+            failed.append({"index": idx, "error": f"quota_exceeded: {e}", "error_code": "QUOTA_EXCEEDED"})
+        except Exception as e:
+            failed.append({"index": idx, "error": str(e), "error_code": "CREATE_FAILED"})
+    return BatchTaskResponse(
+        created=created,
+        failed=failed,
+        total=len(body.tasks),
+        succeeded=len(created),
+    )
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
@@ -218,6 +279,34 @@ async def get_latest_attempt(task_id: str):
         if not attempt:
             raise HTTPException(status_code=404, detail="Execution attempt not found")
         return ExecutionAttemptResponse.model_validate(attempt)
+
+
+@app.get("/tasks/{task_id}/history")
+async def get_task_history(
+    task_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """PM10: Full execution history for a task: task metadata + all attempts."""
+    async with get_session() as session:
+        task = await TaskRepository.get(session, task_id)
+        if not task:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Task not found", "error_code": "TASK_NOT_FOUND", "task_id": task_id},
+            )
+        attempts = await ExecutionAttemptRepository.list_for_task(session, task_id, limit=limit, offset=offset)
+        return {
+            "task": TaskResponse.model_validate(task),
+            "attempts": [ExecutionAttemptResponse.model_validate(a) for a in attempts],
+            "attempt_count": len(attempts),
+            "summary": {
+                "total_attempts": len(attempts),
+                "succeeded": sum(1 for a in attempts if a.status and "succeed" in str(a.status).lower()),
+                "failed": sum(1 for a in attempts if a.status and "fail" in str(a.status).lower()),
+                "final_status": task.status,
+            },
+        }
 
 
 @app.post("/tasks/{task_id}/cancel")

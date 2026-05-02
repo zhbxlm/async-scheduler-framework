@@ -57,7 +57,8 @@ class TaskConsumer:
             return
         self._running = True
         self._consumer_task = asyncio.create_task(self._consumer_loop())
-        logger.info("Task consumer started")
+        logger.info("Task consumer started worker_id=%s max_concurrent=%d poll_interval=%.1fs",
+                    self._worker_id, self._max_concurrent_tasks, self._poll_interval)
 
     async def stop(self) -> None:
         if not self._running:
@@ -72,6 +73,15 @@ class TaskConsumer:
         logger.info("Task consumer stopped")
 
     async def _consumer_loop(self) -> None:
+        # P3/P4: cache capabilities + exponential backoff on idle
+        _cap_cache: list[str] = []
+        _cap_cache_ttl: float = 0.0
+        _CAP_CACHE_SECONDS = 30.0  # refresh capability list every 30s
+        _idle_streak: int = 0       # consecutive empty polls
+        _MAX_BACKOFF: float = 8.0   # cap backoff at 8s
+
+        import random, time as _time
+
         semaphore = asyncio.Semaphore(self._max_concurrent_tasks)
 
         async def _process_task(task: Task) -> None:
@@ -83,14 +93,22 @@ class TaskConsumer:
                 await asyncio.sleep(self._poll_interval)
                 continue
 
-            # P0-TODO-2: Round-robin across known capabilities
-            capabilities = await self._queue_manager.discover_capabilities()
-            if capabilities:
-                cap = capabilities[self._cap_idx % len(capabilities)]
+            # P3: refresh capability cache lazily (not every poll)
+            now = _time.monotonic()
+            if not _cap_cache or now >= _cap_cache_ttl:
+                try:
+                    _cap_cache = await self._queue_manager.discover_capabilities()
+                    _cap_cache_ttl = now + _CAP_CACHE_SECONDS
+                except Exception:
+                    pass
+
+            # Round-robin across known capabilities
+            if _cap_cache:
+                cap = _cap_cache[self._cap_idx % len(_cap_cache)]
                 self._cap_idx += 1
                 # Periodic per-capability debug logging
                 if self._cap_idx % 50 == 0:
-                    for c in capabilities:
+                    for c in _cap_cache:
                         try:
                             stats = await self._queue_manager.get_capability_stats(c)
                             logger.debug(
@@ -104,8 +122,14 @@ class TaskConsumer:
                 claimed = await self._claim_next_task(timeout=1.0)
 
             if claimed is None:
-                await asyncio.sleep(self._poll_interval)
+                # P4: exponential backoff with jitter on empty polls
+                _idle_streak += 1
+                backoff = min(self._poll_interval * (2 ** min(_idle_streak - 1, 5)), _MAX_BACKOFF)
+                jitter = random.uniform(0, backoff * 0.2)  # ±20% jitter
+                await asyncio.sleep(backoff + jitter)
                 continue
+
+            _idle_streak = 0  # reset on successful claim
             task, _, _ = claimed
             asyncio.create_task(_process_task(task))
 
@@ -238,7 +262,11 @@ class TaskConsumer:
 
 
         except Exception as e:
-            logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
+            logger.error(
+                "task processing failed task_id=%s worker_id=%s tenant_id=%s error=%s",
+                task.id, self._worker_id, task.tenant_id, type(e).__name__,
+                exc_info=True,
+            )
             await self._completion_node.finalize(
                 task,
                 TaskStatus.FAILED,

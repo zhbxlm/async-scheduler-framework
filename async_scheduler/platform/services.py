@@ -132,7 +132,7 @@ async def build_service_container(
     registry = await _build_default_registry()
 
     queue_manager = QueueManager(backend=queue_backend)
-    dag_engine = DAGEngine(step_executors=step_executors)
+    dag_engine = DAGEngine(step_executors=step_executors, queue_manager=queue_manager)  # A1: G5 capability slot
 
     task_executor = TaskExecutor()
     quota_manager = TenantQuotaManager()
