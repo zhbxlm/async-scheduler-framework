@@ -1,8 +1,10 @@
 """FastAPI task service for managing tasks, schedules, and DAGs."""
 
 import asyncio
+import json as _json
 import logging
 import time
+from asyncio import Queue as _Queue
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
@@ -156,7 +158,7 @@ app = FastAPI(
 )
 
 
-# Pydantic request/response models — simple aliases; extend when response shapes diverge
+# Pydantic request/response models - simple aliases; extend when response shapes diverge
 TaskResponse = Task
 ScheduleResponse = Schedule
 DAGResponse = DAG
@@ -323,7 +325,7 @@ async def get_task(task_id: str):
     async with get_session() as session:
         task = await TaskRepository.get(session, task_id)
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
         return TaskResponse.model_validate(task)
 
 
@@ -349,7 +351,7 @@ async def list_attempts_for_task(
     async with get_session() as session:
         task = await TaskRepository.get(session, task_id)
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
         attempts = await ExecutionAttemptRepository.list_for_task(session, task_id, limit=limit, offset=offset)
         return [ExecutionAttemptResponse.model_validate(attempt) for attempt in attempts]
 
@@ -360,10 +362,10 @@ async def get_latest_attempt(task_id: str):
     async with get_session() as session:
         task = await TaskRepository.get(session, task_id)
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
         attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task_id)
         if not attempt:
-            raise HTTPException(status_code=404, detail="Execution attempt not found")
+            raise HTTPException(status_code=404, detail={"error_code": "ATTEMPT_NOT_FOUND", "message": "No execution attempt found for this task"})
         return ExecutionAttemptResponse.model_validate(attempt)
 
 
@@ -396,19 +398,15 @@ async def get_task_history(
 
 
 @app.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
+async def cancel_task(task_id: str, svc: ServiceContainer = Depends(_get_services)):
     """Cancel a task."""
-    # Cancel from queue
-    cancelled = False
-    if services:
-        cancelled = await services.queue_manager.cancel(task_id)
-        cancelled = await services.task_executor.cancel(task_id) or cancelled
+    await svc.queue_manager.cancel(task_id)
+    await svc.task_executor.cancel(task_id)
 
-    # Update status in database
     async with get_session() as session:
         task = await TaskRepository.update(session, task_id, status=TaskStatus.CANCELLED)
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
 
     return {"message": "Task cancelled", "task_id": task_id}
 
@@ -419,7 +417,7 @@ async def delete_task(task_id: str):
     async with get_session() as session:
         deleted = await TaskRepository.delete(session, task_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
     return {"message": "Task deleted", "task_id": task_id}
 
 
@@ -440,7 +438,7 @@ async def get_schedule(schedule_id: str):
     async with get_session() as session:
         schedule = await ScheduleRepository.get(session, schedule_id)
         if not schedule:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+            raise HTTPException(status_code=404, detail={"error_code": "SCHEDULE_NOT_FOUND", "message": "Schedule not found"})
         return ScheduleResponse.model_validate(schedule)
 
 
@@ -468,7 +466,7 @@ async def pause_schedule(schedule_id: str):
     registry = ScheduleRegistry()
     schedule = await registry.pause(schedule_id)
     if not schedule:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail={"error_code": "SCHEDULE_NOT_FOUND", "message": "Schedule not found"})
     return ScheduleResponse.model_validate(schedule)
 
 
@@ -479,7 +477,7 @@ async def resume_schedule(schedule_id: str):
     registry = ScheduleRegistry()
     schedule = await registry.resume(schedule_id)
     if not schedule:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail={"error_code": "SCHEDULE_NOT_FOUND", "message": "Schedule not found"})
     return ScheduleResponse.model_validate(schedule)
 
 
@@ -512,7 +510,7 @@ async def get_dag(dag_id: str):
     async with get_session() as session:
         dag = await DAGRepository.get(session, dag_id)
         if not dag:
-            raise HTTPException(status_code=404, detail="DAG not found")
+            raise HTTPException(status_code=404, detail={"error_code": "DAG_NOT_FOUND", "message": "DAG not found"})
         return DAGResponse.model_validate(dag)
 
 
@@ -532,7 +530,7 @@ async def execute_dag(request: DAGExecuteRequest, svc: ServiceContainer = Depend
     async with get_session() as session:
         dag = await DAGRepository.get(session, request.dag_id)
         if not dag:
-            raise HTTPException(status_code=404, detail="DAG not found")
+            raise HTTPException(status_code=404, detail={"error_code": "DAG_NOT_FOUND", "message": "DAG not found"})
 
     async with get_session() as session:
         await DAGRepository.update(
@@ -568,7 +566,7 @@ async def cancel_dag(dag_id: str, svc: ServiceContainer = Depends(_get_services)
     """Cancel a running DAG execution."""
     cancelled = await svc.dag_engine.cancel(dag_id)
     if not cancelled:
-        raise HTTPException(status_code=404, detail="DAG not found or not running")
+        raise HTTPException(status_code=404, detail={"error_code": "DAG_NOT_FOUND", "message": "DAG not found or not running"})
     return {"message": "DAG cancelled", "dag_id": dag_id}
 
 
@@ -838,7 +836,7 @@ async def get_task_lease_debug(task_id: str, svc: ServiceContainer = Depends(_ge
             latest_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task_id)
 
     if latest_attempt is None and task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail={"error_code": "TASK_NOT_FOUND", "message": "Task not found"})
 
     return {
         "task_id": task_id,
@@ -910,16 +908,16 @@ async def list_capabilities(svc: ServiceContainer = Depends(_get_services)):
 async def get_capability(capability_name: str, svc: ServiceContainer = Depends(_get_services)):
     info = svc.registry.get_info(capability_name)
     if info is None:
-        raise HTTPException(status_code=404, detail="Capability not found")
+        raise HTTPException(status_code=404, detail={"error_code": "CAPABILITY_NOT_FOUND", "message": f"Capability {capability_name!r} not found"})
     return info.model_dump()
 
 
 @app.post("/tenants", response_model=Tenant, status_code=201)
-async def create_tenant(tenant: TenantCreate):
+async def create_tenant(tenant: TenantCreate, svc: ServiceContainer = Depends(_get_services)):
     async with get_session() as session:
         created = await TenantRepository.create(session, tenant)
-        if services and tenant.config:
-            services.quota_manager.configure_tenant(
+        if tenant.config:
+            svc.quota_manager.configure_tenant(
                 created.id,
                 max_queued=tenant.config.get("max_queued"),
                 max_running=tenant.config.get("max_running"),
@@ -938,22 +936,21 @@ async def get_tenant(tenant_id: str):
     async with get_session() as session:
         tenant = await TenantRepository.get(session, tenant_id)
         if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
+            raise HTTPException(status_code=404, detail={"error_code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
         return tenant
 
 
 @app.patch("/tenants/{tenant_id}", response_model=Tenant)
-async def update_tenant(tenant_id: str, update: TenantUpdate):
+async def update_tenant(tenant_id: str, update: TenantUpdate, svc: ServiceContainer = Depends(_get_services)):
     async with get_session() as session:
         tenant = await TenantRepository.merge_config(session, tenant_id, update.config)
         if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        if services:
-            services.quota_manager.configure_tenant(
-                tenant_id,
-                max_queued=tenant.config.get("max_queued"),
-                max_running=tenant.config.get("max_running"),
-            )
+            raise HTTPException(status_code=404, detail={"error_code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
+        svc.quota_manager.configure_tenant(
+            tenant_id,
+            max_queued=tenant.config.get("max_queued"),
+            max_running=tenant.config.get("max_running"),
+        )
         return tenant
 
 
@@ -1055,9 +1052,6 @@ async def get_clusters_for_capability(capability: str, svc: ServiceContainer = D
 #
 # Internal: _DagProgressBus — in-process asyncio.Queue per dag_id
 
-import json as _json
-from asyncio import Queue as _Queue
-
 _dag_progress_buses: dict[str, _Queue] = {}
 _MAX_SSE_QUEUE = 256
 
@@ -1081,13 +1075,12 @@ def _push_event(dag_id: str, event: dict) -> None:
 async def _sse_generator(dag_id: str, timeout: float = 120.0):
     """Yield SSE-formatted lines from the dag progress bus."""
     bus = _get_or_create_bus(dag_id)
-    import time as _time
-    deadline = _time.monotonic() + timeout
+    deadline = time.monotonic() + timeout
     try:
         while True:
-            remaining = deadline - _time.monotonic()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
-                yield "data: {\"event\": \"timeout\"}\n\n"
+                yield 'data: {"event": "timeout"}\n\n'
                 break
             try:
                 event = await asyncio.wait_for(bus.get(), timeout=min(remaining, 5.0))
@@ -1095,7 +1088,7 @@ async def _sse_generator(dag_id: str, timeout: float = 120.0):
                 if event.get("event") in ("dag_done", "dag_failed", "dag_cancelled"):
                     break
             except asyncio.TimeoutError:
-                yield "data: {\"event\": \"heartbeat\"}\n\n"
+                yield 'data: {"event": "heartbeat"}\n\n'
     finally:
         _dag_progress_buses.pop(dag_id, None)
 
@@ -1148,31 +1141,26 @@ async def stream_dag_progress(dag_id: str, timeout: float = Query(120.0, ge=1.0,
 
 
 @app.post("/dags/stream", response_class=StreamingResponse)
-async def create_and_stream_dag(dag_create: DAGCreate):
+async def create_and_stream_dag(dag_create: DAGCreate, svc: ServiceContainer = Depends(_get_services)):
     """Create a DAG, execute it, and stream node progress as SSE.
 
     Combines dag creation + execution + streaming in one endpoint.
     The response body is a text/event-stream of JSON lines.
     """
-    if services is None:
-        raise HTTPException(status_code=503, detail="Services not available")
-
     dag = DAG(**dag_create.model_dump())
     dag_id = dag.id
-    bus = _get_or_create_bus(dag_id)
+    _get_or_create_bus(dag_id)
 
     # Annotate nodes with __node_id__ so wrapper can emit correct id
     for node in dag.nodes:
         node.payload["__node_id__"] = node.id
 
     async def _run_and_stream():
-        from async_scheduler.platform.handlers import RegistryTaskHandler
-
         async def _exec():
             try:
-                handler = services.task_handler
+                handler = svc.task_handler
                 wrapped = _make_progress_handler(dag_id, handler)
-                result = await services.dag_engine.execute(dag, wrapped)
+                result = await svc.dag_engine.execute(dag, wrapped)
                 final_event = {
                     "event": "dag_done" if result.status.value == "success" else
                              ("dag_failed" if result.status.value == "failed" else "dag_cancelled"),
