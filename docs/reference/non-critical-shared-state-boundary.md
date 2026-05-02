@@ -130,7 +130,44 @@ When deciding whether a path should be promoted from local/fallback-oriented beh
 
 ---
 
-## 6. Current recommendation
+## 6. Code-path mapping appendix
+
+### Critical shared-state code paths
+
+| Area | Current modules / files | Recommendation |
+|------|--------------------------|----------------|
+| Queue coordination | `async_scheduler/backends/redis.py`, `async_scheduler/queue/*` | **promote / keep shared** |
+| Lease / ownership | `async_scheduler/backends/redis.py`, `async_scheduler/core/consumer.py` | **promote / keep shared** |
+| Completion dedupe | `async_scheduler/platform/completion.py`, `async_scheduler/platform/completion.py`, Redis-backed dedupe wiring | **promote / keep shared** |
+| Worker liveness | `async_scheduler/distributed/worker_registry.py` | **promote / keep shared** |
+
+### Durable but not necessarily Redis-shared code paths
+
+| Area | Current modules / files | Recommendation |
+|------|--------------------------|----------------|
+| Task persistence | `async_scheduler/persistence/models.py`, `async_scheduler/persistence/repositories.py` | **keep durable DB-backed** |
+| Attempt persistence | `async_scheduler/persistence/models.py`, `async_scheduler/persistence/repositories.py` | **keep durable DB-backed** |
+| Schedule registry | `async_scheduler/scheduler/*`, `RegistryBackend` paths | **investigate before promote** |
+
+### Local / control-plane aggregation code paths
+
+| Area | Current modules / files | Recommendation |
+|------|--------------------------|----------------|
+| Debug summaries | `async_scheduler/api/app.py` (`/debug/summary`) | **keep local aggregation** |
+| Lease anomaly views | `async_scheduler/api/app.py` (`/debug/leases*`) | **keep local aggregation; improve operator UX** |
+| PR / review docs | `README.md`, `PR_READY_NOTES.md`, `docs/reference/*` | **keep local/documentation only** |
+
+## 7. Decision table
+
+| Candidate path | Current state | Next action | Rationale |
+|----------------|--------------|------------|-----------|
+| Queue / lease / dedupe / liveness | already Redis-backed | **keep shared** | correctness-critical under concurrency |
+| Task / attempt DB persistence | durable DB-backed | **keep as-is for now** | authority is durability + convergence, not Redis mirroring |
+| Schedule registry lifecycle | local-persistence oriented | **investigate** | may need future distributed semantics, but not current kernel blocker |
+| Debug / anomaly summaries | API-assembled | **keep local** | operator visibility, not execution correctness |
+| Callback/outbound delivery workflow | lightweight | **investigate** | may eventually need durable outbound queue |
+
+## 8. Current recommendation
 
 For the current repository stage:
 

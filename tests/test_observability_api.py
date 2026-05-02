@@ -355,6 +355,43 @@ class TestObservabilityApi:
         assert "running_without_lock" in matching[0]["anomaly_types"]
         assert "abandoned_but_running" in matching[0]["anomaly_types"]
 
+    async def test_debug_lease_anomaly_summary_endpoint_groups_counts(self) -> None:
+        transport = ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            from async_scheduler.api.app import services
+
+            assert services is not None
+            assert services.lock_backend is not None
+
+            async with get_session() as session:
+                task = await TaskRepository.create(session, TaskCreate(name="anomaly-summary-task", payload={}))
+                await TaskRepository.update(session, task.id, status=TaskStatus.RUNNING)
+                attempt = await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task.id,
+                        worker_id="worker-anomaly-summary",
+                        retry_index=0,
+                        lease_token="lease-anomaly-summary",
+                    ),
+                )
+                await ExecutionAttemptRepository.update(session, attempt.id, status=ExecutionAttemptStatus.ABANDONED)
+
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/debug/leases/anomalies/summary")
+                summary_response = await client.get("/debug/summary")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["counts"]["running_without_lock"] >= 1
+        assert body["counts"]["abandoned_but_running"] >= 1
+        assert body["sourceEndpoint"] == "/debug/leases/anomalies"
+        assert body["samples"]["running_without_lock"]
+
+        assert summary_response.status_code == 200
+        summary_body = summary_response.json()
+        assert summary_body["leases"]["anomaly_summary"]["summaryEndpoint"] == "/debug/leases/anomalies/summary"
+
     async def test_health_and_queue_stats_include_observability_counts(self) -> None:
         transport = ASGITransport(app=app)
         async with app.router.lifespan_context(app):

@@ -248,11 +248,25 @@ Suggested process split:
 - process 2: worker / consumer
 - process 3: reconciler
 
+Example commands (shape only; adapt to your wrapper/config style):
+
+```bash
+# process 1
+async-scheduler api --init-db
+
+# process 2
+async-scheduler worker --workers 2 --max-concurrent 10
+
+# process 3
+async-scheduler reconcile
+```
+
 Operational checklist:
 - all processes point at the same Redis URL
 - all worker/consumer processes use distributed mode config
 - reconciler runs with the same lease / liveness expectations as workers
 - observability is checked via `/debug/summary` and `/debug/leases/anomalies`
+- verify worker registration via `/workers`
 
 ### Example B — small multi-node topology
 
@@ -266,11 +280,19 @@ Suggested topology:
 - node C: worker / consumer process + reconciler
 - shared Redis: external or managed service reachable by all nodes
 
+Example rollout order:
+1. start Redis / confirm connectivity from all nodes
+2. start API on node A
+3. start one worker on node B
+4. start one worker plus reconciler on node C
+5. submit a task and verify worker registration / lease visibility
+
 Operational checklist:
 - keep clocks reasonably synchronized across nodes
 - use the same Redis database / namespace intentionally
 - start with conservative heartbeat / TTL values rather than tiny test values
 - verify worker visibility via `/workers` and `/workers/{worker_id}/leases`
+- verify anomaly summary remains empty under healthy steady-state conditions
 
 ## 11. Suggested tuning profiles
 
@@ -278,15 +300,23 @@ Operational checklist:
 - `lease_ttl_seconds = 30`
 - `heartbeat_interval_seconds = 10`
 - reconciler interval: moderate / not overly aggressive
+- best for: first real multi-process bring-up
 
 ### Faster recovery profile
 - `lease_ttl_seconds = 15`
 - `heartbeat_interval_seconds = 5`
 - only use after verifying Redis latency and event-loop stability are acceptable
+- best for: recovery-focused staging validation
+
+### Higher-latency / safer profile
+- `lease_ttl_seconds = 45`
+- `heartbeat_interval_seconds = 15`
+- best for: less predictable environments or early conservative rollout
 
 ### Avoid in real runtime
 - sub-second TTLs used in fault-injection tests
 - extremely aggressive reconciler cadence without validating false-positive repair risk
+- mixing test-style TTLs with cross-node deployments
 
 ## 12. Recommended next runtime hardening work
 

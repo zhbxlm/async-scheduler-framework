@@ -506,6 +506,7 @@ async def debug_summary():
             + stale_lease_count
         ),
         "endpoint": "/debug/leases/anomalies",
+        "summaryEndpoint": "/debug/leases/anomalies/summary",
     }
 
     return {
@@ -716,6 +717,61 @@ async def list_lease_anomalies(limit: int = Query(100, ge=1, le=500), offset: in
                 )
 
     return {"items": items, "count": len(items), "limit": limit, "offset": offset}
+
+
+@app.get("/debug/leases/anomalies/summary")
+async def get_lease_anomaly_summary(limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    async with await get_session_no_context() as session:
+        attempts = await ExecutionAttemptRepository.list_latest_attempts(session, limit=limit, offset=offset)
+        by_type = {
+            "running_without_lock": 0,
+            "locked_but_terminal": 0,
+            "abandoned_but_running": 0,
+            "stale_lease": 0,
+        }
+        sample_items: dict[str, list[dict]] = {key: [] for key in by_type}
+        for attempt in attempts:
+            task = await TaskRepository.get(session, attempt.task_id)
+            lease = None
+            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+
+            task_status = None if task is None else task.status
+            lease_locked = bool(lease and lease.get("locked"))
+            anomaly_types: list[str] = []
+            if task_status == TaskStatus.RUNNING and not lease_locked:
+                anomaly_types.append("running_without_lock")
+            if task_status in {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT} and lease_locked:
+                anomaly_types.append("locked_but_terminal")
+            if attempt.status == ExecutionAttemptStatus.ABANDONED and task_status == TaskStatus.RUNNING:
+                anomaly_types.append("abandoned_but_running")
+            ttl_ms = None if lease is None else lease.get("ttl_ms")
+            if lease_locked and ttl_ms is not None and 0 < ttl_ms < 5000:
+                anomaly_types.append("stale_lease")
+
+            for anomaly in anomaly_types:
+                by_type[anomaly] += 1
+                if len(sample_items[anomaly]) < 5:
+                    sample_items[anomaly].append(
+                        {
+                            "task_id": attempt.task_id,
+                            "task_status": task_status,
+                            "worker_id": attempt.worker_id,
+                            "attempt_status": attempt.status,
+                        }
+                    )
+
+    return {
+        "counts": by_type,
+        "samples": sample_items,
+        "total": sum(by_type.values()),
+        "sourceEndpoint": "/debug/leases/anomalies",
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.get("/debug/leases/{task_id}")
