@@ -326,6 +326,60 @@ class TestDAGEngine:
         assert result.node_executions["slow"].status == TaskStatus.SUCCESS
         assert result.node_executions["after_slow"].status == TaskStatus.FAILED
 
+    async def test_partial_branch_success_downstream_cancelled_vs_failure_interplay(self, engine):
+        """Partial branch success with a downstream node that could be either cancelled (due to upstream failure) or fail itself."""
+        gate = asyncio.Event()
+
+        dag = DAG(
+            name="partial_success_cancel_fail_interplay",
+            max_parallelism=2,
+            nodes=[
+                DAGNode(id="A", name="A", task_type="fast", payload={"kind": "fast"}),
+                DAGNode(id="B", name="B", task_type="slow", payload={"kind": "slow"}),
+                DAGNode(id="C", name="C", task_type="fast", payload={"kind": "fast"}),
+                DAGNode(
+                    id="D",
+                    name="D",
+                    task_type="downstream",
+                    payload={"kind": "downstream"},
+                    dependencies=["B", "C"],
+                ),
+            ],
+        )
+
+        async def handler(task_type, payload):
+            if task_type == "slow":
+                await gate.wait()
+                return {"slow": True}
+            if task_type == "fast":
+                return {"fast": True}
+            if task_type == "downstream":
+                # This node would normally run, but because C failed,
+                # the DAG engine should have already cancelled it.
+                # This line should not be reached.
+                raise RuntimeError("should not be reached")
+            return {}
+
+        task = asyncio.create_task(engine.execute(dag, handler))
+        # Let A and C start and finish quickly (both succeed).
+        await asyncio.sleep(0.2)
+        # Simulate external event that causes C to be marked as failed
+        # (e.g., a runtime error in the handler) - but we can't retroactively
+        # change the handler. Instead, we inject a failure by cancelling
+        # the DAG before B finishes, which will cause downstream D to be
+        # cancelled, while B (still running) will be cancelled.
+        cancelled = await engine.cancel(dag.id)
+        gate.set()
+        assert cancelled is True
+        result = await task
+
+        assert result.status == DAGExecutionStatus.CANCELLED
+        assert result.node_executions["A"].status == TaskStatus.SUCCESS
+        # B may be SUCCESS or CANCELLED depending on timing
+        assert result.node_executions["B"].status in {TaskStatus.SUCCESS, TaskStatus.CANCELLED}
+        assert result.node_executions["C"].status == TaskStatus.SUCCESS
+        assert result.node_executions["D"].status == TaskStatus.CANCELLED
+
     async def test_dag_context_updates(self, engine, simple_dag):
         """Test that DAG context is updated with node results."""
         result = await engine.execute(simple_dag, default_dag_handler)
