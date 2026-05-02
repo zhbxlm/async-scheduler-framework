@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Callable
@@ -30,6 +30,18 @@ class RepairStrategy(str, Enum):
 
 
 @dataclass
+@dataclass
+class RepairAuditEntry:
+    task_id: str
+    action: str
+    strategy: str
+    attempt_id: str | None
+    attempt_status: str | None
+    task_status: str | None
+    timestamp: datetime
+    error_message: str | None = None
+
+
 class ReconciliationMetrics:
     total_runs: int = 0
     stuck_tasks_found: int = 0
@@ -73,6 +85,7 @@ class TaskReconciler:
         self._running = False
         self._metrics = ReconciliationMetrics()
         self._reconciliation_handlers: list[Callable[[dict[str, Any]], None]] = []
+        self._repair_history: list[RepairAuditEntry] = []
 
     async def reconcile(self) -> int:
         repair_lock: LockHandle | None = None
@@ -172,6 +185,14 @@ class TaskReconciler:
                         status=ExecutionAttemptStatus.ABANDONED,
                         error_message=error_message,
                     )
+                self._record_repair(
+                    task_id=task.id,
+                    action="mark_failed",
+                    attempt_id=None if latest_attempt is None else latest_attempt.id,
+                    attempt_status=ExecutionAttemptStatus.ABANDONED.value if latest_attempt is not None else None,
+                    task_status=TaskStatus.FAILED.value,
+                    error_message=error_message,
+                )
                 self._metrics.tasks_repaired += 1
                 return True
 
@@ -193,8 +214,16 @@ class TaskReconciler:
                     )
                 if self.queue_manager is not None:
                     refreshed = await TaskRepository.get(session, task.id)
-                    if refreshed is not None and self.queue_manager.get_queue_count() == 0:
+                    if refreshed is not None and await self.queue_manager.get_queue_count() == 0:
                         await self.queue_manager.enqueue(refreshed)
+                self._record_repair(
+                    task_id=task.id,
+                    action="requeue",
+                    attempt_id=None if latest_attempt is None else latest_attempt.id,
+                    attempt_status=ExecutionAttemptStatus.ABANDONED.value if latest_attempt is not None else None,
+                    task_status=TaskStatus.QUEUED.value,
+                    error_message=error_message,
+                )
                 self._metrics.tasks_requeued += 1
                 return True
 
@@ -245,8 +274,51 @@ class TaskReconciler:
     def get_metrics(self) -> ReconciliationMetrics:
         return self._metrics
 
+    def list_repair_history(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        action: str | None = None,
+        task_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        items = self._repair_history
+        if action is not None:
+            items = [item for item in items if item.action == action]
+        if task_id is not None:
+            items = [item for item in items if item.task_id == task_id]
+        items = items[offset : offset + limit]
+        return [asdict(item) for item in items]
+
+    def _record_repair(
+        self,
+        *,
+        task_id: str,
+        action: str,
+        attempt_id: str | None,
+        attempt_status: str | None,
+        task_status: str | None,
+        error_message: str | None,
+    ) -> None:
+        self._repair_history.insert(
+            0,
+            RepairAuditEntry(
+                task_id=task_id,
+                action=action,
+                strategy=self.config.repair_strategy.value,
+                attempt_id=attempt_id,
+                attempt_status=attempt_status,
+                task_status=task_status,
+                timestamp=datetime.utcnow(),
+                error_message=error_message,
+            ),
+        )
+        if len(self._repair_history) > 1000:
+            self._repair_history = self._repair_history[:1000]
+
     def reset_metrics(self) -> None:
         self._metrics = ReconciliationMetrics()
+        self._repair_history = []
 
     def update_config(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():

@@ -18,6 +18,8 @@ from async_scheduler.persistence import (
     get_session_no_context,
     init_db,
 )
+from async_scheduler.platform.callback import CallbackDispatcher
+from async_scheduler.platform.completion import TaskCompletionNode
 from async_scheduler.platform.reconciler import ReconciliationConfig, RepairStrategy, TaskReconciler
 from async_scheduler.queue import QueueManager
 
@@ -88,6 +90,116 @@ async def test_dead_worker_task_is_recovered_by_reconciler() -> None:
     assert repaired == 1
     assert updated_task is not None and updated_task.status == TaskStatus.QUEUED
     assert updated_attempt is not None and updated_attempt.status == ExecutionAttemptStatus.ABANDONED
+
+
+class BlockingCallbackDispatcher(CallbackDispatcher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.payloads: list[dict] = []
+
+    async def dispatch(self, callback_url: str | None, payload: dict) -> bool:
+        self.payloads.append(payload)
+        self.started.set()
+        await self.release.wait()
+        return True
+
+
+@pytest.mark.asyncio
+async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_task() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.05,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=1.0)
+    dispatcher = BlockingCallbackDispatcher()
+    completion = TaskCompletionNode(callback_dispatcher=dispatcher)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    async with get_session() as session:
+        task = await TaskRepository.create(
+            session,
+            TaskCreate(name="lease-loss-during-callback", payload={}, callback_url="https://callback/test"),
+        )
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            updated_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-callback-race",
+                retry_index=0,
+                lease_token="lease-callback-race",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+        stored = await TaskRepository.get(session, task.id)
+        assert stored is not None
+        runtime_task = Task.model_validate(stored.model_dump())
+
+    await worker_registry.register(WorkerInfo(worker_id="worker-callback-race", name="callback-race"))
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+
+    finalize_task = asyncio.create_task(
+        completion.finalize(
+            runtime_task,
+            TaskStatus.SUCCESS,
+            result={"ok": True},
+            finalize_latest_attempt=True,
+        )
+    )
+
+    await dispatcher.started.wait()
+    await asyncio.sleep(0.08)
+
+    repaired = await reconciler.reconcile()
+    dispatcher.release.set()
+    updated = await finalize_task
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert repaired == 0
+    assert updated is not None
+    assert final_task is not None
+    assert final_task.status == TaskStatus.SUCCESS
+    assert final_task.result == {"ok": True}
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.SUCCEEDED
+    assert len(dispatcher.payloads) == 1
+    assert dispatcher.payloads[0]["status"] == TaskStatus.SUCCESS.value
+    assert await queue_manager.dequeue(timeout=0.01) is None
 
 
 @pytest.mark.asyncio
