@@ -248,10 +248,10 @@ Progress since last version:
 - **partial recovery with retry exhaustion is now covered**
 
 Remaining recommended scenarios:
-- worker death during long DAG branch execution
-- long-running DAG branch with heartbeat jitter / lease pressure
-- Redis transient failure / network partition style simulation
+- Redis transient failure / network partition style simulation beyond current control-point jitter coverage
 - sustained delayed-task promotion under heavier concurrent load
+- broader queue-side transient failure matrix outside reconciler requeue commit-point protection
+- edge-case DAG semantics (partial branch success with downstream cancellation vs. failure interplay, fan‑out/fan‑in under interruption, DAG‑level timeout/deadline enforcement)
 
 ### 5.3 Control-plane observability
 
@@ -313,10 +313,8 @@ So the correct description today is:
    - identify which should be promoted to true shared-state Redis paths
 3. keep current tests as semantic contract tests and **extend live Redis verification / stress coverage**
 4. **expand operational observability**
-   - anomaly-oriented lease views
-   - richer operator summaries
+   - anomaly-oriented lease views are now in place; continue with richer operator summaries
    - optional real-time monitoring
 5. **strengthen the remaining fault-injection matrix**
-   - worker death during long DAG branch execution
-   - Redis transient failure / partition-like simulation
+   - Redis transient failure / partition-like simulation beyond current heartbeat / completion / reconciler / requeue control points
    - heavier-load delayed-promotion / concurrency stress
