@@ -203,6 +203,110 @@ async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_tas
 
 
 @pytest.mark.asyncio
+async def test_partial_work_then_recovery_then_retry_budget_exhaustion_converges_to_failed() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.08,
+            heartbeat_interval_seconds=0.2,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.08)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    side_effects = ["attempt-1"]
+
+    async with get_session() as session:
+        task = await TaskRepository.create(
+            session,
+            TaskCreate(name="partial-then-exhausted", payload={"value": 1}, max_retries=0),
+        )
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            updated_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-partial-exhausted",
+                retry_index=0,
+                lease_token="lease-partial-exhausted",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+
+    await worker_registry.register(WorkerInfo(worker_id="worker-partial-exhausted", name="partial-exhausted"))
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+    await asyncio.sleep(0.12)
+    await worker_registry.deregister("worker-partial-exhausted")
+
+    repaired = await reconciler.reconcile()
+    assert repaired == 1
+
+    queued_again = await queue_manager.dequeue(timeout=0.01)
+    assert queued_again is not None
+    assert queued_again.id == task.id
+
+    async def handler(payload):
+        side_effects.append("attempt-2")
+        raise RuntimeError("boom-after-recovery")
+
+    await worker_registry.register(WorkerInfo(worker_id="worker-partial-exhausted-2", name="partial-exhausted-2"))
+    second_consumer = TaskConsumer(
+        queue_manager=queue_manager,
+        executor=TaskExecutor(),
+        handler=handler,
+        lock_backend=lock_backend,
+        worker_id="worker-partial-exhausted-2",
+        lease_ttl_seconds=1.0,
+        heartbeat_interval_seconds=0.05,
+    )
+
+    await queue_manager.enqueue(queued_again)
+    processed_second = await second_consumer._process_next_once()
+    assert processed_second is True
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert side_effects == ["attempt-1", "attempt-2"]
+    assert final_task is not None
+    assert final_task.status == TaskStatus.FAILED
+    assert final_task.error_message == "boom-after-recovery"
+    assert final_task.retry_count == 1
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.FAILED
+    assert final_attempt.error_message == "boom-after-recovery"
+    assert await queue_manager.dequeue(timeout=0.01) is None
+
+
+@pytest.mark.asyncio
 async def test_lease_loss_during_execution_causes_failure_then_recovery() -> None:
     await drop_db()
     await init_db()
