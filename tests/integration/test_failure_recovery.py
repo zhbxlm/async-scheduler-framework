@@ -106,6 +106,22 @@ class BlockingCallbackDispatcher(CallbackDispatcher):
         return True
 
 
+class FailingBlockingCallbackDispatcher(CallbackDispatcher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.payloads: list[dict] = []
+        self.calls = 0
+
+    async def dispatch(self, callback_url: str | None, payload: dict) -> bool:
+        self.calls += 1
+        self.payloads.append(payload)
+        self.started.set()
+        await self.release.wait()
+        raise RuntimeError("callback boom")
+
+
 @pytest.mark.asyncio
 async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_task() -> None:
     await drop_db()
@@ -200,6 +216,88 @@ async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_tas
     assert len(dispatcher.payloads) == 1
     assert dispatcher.payloads[0]["status"] == TaskStatus.SUCCESS.value
     assert await queue_manager.dequeue(timeout=0.01) is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_finalize_overlap_with_callback_failure_dispatches_once_and_preserves_terminal_state() -> None:
+    await drop_db()
+    await init_db()
+
+    dispatcher = FailingBlockingCallbackDispatcher()
+    completion = TaskCompletionNode(callback_dispatcher=dispatcher)
+
+    async with get_session() as session:
+        task = await TaskRepository.create(
+            session,
+            TaskCreate(name="duplicate-finalize-overlap", payload={}, callback_url="https://callback/test"),
+        )
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=1),
+            updated_at=datetime.utcnow() - timedelta(seconds=1),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-duplicate-finalize",
+                retry_index=0,
+                lease_token="lease-duplicate-finalize",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=1),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=1),
+        )
+        stored = await TaskRepository.get(session, task.id)
+        assert stored is not None
+        runtime_task = Task.model_validate(stored.model_dump())
+
+    first_finalize = asyncio.create_task(
+        completion.finalize(
+            runtime_task,
+            TaskStatus.SUCCESS,
+            result={"ok": True},
+            finalize_latest_attempt=True,
+        )
+    )
+    await dispatcher.started.wait()
+    second_finalize = asyncio.create_task(
+        completion.finalize(
+            runtime_task,
+            TaskStatus.SUCCESS,
+            result={"ok": True},
+            finalize_latest_attempt=True,
+        )
+    )
+
+    dispatcher.release.set()
+    first_result, second_result = await asyncio.gather(first_finalize, second_finalize)
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    metrics = completion.get_metrics()
+    assert first_result is not None
+    assert second_result is not None
+    assert final_task is not None
+    assert final_task.status == TaskStatus.SUCCESS
+    assert final_task.result == {"ok": True}
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.SUCCEEDED
+    assert dispatcher.calls == 1
+    assert len(dispatcher.payloads) == 1
+    assert dispatcher.payloads[0]["status"] == TaskStatus.SUCCESS.value
+    assert metrics is not None
+    assert metrics.total_completed == 1
+    assert metrics.callback_dispatches == 1
+    assert metrics.callback_failures == 1
 
 
 @pytest.mark.asyncio
@@ -304,6 +402,190 @@ async def test_partial_work_then_recovery_then_retry_budget_exhaustion_converges
     assert final_attempt.status == ExecutionAttemptStatus.FAILED
     assert final_attempt.error_message == "boom-after-recovery"
     assert await queue_manager.dequeue(timeout=0.01) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_with_lease_loss_and_reconciler_overlap_does_not_requeue_terminal_task() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.05,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=1.0)
+    dispatcher = FailingBlockingCallbackDispatcher()
+    completion = TaskCompletionNode(callback_dispatcher=dispatcher)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    async with get_session() as session:
+        task = await TaskRepository.create(
+            session,
+            TaskCreate(name="callback-failure-reconciler-overlap", payload={}, callback_url="https://callback/test"),
+        )
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            updated_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-callback-failure-overlap",
+                retry_index=0,
+                lease_token="lease-callback-failure-overlap",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=5),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=5),
+        )
+        stored = await TaskRepository.get(session, task.id)
+        assert stored is not None
+        runtime_task = Task.model_validate(stored.model_dump())
+
+    await worker_registry.register(
+        WorkerInfo(worker_id="worker-callback-failure-overlap", name="callback-failure-overlap")
+    )
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+
+    finalize_task = asyncio.create_task(
+        completion.finalize(
+            runtime_task,
+            TaskStatus.SUCCESS,
+            result={"ok": True},
+            finalize_latest_attempt=True,
+        )
+    )
+
+    await dispatcher.started.wait()
+    await asyncio.sleep(0.08)
+
+    repaired = await reconciler.reconcile()
+    dispatcher.release.set()
+    updated = await finalize_task
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    metrics = completion.get_metrics()
+    assert repaired == 0
+    assert updated is not None
+    assert final_task is not None
+    assert final_task.status == TaskStatus.SUCCESS
+    assert final_task.result == {"ok": True}
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.SUCCEEDED
+    assert await queue_manager.dequeue(timeout=0.01) is None
+    assert dispatcher.calls == 1
+    assert len(dispatcher.payloads) == 1
+    assert metrics is not None
+    assert metrics.callback_dispatches == 1
+    assert metrics.callback_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reconcile_does_not_double_requeue_same_orphan_task() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=0.05,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.1)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="orphan-once-only", payload={}))
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            updated_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+        attempt = await ExecutionAttemptRepository.create(
+            session,
+            ExecutionAttemptCreate(
+                task_id=task.id,
+                worker_id="worker-orphan-once-only",
+                retry_index=0,
+                lease_token="lease-orphan-once-only",
+            ),
+        )
+        await ExecutionAttemptRepository.update(
+            session,
+            attempt.id,
+            status=ExecutionAttemptStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=10),
+            last_heartbeat_at=datetime.utcnow() - timedelta(seconds=10),
+        )
+
+    await worker_registry.register(WorkerInfo(worker_id="worker-orphan-once-only", name="orphan-once-only"))
+    lease = await lock_backend.acquire(f"task:{task.id}", ttl=0.05)
+    assert lease is not None
+    await asyncio.sleep(0.12)
+    await worker_registry.deregister("worker-orphan-once-only")
+
+    repaired_first, repaired_second = await asyncio.gather(reconciler.reconcile(), reconciler.reconcile())
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    first_queued = await queue_manager.dequeue(timeout=0.01)
+    second_queued = await queue_manager.dequeue(timeout=0.01)
+    repair_history = reconciler.list_repair_history(limit=10, offset=0)
+
+    assert sorted([repaired_first, repaired_second]) == [0, 1]
+    assert final_task is not None
+    assert final_task.status == TaskStatus.QUEUED
+    assert final_task.retry_count == 1
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.ABANDONED
+    assert first_queued is not None
+    assert first_queued.id == task.id
+    assert second_queued is None
+    assert len(repair_history) == 1
+    assert repair_history[0]["task_id"] == task.id
+    assert repair_history[0]["action"] == "requeue"
 
 
 @pytest.mark.asyncio
