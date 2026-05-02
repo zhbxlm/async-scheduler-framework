@@ -267,3 +267,86 @@ Recent commits:
 
 Recent regression:
 - **16 passed, 1 skipped**
+
+---
+
+## Final PR body (CN)
+
+### 标题
+`feat: 对齐分布式调度器的 real Redis 验证、lease 可观测性与恢复语义收敛`
+
+### 概述
+这个 PR 继续把当前调度框架往 **real Redis-backed distributed kernel** 推进，并同时补强了：恢复语义收敛、lease / heartbeat 可观测性、高价值 fault-injection 验证，以及 README / 提审材料的状态同步。
+
+### 本次改动内容
+
+#### 1. lease observability / 调试面补齐
+新增：
+- `GET /debug/leases/{task_id}`
+- `GET /debug/leases`
+- `GET /workers/{worker_id}/leases`
+
+增强 `/debug/summary`：
+- `locked_count`
+- `running_with_lock_count`
+- `running_without_lock_count`
+- `locked_but_terminal_count`
+- `abandoned_but_running_count`
+- `stale_lease_count`
+
+`/debug/leases` 支持按以下维度过滤：
+- `worker_id`
+- `task_status`
+- `attempt_status`
+- `locked_only`
+
+#### 2. 恢复边界 fault-injection 测试补强
+新增覆盖：
+- **duplicate finalize overlap + callback failure**
+- **concurrent reconcile overlap**
+- **callback failure + lease loss + reconciler overlap**
+
+系统语义进一步明确为：
+- **at-least-once side effects**
+- **terminal-state-first persistence**
+- **eventual convergence**
+
+#### 3. README 刷新
+README 已更新：
+- real Redis-backed distributed kernel path 的当前状态
+- live Redis 验证方式
+- observability 端点与排障流程
+- deepwiki 对齐边界
+- 路线图与当前状态总结
+
+### 关键语义
+- 普通失败且重试预算耗尽：`FAILED / FAILED`
+- lease loss：`FAILED / ABANDONED`
+- 终态持久化后：callback failure 不回滚终态，reconciler 不误回队
+
+### 最近关键提交
+- `9805d53` — `feat: add lease observability debug endpoints`
+- `e19cf69` — `test: cover finalize and reconciler overlap recovery boundaries`
+- `87ae6f2` — `docs: refresh README for current distributed runtime state`
+- `1fe6f85` — `docs: update PR handoff notes with observability addendum`
+
+### 定向回归结果
+```bash
+pytest -q \
+  tests/test_observability_api.py \
+  tests/integration/test_failure_recovery.py \
+  tests/integration/test_live_redis_retry_exhaustion.py
+```
+
+结果：
+- **16 passed**
+- **1 skipped**
+
+### 建议 reviewer 阅读顺序
+1. `async_scheduler/api/app.py`
+2. `async_scheduler/platform/services.py`
+3. `async_scheduler/backends/redis.py`
+4. `async_scheduler/persistence/repositories.py`
+5. `tests/test_observability_api.py`
+6. `tests/integration/test_failure_recovery.py`
+7. `README.md`
