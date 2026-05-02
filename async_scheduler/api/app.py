@@ -494,6 +494,20 @@ async def debug_summary():
                 if ttl_ms is not None and 0 < ttl_ms < 5000:
                     stale_lease_count += 1
 
+    anomaly_summary = {
+        "running_without_lock": running_without_lock_count,
+        "locked_but_terminal": locked_but_terminal_count,
+        "abandoned_but_running": abandoned_but_running_count,
+        "stale_lease": stale_lease_count,
+        "total": (
+            running_without_lock_count
+            + locked_but_terminal_count
+            + abandoned_but_running_count
+            + stale_lease_count
+        ),
+        "endpoint": "/debug/leases/anomalies",
+    }
+
     return {
         "health": {
             "consumer_running": services.task_consumer.is_running(),
@@ -518,6 +532,7 @@ async def debug_summary():
             "locked_but_terminal_count": locked_but_terminal_count,
             "abandoned_but_running_count": abandoned_but_running_count,
             "stale_lease_count": stale_lease_count,
+            "anomaly_summary": anomaly_summary,
             "items": lease_items[:20],
         },
         "reconciler": {

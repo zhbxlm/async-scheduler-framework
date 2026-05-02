@@ -400,6 +400,8 @@ class TestObservabilityApi:
         assert "locked_but_terminal_count" in debug_body["leases"]
         assert "abandoned_but_running_count" in debug_body["leases"]
         assert "stale_lease_count" in debug_body["leases"]
+        assert "anomaly_summary" in debug_body["leases"]
+        assert debug_body["leases"]["anomaly_summary"]["endpoint"] == "/debug/leases/anomalies"
 
         assert empty_history_response.status_code == 200
         empty_history_body = empty_history_response.json()

@@ -344,7 +344,7 @@ curl http://127.0.0.1:8000/debug/leases/<task_id>
 - `TaskReconciler`：orphan recovery / distributed repair gating
 - `TaskCompletionNode`：终态持久化优先、回调失败不回滚终态
 - executor / consumer / worker：retry exhaustion 语义已经对齐收敛
-- observability：已有 `/debug/summary`、`/debug/leases`、`/debug/leases/anomalies`、`/workers/<worker_id>/leases` 等排障端点
+- observability：已有 `/debug/summary`（含 `anomaly_summary`）、`/debug/leases`、`/debug/leases/anomalies`、`/workers/<worker_id>/leases` 等排障端点
 
 ### 当前验证覆盖
 
@@ -521,7 +521,7 @@ registry.register(
 
 ## 运行与架构参考文档
 
-- `docs/runtime/distributed-deployment-guide.md`：如何以 true distributed mode 运行当前仓库
+- `docs/runtime/distributed-deployment-guide.md`：如何以 true distributed mode 运行当前仓库（含单机多进程 / 小规模多节点示例）
 - `docs/reference/non-critical-shared-state-boundary.md`：哪些路径必须共享状态，哪些路径可以继续保持本地/聚合视图
 - `docs/reference/deepwiki-distributed-architecture-reference.md`：deepwiki 对齐状态、剩余 gap 与下一步建议
 

@@ -235,10 +235,63 @@ Known limitations include:
 
 ---
 
-## 10. Recommended next runtime hardening work
+## 10. Concrete startup examples
 
-- add explicit multi-process startup examples
+### Example A — single host, multiple processes
+
+Recommended when:
+- validating true distributed mode on one machine
+- separating API and worker/reconciler responsibilities during development
+
+Suggested process split:
+- process 1: API
+- process 2: worker / consumer
+- process 3: reconciler
+
+Operational checklist:
+- all processes point at the same Redis URL
+- all worker/consumer processes use distributed mode config
+- reconciler runs with the same lease / liveness expectations as workers
+- observability is checked via `/debug/summary` and `/debug/leases/anomalies`
+
+### Example B — small multi-node topology
+
+Recommended when:
+- validating lease ownership and recovery across machines
+- testing dead-owner and stale-lease behavior in a more realistic shape
+
+Suggested topology:
+- node A: API + observability access
+- node B: worker / consumer process
+- node C: worker / consumer process + reconciler
+- shared Redis: external or managed service reachable by all nodes
+
+Operational checklist:
+- keep clocks reasonably synchronized across nodes
+- use the same Redis database / namespace intentionally
+- start with conservative heartbeat / TTL values rather than tiny test values
+- verify worker visibility via `/workers` and `/workers/{worker_id}/leases`
+
+## 11. Suggested tuning profiles
+
+### Development distributed profile
+- `lease_ttl_seconds = 30`
+- `heartbeat_interval_seconds = 10`
+- reconciler interval: moderate / not overly aggressive
+
+### Faster recovery profile
+- `lease_ttl_seconds = 15`
+- `heartbeat_interval_seconds = 5`
+- only use after verifying Redis latency and event-loop stability are acceptable
+
+### Avoid in real runtime
+- sub-second TTLs used in fault-injection tests
+- extremely aggressive reconciler cadence without validating false-positive repair risk
+
+## 12. Recommended next runtime hardening work
+
 - document Redis connection pooling expectations
-- document worker/reconciler deployment patterns in more detail
+- document worker/reconciler deployment patterns in even more detail
 - add stress scenarios for long-running workloads
 - add anomaly-oriented observability for operators
+- add deployment manifests / scripts when runtime shape stabilizes further

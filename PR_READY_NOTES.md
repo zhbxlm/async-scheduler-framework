@@ -194,8 +194,10 @@ The README was updated to reflect the current runtime reality more accurately, i
 
 ### Additional follow-up now completed
 - added `GET /debug/leases/anomalies` for anomaly-oriented lease/debug inspection
-- added `docs/runtime/distributed-deployment-guide.md`
+- added `anomaly_summary` to `/debug/summary`
+- added `docs/runtime/distributed-deployment-guide.md` (now with single-host multi-process and small multi-node examples)
 - added `docs/reference/non-critical-shared-state-boundary.md`
+- added `docs/reference/next-phase-gap-analysis.md`
 - refreshed deepwiki reference to reflect completed observability/fault-injection progress
 
 ### Recent regression pass
@@ -340,8 +342,10 @@ README 已更新：
 
 ### 本轮后续补充（已完成）
 - 新增 `GET /debug/leases/anomalies`，用于 anomaly-oriented lease / recovery 排障
-- 新增 `docs/runtime/distributed-deployment-guide.md`
+- 在 `/debug/summary` 中补入 `anomaly_summary`
+- 新增 `docs/runtime/distributed-deployment-guide.md`（含单机多进程 / 小规模多节点示例）
 - 新增 `docs/reference/non-critical-shared-state-boundary.md`
+- 新增 `docs/reference/next-phase-gap-analysis.md`
 - 更新 deepwiki distributed reference，重排当前剩余 gap 与 next iteration
 
 ### 定向回归结果
