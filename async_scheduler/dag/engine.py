@@ -350,10 +350,10 @@ class DAGEngine:
             for n in dag.nodes
         )
 
-        if any_cancelled:
-            dag.status = DAGExecutionStatus.CANCELLED
-        elif any_failed:
+        if any_failed:
             dag.status = DAGExecutionStatus.FAILED
+        elif any_cancelled:
+            dag.status = DAGExecutionStatus.CANCELLED
         elif all_success:
             dag.status = DAGExecutionStatus.SUCCESS
         else:

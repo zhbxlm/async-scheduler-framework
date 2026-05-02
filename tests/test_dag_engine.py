@@ -214,6 +214,118 @@ class TestDAGEngine:
         result = await task
         assert result.status == DAGExecutionStatus.CANCELLED
 
+    async def test_long_running_branch_cancellation_preserves_completed_sibling_and_blocks_downstream(self, engine):
+        """Long-running branch cancellation should block downstream work even if an in-flight node completes."""
+        gate = asyncio.Event()
+
+        dag = DAG(
+            name="long_branch_cancel_dag",
+            max_parallelism=2,
+            nodes=[
+                DAGNode(id="fast", name="fast", task_type="fast", payload={"kind": "fast"}),
+                DAGNode(id="slow", name="slow", task_type="slow", payload={"kind": "slow"}),
+                DAGNode(
+                    id="after_slow",
+                    name="after_slow",
+                    task_type="after_slow",
+                    payload={"kind": "after_slow"},
+                    dependencies=["slow"],
+                ),
+            ],
+        )
+
+        async def handler(task_type, payload):
+            if task_type == "slow":
+                await gate.wait()
+                return {"slow": True}
+            return {task_type: True}
+
+        task = asyncio.create_task(engine.execute(dag, handler))
+        await asyncio.sleep(0.2)
+        cancelled = await engine.cancel(dag.id)
+        gate.set()
+
+        assert cancelled is True
+        result = await task
+        assert result.status == DAGExecutionStatus.CANCELLED
+        assert result.node_executions["fast"].status == TaskStatus.SUCCESS
+        assert result.node_executions["slow"].status in {TaskStatus.SUCCESS, TaskStatus.CANCELLED}
+        assert result.node_executions["after_slow"].status == TaskStatus.CANCELLED
+
+    async def test_long_running_branch_failure_preserves_completed_sibling_and_blocks_downstream(self, engine):
+        """Failure in a long-running branch should preserve completed siblings and block dependent downstream work."""
+        gate = asyncio.Event()
+
+        dag = DAG(
+            name="long_branch_failure_dag",
+            max_parallelism=2,
+            nodes=[
+                DAGNode(id="fast", name="fast", task_type="fast", payload={"kind": "fast"}),
+                DAGNode(id="slow", name="slow", task_type="slow", payload={"kind": "slow"}),
+                DAGNode(
+                    id="after_slow",
+                    name="after_slow",
+                    task_type="after_slow",
+                    payload={"kind": "after_slow"},
+                    dependencies=["slow"],
+                ),
+            ],
+        )
+
+        async def handler(task_type, payload):
+            if task_type == "slow":
+                await gate.wait()
+                raise RuntimeError("slow branch failed")
+            return {task_type: True}
+
+        task = asyncio.create_task(engine.execute(dag, handler))
+        await asyncio.sleep(0.2)
+        gate.set()
+        result = await task
+
+        assert result.status == DAGExecutionStatus.FAILED
+        assert result.node_executions["fast"].status == TaskStatus.SUCCESS
+        assert result.node_executions["slow"].status == TaskStatus.FAILED
+        assert result.node_executions["after_slow"].status == TaskStatus.CANCELLED
+
+    async def test_long_branch_succeeds_but_downstream_failure_rolls_back_to_failed(self, engine):
+        """A long‑running branch can succeed, yet a later dependent failure should propagate to the DAG status."""
+        gate = asyncio.Event()
+
+        dag = DAG(
+            name="long_slow_success_downstream_failure",
+            max_parallelism=2,
+            nodes=[
+                DAGNode(id="fast", name="fast", task_type="fast", payload={"kind": "fast"}),
+                DAGNode(id="slow", name="slow", task_type="slow", payload={"kind": "slow"}),
+                DAGNode(
+                    id="after_slow",
+                    name="after_slow",
+                    task_type="after_slow",
+                    payload={"kind": "after_slow"},
+                    dependencies=["slow"],
+                ),
+            ],
+        )
+
+        async def handler(task_type, payload):
+            if task_type == "slow":
+                await gate.wait()
+                return {"slow": True}
+            if task_type == "after_slow":
+                raise RuntimeError("downstream failure")
+            return {task_type: True}
+
+        task = asyncio.create_task(engine.execute(dag, handler))
+        await asyncio.sleep(0.2)
+        gate.set()
+        result = await task
+
+        assert result.status == DAGExecutionStatus.FAILED
+        assert result.node_executions["fast"].status == TaskStatus.SUCCESS
+        assert result.node_executions["slow"].status == TaskStatus.SUCCESS
+        assert result.node_executions["after_slow"].status == TaskStatus.FAILED
+
     async def test_dag_context_updates(self, engine, simple_dag):
         """Test that DAG context is updated with node results."""
         result = await engine.execute(simple_dag, default_dag_handler)
