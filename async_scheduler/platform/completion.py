@@ -90,7 +90,16 @@ class TaskCompletionNode:
             logger.warning("Failed to load task %s for completion", task.id)
             return None
 
-        claimed = await self._dedup_backend.claim_once(completion_key, ttl_seconds=self._dedup_ttl_seconds)
+        try:
+            claimed = await self._dedup_backend.claim_once(completion_key, ttl_seconds=self._dedup_ttl_seconds)
+        except Exception as exc:
+            logger.warning(
+                "Completion dedupe unavailable for task %s status %s; proceeding best-effort: %s",
+                task.id,
+                status.value,
+                exc,
+            )
+            claimed = True
         if not claimed:
             return stored
 

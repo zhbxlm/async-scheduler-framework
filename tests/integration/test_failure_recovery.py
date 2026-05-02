@@ -18,6 +18,7 @@ from async_scheduler.persistence import (
     get_session_no_context,
     init_db,
 )
+from async_scheduler.backends.base import CompletionDedupBackend
 from async_scheduler.platform.callback import CallbackDispatcher
 from async_scheduler.platform.completion import TaskCompletionNode
 from async_scheduler.platform.reconciler import ReconciliationConfig, RepairStrategy, TaskReconciler
@@ -141,6 +142,20 @@ class ExtendFailOnceLockBackend:
 
     async def is_locked(self, key: str):
         return await self._inner.is_locked(key)
+
+
+class FailOnceCompletionDedupBackend(CompletionDedupBackend):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def claim_once(self, key: str, ttl_seconds: float | None = None) -> bool:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient dedupe outage")
+        return True
+
+    async def clear(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -607,6 +622,41 @@ async def test_concurrent_reconcile_does_not_double_requeue_same_orphan_task() -
     assert len(repair_history) == 1
     assert repair_history[0]["task_id"] == task.id
     assert repair_history[0]["action"] == "requeue"
+
+
+@pytest.mark.asyncio
+async def test_transient_completion_dedupe_failure_still_persists_terminal_state_best_effort() -> None:
+    await drop_db()
+    await init_db()
+
+    completion = TaskCompletionNode(dedup_backend=FailOnceCompletionDedupBackend())
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="transient-dedupe-failure", payload={}))
+        await TaskRepository.update(
+            session,
+            task.id,
+            status=TaskStatus.RUNNING,
+            started_at=datetime.utcnow() - timedelta(seconds=1),
+            updated_at=datetime.utcnow() - timedelta(seconds=1),
+        )
+        stored = await TaskRepository.get(session, task.id)
+        assert stored is not None
+        runtime_task = Task.model_validate(stored.model_dump())
+
+    updated = await completion.finalize(runtime_task, TaskStatus.SUCCESS, result={"ok": True})
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+
+    metrics = completion.get_metrics()
+    assert updated is not None
+    assert final_task is not None
+    assert final_task.status == TaskStatus.SUCCESS
+    assert final_task.result == {"ok": True}
+    assert metrics is not None
+    assert metrics.total_completed == 1
+    assert metrics.successful_completions == 1
 
 
 @pytest.mark.asyncio
