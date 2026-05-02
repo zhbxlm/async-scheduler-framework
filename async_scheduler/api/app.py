@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,78 @@ _APP_VERSION = "1.0.0"
 services: ServiceContainer | None = None
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _get_services() -> ServiceContainer:
+    """FastAPI dependency: resolve global service container or raise 503."""
+    if services is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "SERVICE_UNAVAILABLE", "message": "Service container not yet initialized"},
+        )
+    return services
+
+
+async def _collect_lease_snapshot(
+    session,
+    svc: ServiceContainer,
+    limit: int = 200,
+    offset: int = 0,
+    worker_id: str | None = None,
+) -> list[dict]:
+    """Shared lease-scan helper used by debug/summary, anomalies, and anomaly-summary.
+
+    Returns a list of dicts with keys:
+        task_id, task_status, worker_id, attempt_status, locked, lease,
+        attempt (full attempt detail dict)
+    """
+    attempts = await ExecutionAttemptRepository.list_latest_attempts(
+        session, limit=limit, offset=offset, worker_id=worker_id
+    )
+    items: list[dict] = []
+    for attempt in attempts:
+        task = await TaskRepository.get(session, attempt.task_id)
+        lease = None
+        if svc.lock_backend is not None and hasattr(svc.lock_backend, "describe_lock"):
+            lease = await svc.lock_backend.describe_lock(f"task:{attempt.task_id}")
+        lease_locked = bool(lease and lease.get("locked"))
+        task_status = None if task is None else task.status
+        ttl_ms = None if lease is None else lease.get("ttl_ms")
+
+        anomaly_types: list[str] = []
+        if task_status == TaskStatus.RUNNING and not lease_locked:
+            anomaly_types.append("running_without_lock")
+        if task_status in {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT} and lease_locked:
+            anomaly_types.append("locked_but_terminal")
+        if attempt.status == ExecutionAttemptStatus.ABANDONED and task_status == TaskStatus.RUNNING:
+            anomaly_types.append("abandoned_but_running")
+        if lease_locked and ttl_ms is not None and 0 < ttl_ms < 5000:
+            anomaly_types.append("stale_lease")
+
+        items.append({
+            "task_id": attempt.task_id,
+            "task_status": task_status,
+            "worker_id": attempt.worker_id,
+            "attempt_status": attempt.status,
+            "locked": lease_locked,
+            "lease": lease,
+            "anomaly_types": anomaly_types,
+            "attempt": {
+                "id": attempt.id,
+                "worker_id": attempt.worker_id,
+                "retry_index": attempt.retry_index,
+                "status": attempt.status,
+                "lease_token": attempt.lease_token,
+                "started_at": attempt.started_at,
+                "last_heartbeat_at": attempt.last_heartbeat_at,
+                "completed_at": attempt.completed_at,
+            },
+        })
+    return items
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
@@ -84,20 +156,10 @@ app = FastAPI(
 )
 
 
-# Pydantic request/response models
-class TaskResponse(Task):
-    """Task response model."""
-    pass
-
-
-class ScheduleResponse(Schedule):
-    """Schedule response model."""
-    pass
-
-
-class DAGResponse(DAG):
-    """DAG response model."""
-    pass
+# Pydantic request/response models — simple aliases; extend when response shapes diverge
+TaskResponse = Task
+ScheduleResponse = Schedule
+DAGResponse = DAG
 
 
 class DAGCreateRequest(BaseModel):
@@ -120,9 +182,7 @@ class DAGExecuteResponse(BaseModel):
     status: str
 
 
-class ExecutionAttemptResponse(ExecutionAttempt):
-    """Execution attempt response model."""
-    pass
+ExecutionAttemptResponse = ExecutionAttempt
 
 
 # API Routes
@@ -140,7 +200,36 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint with uptime, version, and readiness info."""
+    """Health check: returns a simple status signal.
+
+    - ``status``: ``"healthy"`` | ``"degraded"`` | ``"starting"``
+    - ``issues``: list of degraded sub-systems (empty when healthy)
+
+    For full internal metrics, use ``/health/detail``.
+    """
+    ready = services is not None
+    if not ready:
+        return {"status": "starting", "issues": ["service_container_not_initialized"]}
+
+    issues: list[str] = []
+    if not services.task_consumer.is_running():
+        issues.append("consumer_not_running")
+    if not services.cron_scheduler.is_running():
+        issues.append("scheduler_not_running")
+    if not services.reconciler.is_running():
+        issues.append("reconciler_not_running")
+
+    return {
+        "status": "degraded" if issues else "healthy",
+        "issues": issues,
+        "version": _APP_VERSION,
+        "uptime_seconds": round(time.time() - _APP_START_TIME, 1),
+    }
+
+
+@app.get("/health/detail")
+async def health_detail():
+    """Detailed health: full internal metrics for operators and dashboards."""
     worker_count = 0
     if services and services.worker_registry is not None:
         worker_count = len(await services.worker_registry.list_workers(include_stale=False))
@@ -184,15 +273,13 @@ async def liveness():
 
 
 @app.post("/tasks", response_model=TaskResponse, status_code=201)
-async def create_task(task: TaskCreate):
+async def create_task(task: TaskCreate, svc: ServiceContainer = Depends(_get_services)):
     """Create a new task."""
     async with get_session() as session:
-        if services is None:
-            raise HTTPException(status_code=503, detail="Services not available")
         try:
-            db_task = await services.task_router.create_task(task)
+            db_task = await svc.task_router.create_task(task)
         except QuotaExceededError as e:
-            raise HTTPException(status_code=429, detail=str(e)) from e
+            raise HTTPException(status_code=429, detail={"error_code": "QUOTA_EXCEEDED", "message": str(e)}) from e
         return TaskResponse.model_validate(db_task)
 
 
@@ -210,15 +297,13 @@ class BatchTaskResponse(BaseModel):
 
 
 @app.post("/tasks/batch", response_model=BatchTaskResponse, status_code=201)
-async def create_tasks_batch(body: BatchTaskCreate):
+async def create_tasks_batch(body: BatchTaskCreate, svc: ServiceContainer = Depends(_get_services)):
     """U7: Batch create up to 100 tasks atomically (best-effort; partial failures reported)."""
-    if services is None:
-        raise HTTPException(status_code=503, detail="Services not available")
     created: list[TaskResponse] = []
     failed: list[dict] = []
     for idx, task_create in enumerate(body.tasks):
         try:
-            db_task = await services.task_router.create_task(task_create)
+            db_task = await svc.task_router.create_task(task_create)
             created.append(TaskResponse.model_validate(db_task))
         except QuotaExceededError as e:
             failed.append({"index": idx, "error": f"quota_exceeded: {e}", "error_code": "QUOTA_EXCEEDED"})
@@ -368,15 +453,11 @@ async def list_schedules(limit: int = Query(100, ge=1, le=1000)):
 
 
 @app.post("/schedules/{schedule_id}/trigger")
-async def trigger_schedule(schedule_id: str):
+async def trigger_schedule(schedule_id: str, svc: ServiceContainer = Depends(_get_services)):
     """Trigger a schedule execution immediately."""
-    if not services:
-        raise HTTPException(status_code=503, detail="Scheduler not available")
-
-    triggered = await services.cron_scheduler.trigger_schedule(schedule_id)
+    triggered = await svc.cron_scheduler.trigger_schedule(schedule_id)
     if not triggered:
-        raise HTTPException(status_code=404, detail="Schedule not found or not active")
-
+        raise HTTPException(status_code=404, detail={"error_code": "SCHEDULE_NOT_FOUND", "message": "Schedule not found or not active"})
     return {"message": "Schedule triggered", "schedule_id": schedule_id}
 
 
@@ -446,11 +527,8 @@ async def list_dags(limit: int = Query(100, ge=1, le=1000)):
 
 
 @app.post("/dags/execute", response_model=DAGExecuteResponse)
-async def execute_dag(request: DAGExecuteRequest):
+async def execute_dag(request: DAGExecuteRequest, svc: ServiceContainer = Depends(_get_services)):
     """Execute a DAG."""
-    if not services:
-        raise HTTPException(status_code=503, detail="DAG engine not available")
-
     async with get_session() as session:
         dag = await DAGRepository.get(session, request.dag_id)
         if not dag:
@@ -465,7 +543,7 @@ async def execute_dag(request: DAGExecuteRequest):
         )
 
     async def _execute():
-        result_dag = await services.dag_engine.execute(dag, services.dag_handler)
+        result_dag = await svc.dag_engine.execute(dag, svc.dag_handler)
         async with get_session() as session:
             await DAGRepository.update(
                 session,
@@ -486,15 +564,11 @@ async def execute_dag(request: DAGExecuteRequest):
 
 
 @app.post("/dags/{dag_id}/cancel")
-async def cancel_dag(dag_id: str):
+async def cancel_dag(dag_id: str, svc: ServiceContainer = Depends(_get_services)):
     """Cancel a running DAG execution."""
-    if not services:
-        raise HTTPException(status_code=503, detail="DAG engine not available")
-
-    cancelled = await services.dag_engine.cancel(dag_id)
+    cancelled = await svc.dag_engine.cancel(dag_id)
     if not cancelled:
         raise HTTPException(status_code=404, detail="DAG not found or not running")
-
     return {"message": "DAG cancelled", "dag_id": dag_id}
 
 
@@ -502,114 +576,54 @@ async def cancel_dag(dag_id: str):
 
 
 @app.get("/queue/stats")
-async def queue_stats():
+async def queue_stats(svc: ServiceContainer = Depends(_get_services)):
     """Get queue statistics."""
-    if not services:
-        raise HTTPException(status_code=503, detail="Queue manager not available")
-
-    sizes = await services.queue_manager.size()
+    sizes = await svc.queue_manager.size()
     worker_count = 0
-    if services.worker_registry is not None:
-        worker_count = len(await services.worker_registry.list_workers(include_stale=False))
+    if svc.worker_registry is not None:
+        worker_count = len(await svc.worker_registry.list_workers(include_stale=False))
 
     return {
         "queue_sizes": sizes,
-        "total_queued": await services.queue_manager.get_queue_count(),
-        "scheduled_count": await services.queue_manager.get_scheduled_count(),
-        "running_tasks": services.task_executor.get_running_count(),
+        "total_queued": await svc.queue_manager.get_queue_count(),
+        "scheduled_count": await svc.queue_manager.get_scheduled_count(),
+        "running_tasks": svc.task_executor.get_running_count(),
         "worker_count": worker_count,
-        "reconciler_running": services.reconciler.is_running(),
+        "reconciler_running": svc.reconciler.is_running(),
     }
 
 
 @app.get("/debug/summary")
-async def debug_summary():
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
-    queue_sizes = await services.queue_manager.size()
+async def debug_summary(svc: ServiceContainer = Depends(_get_services)):
+    queue_sizes = await svc.queue_manager.size()
     workers = []
-    if services.worker_registry is not None:
-        workers = await services.worker_registry.list_workers(include_stale=True)
-    repair_metrics = services.reconciler.get_metrics()
-    repair_history = services.reconciler.list_repair_history(limit=10, offset=0)
+    if svc.worker_registry is not None:
+        workers = await svc.worker_registry.list_workers(include_stale=True)
+    repair_metrics = svc.reconciler.get_metrics()
+    repair_history = svc.reconciler.list_repair_history(limit=10, offset=0)
 
-    lease_items = []
     async with await get_session_no_context() as session:
-        latest_attempts = await ExecutionAttemptRepository.list_latest_attempts(session, limit=200, offset=0)
-        for attempt in latest_attempts:
-            task = await TaskRepository.get(session, attempt.task_id)
-            lease = None
-            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
-            lease_items.append(
-                {
-                    "task_id": attempt.task_id,
-                    "task_status": None if task is None else task.status,
-                    "worker_id": attempt.worker_id,
-                    "attempt_status": attempt.status,
-                    "locked": False if lease is None else bool(lease.get("locked")),
-                    "lease": lease,  # include for stale check
-                }
-            )
+        lease_items = await _collect_lease_snapshot(session, svc, limit=200)
 
-    locked_count = sum(1 for item in lease_items if item["locked"])
-    running_without_lock_count = sum(
-        1 for item in lease_items if item["task_status"] == TaskStatus.RUNNING and not item["locked"]
-    )
-    running_with_lock_count = sum(
-        1 for item in lease_items if item["task_status"] == TaskStatus.RUNNING and item["locked"]
-    )
-    # 新统计：lease 锁着但 task 已经是终态（SUCCESS/FAILED/CANCELLED/TIMEOUT）
-    locked_but_terminal_count = sum(
-        1 for item in lease_items
-        if item["locked"]
-        and item["task_status"]
-        and item["task_status"]
-        in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT)
-    )
-    # 新统计：attempt ABANDONED 但 task 还是 RUNNING
-    abandoned_but_running_count = sum(
-        1 for item in lease_items
-        if item["attempt_status"] == ExecutionAttemptStatus.ABANDONED
-        and item["task_status"] == TaskStatus.RUNNING
-    )
-    # 新统计：stale lease（TTL < 5 秒）
-    stale_lease_count = 0
-    if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-        # 采样检查前几个 locked 项的 TTL
-        for item in lease_items[:10]:
-            if item["locked"] and item["lease"]:
-                ttl_ms = item["lease"].get("ttl_ms")
-                if ttl_ms is not None and 0 < ttl_ms < 5000:
-                    stale_lease_count += 1
-
-    anomaly_summary = {
-        "running_without_lock": running_without_lock_count,
-        "locked_but_terminal": locked_but_terminal_count,
-        "abandoned_but_running": abandoned_but_running_count,
-        "stale_lease": stale_lease_count,
-        "total": (
-            running_without_lock_count
-            + locked_but_terminal_count
-            + abandoned_but_running_count
-            + stale_lease_count
-        ),
-        "endpoint": "/debug/leases/anomalies",
-        "summaryEndpoint": "/debug/leases/anomalies/summary",
-    }
+    locked_count = sum(1 for i in lease_items if i["locked"])
+    running_with_lock = sum(1 for i in lease_items if i["task_status"] == TaskStatus.RUNNING and i["locked"])
+    anomaly_counts = {k: 0 for k in ("running_without_lock", "locked_but_terminal", "abandoned_but_running", "stale_lease")}
+    for item in lease_items:
+        for a in item["anomaly_types"]:
+            if a in anomaly_counts:
+                anomaly_counts[a] += 1
 
     return {
         "health": {
-            "consumer_running": services.task_consumer.is_running(),
-            "scheduler_running": services.cron_scheduler.is_running(),
-            "reconciler_running": services.reconciler.is_running(),
+            "consumer_running": svc.task_consumer.is_running(),
+            "scheduler_running": svc.cron_scheduler.is_running(),
+            "reconciler_running": svc.reconciler.is_running(),
         },
         "queue": {
             "sizes": queue_sizes,
-            "total_queued": await services.queue_manager.get_queue_count(),
-            "scheduled_count": await services.queue_manager.get_scheduled_count(),
-            "running_tasks": services.task_executor.get_running_count(),
+            "total_queued": await svc.queue_manager.get_queue_count(),
+            "scheduled_count": await svc.queue_manager.get_scheduled_count(),
+            "running_tasks": svc.task_executor.get_running_count(),
         },
         "workers": {
             "count": len(workers),
@@ -618,13 +632,20 @@ async def debug_summary():
         "leases": {
             "count": len(lease_items),
             "locked_count": locked_count,
-            "running_with_lock_count": running_with_lock_count,
-            "running_without_lock_count": running_without_lock_count,
-            "locked_but_terminal_count": locked_but_terminal_count,
-            "abandoned_but_running_count": abandoned_but_running_count,
-            "stale_lease_count": stale_lease_count,
-            "anomaly_summary": anomaly_summary,
-            "items": lease_items[:20],
+            "running_with_lock_count": running_with_lock,
+            "running_without_lock_count": anomaly_counts["running_without_lock"],
+            "locked_but_terminal_count": anomaly_counts["locked_but_terminal"],
+            "abandoned_but_running_count": anomaly_counts["abandoned_but_running"],
+            "stale_lease_count": anomaly_counts["stale_lease"],
+            "anomaly_summary": {
+                **anomaly_counts,
+                "total": sum(anomaly_counts.values()),
+                "endpoint": "/debug/leases/anomalies",
+                "summaryEndpoint": "/debug/leases/anomalies/summary",
+            },
+            "items": [{"task_id": i["task_id"], "task_status": i["task_status"],
+                       "worker_id": i["worker_id"], "attempt_status": i["attempt_status"],
+                       "locked": i["locked"], "lease": i["lease"]} for i in lease_items[:20]],
         },
         "reconciler": {
             "metrics": {
@@ -639,44 +660,34 @@ async def debug_summary():
             },
             "recent_history": repair_history,
         },
-        # P2-TODO-9: capability queue stats
         "capability_queues": {
-            "capabilities": await services.queue_manager.discover_capabilities(),
+            "capabilities": await svc.queue_manager.discover_capabilities(),
         },
     }
 
 
 @app.get("/quota/stats")
-async def quota_stats():
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    return services.quota_manager.stats()
+async def quota_stats(svc: ServiceContainer = Depends(_get_services)):
+    return svc.quota_manager.stats()
 
 
-# P2-TODO-9: Capability queue endpoints
 @app.get("/queues/capabilities")
-async def list_queue_capabilities():
+async def list_queue_capabilities(svc: ServiceContainer = Depends(_get_services)):
     """List all known capability queue names."""
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    caps = await services.queue_manager.discover_capabilities()
+    caps = await svc.queue_manager.discover_capabilities()
     return {"capabilities": caps}
 
 
 @app.get("/queues/{capability}/stats")
-async def get_capability_queue_stats(capability: str):
+async def get_capability_queue_stats(capability: str, svc: ServiceContainer = Depends(_get_services)):
     """Get runtime stats for a specific capability queue."""
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    stats = await services.queue_manager.get_capability_stats(capability)
+    stats = await svc.queue_manager.get_capability_stats(capability)
     return stats.to_dict()
 
 
 @app.get("/reconciler/stats")
-async def reconciler_stats():
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    metrics = services.reconciler.get_metrics()
+async def reconciler_stats(svc: ServiceContainer = Depends(_get_services)):
+    metrics = svc.reconciler.get_metrics()
     return {
         "total_runs": metrics.total_runs,
         "stuck_tasks_found": metrics.stuck_tasks_found,
@@ -686,15 +697,15 @@ async def reconciler_stats():
         "last_run_at": metrics.last_run_at,
         "last_repaired_count": metrics.last_repaired_count,
         "repair_rate": metrics.get_repair_rate(),
-        "running": services.reconciler.is_running(),
+        "running": svc.reconciler.is_running(),
     }
 
 
 @app.get("/workers")
-async def list_workers(include_stale: bool = Query(False)):
-    if not services or services.worker_registry is None:
-        raise HTTPException(status_code=503, detail="Worker registry not available")
-    workers = await services.worker_registry.list_workers(include_stale=include_stale)
+async def list_workers(include_stale: bool = Query(False), svc: ServiceContainer = Depends(_get_services)):
+    if svc.worker_registry is None:
+        raise HTTPException(status_code=503, detail={"error_code": "WORKER_REGISTRY_UNAVAILABLE", "message": "Worker registry not configured in this deployment"})
+    workers = await svc.worker_registry.list_workers(include_stale=include_stale)
     return {
         "items": [worker.__dict__ for worker in workers],
         "count": len(workers),
@@ -703,11 +714,10 @@ async def list_workers(include_stale: bool = Query(False)):
 
 
 @app.get("/workers/{worker_id}")
-async def get_worker(worker_id: str):
-    if not services or services.worker_registry is None:
-        # No registry in this deployment: the worker cannot exist
+async def get_worker(worker_id: str, svc: ServiceContainer = Depends(_get_services)):
+    if svc.worker_registry is None:
         raise HTTPException(status_code=404, detail="Worker not found")
-    workers = await services.worker_registry.list_workers(include_stale=True)
+    workers = await svc.worker_registry.list_workers(include_stale=True)
     for worker in workers:
         if worker.worker_id == worker_id:
             return worker.__dict__
@@ -722,52 +732,25 @@ async def list_lease_debug(
     task_status: str | None = Query(None),
     attempt_status: str | None = Query(None),
     locked_only: bool = Query(False),
+    svc: ServiceContainer = Depends(_get_services),
 ):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
     async with await get_session_no_context() as session:
-        attempts = await ExecutionAttemptRepository.list_latest_attempts(
-            session,
-            limit=limit,
-            offset=offset,
-            worker_id=worker_id,
-        )
-        items = []
-        for attempt in attempts:
-            task = await TaskRepository.get(session, attempt.task_id)
-            lease = None
-            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+        all_items = await _collect_lease_snapshot(session, svc, limit=limit, offset=offset, worker_id=worker_id)
 
-            item = {
-                "task_id": attempt.task_id,
-                "task_status": None if task is None else task.status,
-                "lease": lease,
-                "latest_attempt": {
-                    "id": attempt.id,
-                    "worker_id": attempt.worker_id,
-                    "retry_index": attempt.retry_index,
-                    "status": attempt.status,
-                    "lease_token": attempt.lease_token,
-                    "started_at": attempt.started_at,
-                    "last_heartbeat_at": attempt.last_heartbeat_at,
-                    "completed_at": attempt.completed_at,
-                },
-            }
-
-            if task_status is not None:
-                if task is None:
-                    continue
-                if task.status.value != task_status:
-                    continue
-            if attempt_status is not None:
-                if attempt.status.value != attempt_status:
-                    continue
-            if locked_only and not (lease and lease.get("locked")):
-                continue
-
-            items.append(item)
+    items = []
+    for item in all_items:
+        if task_status is not None and (item["task_status"] is None or item["task_status"].value != task_status):
+            continue
+        if attempt_status is not None and item["attempt_status"].value != attempt_status:
+            continue
+        if locked_only and not item["locked"]:
+            continue
+        items.append({
+            "task_id": item["task_id"],
+            "task_status": item["task_status"],
+            "lease": item["lease"],
+            "latest_attempt": item["attempt"],
+        })
 
     return {
         "items": items,
@@ -784,99 +767,53 @@ async def list_lease_debug(
 
 
 @app.get("/debug/leases/anomalies")
-async def list_lease_anomalies(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
+async def list_lease_anomalies(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    svc: ServiceContainer = Depends(_get_services),
+):
     async with await get_session_no_context() as session:
-        attempts = await ExecutionAttemptRepository.list_latest_attempts(session, limit=limit, offset=offset)
-        items = []
-        for attempt in attempts:
-            task = await TaskRepository.get(session, attempt.task_id)
-            lease = None
-            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+        all_items = await _collect_lease_snapshot(session, svc, limit=limit, offset=offset)
 
-            task_status = None if task is None else task.status
-            lease_locked = bool(lease and lease.get("locked"))
-            anomaly_types: list[str] = []
-            if task_status == TaskStatus.RUNNING and not lease_locked:
-                anomaly_types.append("running_without_lock")
-            if task_status in {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT} and lease_locked:
-                anomaly_types.append("locked_but_terminal")
-            if attempt.status == ExecutionAttemptStatus.ABANDONED and task_status == TaskStatus.RUNNING:
-                anomaly_types.append("abandoned_but_running")
-            ttl_ms = None if lease is None else lease.get("ttl_ms")
-            if lease_locked and ttl_ms is not None and 0 < ttl_ms < 5000:
-                anomaly_types.append("stale_lease")
-
-            if anomaly_types:
-                items.append(
-                    {
-                        "task_id": attempt.task_id,
-                        "task_status": task_status,
-                        "lease": lease,
-                        "latest_attempt": {
-                            "id": attempt.id,
-                            "worker_id": attempt.worker_id,
-                            "retry_index": attempt.retry_index,
-                            "status": attempt.status,
-                            "lease_token": attempt.lease_token,
-                            "started_at": attempt.started_at,
-                            "last_heartbeat_at": attempt.last_heartbeat_at,
-                            "completed_at": attempt.completed_at,
-                        },
-                        "anomaly_types": anomaly_types,
-                    }
-                )
-
-    return {"items": items, "count": len(items), "limit": limit, "offset": offset}
+    return {
+        "items": [
+            {
+                "task_id": i["task_id"],
+                "task_status": i["task_status"],
+                "lease": i["lease"],
+                "latest_attempt": i["attempt"],
+                "anomaly_types": i["anomaly_types"],
+            }
+            for i in all_items if i["anomaly_types"]
+        ],
+        "count": sum(1 for i in all_items if i["anomaly_types"]),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.get("/debug/leases/anomalies/summary")
-async def get_lease_anomaly_summary(limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
+async def get_lease_anomaly_summary(
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    svc: ServiceContainer = Depends(_get_services),
+):
     async with await get_session_no_context() as session:
-        attempts = await ExecutionAttemptRepository.list_latest_attempts(session, limit=limit, offset=offset)
-        by_type = {
-            "running_without_lock": 0,
-            "locked_but_terminal": 0,
-            "abandoned_but_running": 0,
-            "stale_lease": 0,
-        }
-        sample_items: dict[str, list[dict]] = {key: [] for key in by_type}
-        for attempt in attempts:
-            task = await TaskRepository.get(session, attempt.task_id)
-            lease = None
-            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+        all_items = await _collect_lease_snapshot(session, svc, limit=limit, offset=offset)
 
-            task_status = None if task is None else task.status
-            lease_locked = bool(lease and lease.get("locked"))
-            anomaly_types: list[str] = []
-            if task_status == TaskStatus.RUNNING and not lease_locked:
-                anomaly_types.append("running_without_lock")
-            if task_status in {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT} and lease_locked:
-                anomaly_types.append("locked_but_terminal")
-            if attempt.status == ExecutionAttemptStatus.ABANDONED and task_status == TaskStatus.RUNNING:
-                anomaly_types.append("abandoned_but_running")
-            ttl_ms = None if lease is None else lease.get("ttl_ms")
-            if lease_locked and ttl_ms is not None and 0 < ttl_ms < 5000:
-                anomaly_types.append("stale_lease")
-
-            for anomaly in anomaly_types:
+    by_type = {"running_without_lock": 0, "locked_but_terminal": 0, "abandoned_but_running": 0, "stale_lease": 0}
+    sample_items: dict[str, list[dict]] = {key: [] for key in by_type}
+    for item in all_items:
+        for anomaly in item["anomaly_types"]:
+            if anomaly in by_type:
                 by_type[anomaly] += 1
                 if len(sample_items[anomaly]) < 5:
-                    sample_items[anomaly].append(
-                        {
-                            "task_id": attempt.task_id,
-                            "task_status": task_status,
-                            "worker_id": attempt.worker_id,
-                            "attempt_status": attempt.status,
-                        }
-                    )
+                    sample_items[anomaly].append({
+                        "task_id": item["task_id"],
+                        "task_status": item["task_status"],
+                        "worker_id": item["worker_id"],
+                        "attempt_status": item["attempt_status"],
+                    })
 
     return {
         "counts": by_type,
@@ -889,13 +826,10 @@ async def get_lease_anomaly_summary(limit: int = Query(200, ge=1, le=1000), offs
 
 
 @app.get("/debug/leases/{task_id}")
-async def get_task_lease_debug(task_id: str):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
+async def get_task_lease_debug(task_id: str, svc: ServiceContainer = Depends(_get_services)):
     lease_info = None
-    if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-        lease_info = await services.lock_backend.describe_lock(f"task:{task_id}")
+    if svc.lock_backend is not None and hasattr(svc.lock_backend, "describe_lock"):
+        lease_info = await svc.lock_backend.describe_lock(f"task:{task_id}")
 
     latest_attempt = None
     async with await get_session_no_context() as session:
@@ -924,55 +858,27 @@ async def get_task_lease_debug(task_id: str):
 
 
 @app.get("/workers/{worker_id}/leases")
-async def get_worker_leases(worker_id: str, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-
+async def get_worker_leases(
+    worker_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    svc: ServiceContainer = Depends(_get_services),
+):
     async with await get_session_no_context() as session:
-        attempts = await ExecutionAttemptRepository.list_latest_attempts(
-            session,
-            limit=limit,
-            offset=offset,
-            worker_id=worker_id,
-        )
-        items = []
-        for attempt in attempts:
-            task = await TaskRepository.get(session, attempt.task_id)
-            lease = None
-            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
-                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
-            items.append(
-                {
-                    "task_id": attempt.task_id,
-                    "task_status": None if task is None else task.status,
-                    "lease": lease,
-                    "latest_attempt": {
-                        "id": attempt.id,
-                        "worker_id": attempt.worker_id,
-                        "retry_index": attempt.retry_index,
-                        "status": attempt.status,
-                        "lease_token": attempt.lease_token,
-                        "started_at": attempt.started_at,
-                        "last_heartbeat_at": attempt.last_heartbeat_at,
-                        "completed_at": attempt.completed_at,
-                    },
-                }
-            )
+        all_items = await _collect_lease_snapshot(session, svc, limit=limit, offset=offset, worker_id=worker_id)
 
     return {
         "worker_id": worker_id,
-        "items": items,
-        "count": len(items),
+        "items": [{"task_id": i["task_id"], "task_status": i["task_status"], "lease": i["lease"], "latest_attempt": i["attempt"]} for i in all_items],
+        "count": len(all_items),
         "limit": limit,
         "offset": offset,
     }
 
 
 @app.post("/reconciler/run")
-async def run_reconciler_once():
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    repaired = await services.reconciler.reconcile()
+async def run_reconciler_once(svc: ServiceContainer = Depends(_get_services)):
+    repaired = await svc.reconciler.reconcile()
     return {"repaired": repaired}
 
 
@@ -982,15 +888,9 @@ async def reconciler_history(
     offset: int = Query(0, ge=0),
     action: str | None = Query(None),
     task_id: str | None = Query(None),
+    svc: ServiceContainer = Depends(_get_services),
 ):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    items = services.reconciler.list_repair_history(
-        limit=limit,
-        offset=offset,
-        action=action,
-        task_id=task_id,
-    )
+    items = svc.reconciler.list_repair_history(limit=limit, offset=offset, action=action, task_id=task_id)
     return {
         "items": items,
         "count": len(items),
@@ -999,20 +899,16 @@ async def reconciler_history(
 
 
 @app.get("/capabilities")
-async def list_capabilities():
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
+async def list_capabilities(svc: ServiceContainer = Depends(_get_services)):
     return {
-        "items": [item.model_dump() for item in services.registry.list_capability_info()],
-        "metrics": services.registry.get_metrics(),
+        "items": [item.model_dump() for item in svc.registry.list_capability_info()],
+        "metrics": svc.registry.get_metrics(),
     }
 
 
 @app.get("/capabilities/{capability_name}")
-async def get_capability(capability_name: str):
-    if not services:
-        raise HTTPException(status_code=503, detail="Services not available")
-    info = services.registry.get_info(capability_name)
+async def get_capability(capability_name: str, svc: ServiceContainer = Depends(_get_services)):
+    info = svc.registry.get_info(capability_name)
     if info is None:
         raise HTTPException(status_code=404, detail="Capability not found")
     return info.model_dump()
@@ -1066,19 +962,19 @@ async def update_tenant(tenant_id: str, update: TenantUpdate):
 # ---------------------------------------------------------------------------
 
 @app.get("/actors/capabilities")
-async def list_actor_capabilities():
+async def list_actor_capabilities(svc: ServiceContainer = Depends(_get_services)):
     """List capabilities registered in the actor pool."""
-    if not services or services.actor_pool_manager is None:
+    if svc.actor_pool_manager is None:
         raise HTTPException(status_code=404, detail="Actor pool not available")
-    return {"capabilities": services.actor_pool_manager.list_capabilities()}
+    return {"capabilities": svc.actor_pool_manager.list_capabilities()}
 
 
 @app.get("/actors/{capability}/stats")
-async def get_actor_pool_stats(capability: str):
+async def get_actor_pool_stats(capability: str, svc: ServiceContainer = Depends(_get_services)):
     """Get stats for an actor pool capability."""
-    if not services or services.actor_pool_manager is None:
+    if svc.actor_pool_manager is None:
         raise HTTPException(status_code=404, detail="Actor pool not available")
-    return services.actor_pool_manager.get_pool_stats(capability)
+    return svc.actor_pool_manager.get_pool_stats(capability)
 
 
 # ---------------------------------------------------------------------------
@@ -1086,19 +982,19 @@ async def get_actor_pool_stats(capability: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/resources/stats")
-async def get_resource_manager_stats():
+async def get_resource_manager_stats(svc: ServiceContainer = Depends(_get_services)):
     """Get resource manager scaling stats."""
-    if not services or services.resource_manager is None:
+    if svc.resource_manager is None:
         raise HTTPException(status_code=404, detail="Resource manager not available")
-    return services.resource_manager.get_stats()
+    return svc.resource_manager.get_stats()
 
 
 @app.get("/resources/scale-history")
-async def get_scale_history(limit: int = Query(50, ge=1, le=500)):
+async def get_scale_history(limit: int = Query(50, ge=1, le=500), svc: ServiceContainer = Depends(_get_services)):
     """Get recent scaling events."""
-    if not services or services.resource_manager is None:
+    if svc.resource_manager is None:
         raise HTTPException(status_code=404, detail="Resource manager not available")
-    return {"events": services.resource_manager.get_scale_history(limit)}
+    return {"events": svc.resource_manager.get_scale_history(limit)}
 
 
 # ---------------------------------------------------------------------------
@@ -1106,11 +1002,11 @@ async def get_scale_history(limit: int = Query(50, ge=1, le=500)):
 # ---------------------------------------------------------------------------
 
 @app.get("/async-proxy/stats")
-async def get_async_proxy_stats():
+async def get_async_proxy_stats(svc: ServiceContainer = Depends(_get_services)):
     """Get async proxy sidecar stats."""
-    if not services or services.async_proxy_sidecar is None:
+    if svc.async_proxy_sidecar is None:
         raise HTTPException(status_code=404, detail="Async proxy not available")
-    return services.async_proxy_sidecar.get_stats()
+    return svc.async_proxy_sidecar.get_stats()
 
 
 # ---------------------------------------------------------------------------
@@ -1118,31 +1014,31 @@ async def get_async_proxy_stats():
 # ---------------------------------------------------------------------------
 
 @app.get("/clusters")
-async def list_clusters():
+async def list_clusters(svc: ServiceContainer = Depends(_get_services)):
     """List all registered clusters."""
-    if not services or services.cluster_registry is None:
+    if svc.cluster_registry is None:
         raise HTTPException(status_code=404, detail="Cluster registry not available")
-    clusters = await services.cluster_registry.list_clusters()
+    clusters = await svc.cluster_registry.list_clusters()
     return {"clusters": [c.to_dict() for c in clusters]}
 
 
 @app.get("/clusters/{cluster_id}")
-async def get_cluster(cluster_id: str):
+async def get_cluster(cluster_id: str, svc: ServiceContainer = Depends(_get_services)):
     """Get a specific cluster by ID."""
-    if not services or services.cluster_registry is None:
+    if svc.cluster_registry is None:
         raise HTTPException(status_code=404, detail="Cluster registry not available")
-    cluster = await services.cluster_registry.get_cluster(cluster_id)
+    cluster = await svc.cluster_registry.get_cluster(cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id!r} not found")
     return cluster.to_dict()
 
 
 @app.get("/clusters/by-capability/{capability}")
-async def get_clusters_for_capability(capability: str):
+async def get_clusters_for_capability(capability: str, svc: ServiceContainer = Depends(_get_services)):
     """Get all clusters that support a given capability."""
-    if not services or services.cluster_registry is None:
+    if svc.cluster_registry is None:
         raise HTTPException(status_code=404, detail="Cluster registry not available")
-    clusters = await services.cluster_registry.get_clusters_for_capability(capability)
+    clusters = await svc.cluster_registry.get_clusters_for_capability(capability)
     return {"capability": capability, "clusters": [c.to_dict() for c in clusters]}
 
 

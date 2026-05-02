@@ -10,3 +10,9 @@ __pycache__/
 *.sqlite3
 data/
 .baidu-cc/
+# editor/backup artifacts
+*.bak
+*.backup
+*.orig
+*.swp
+*.swo

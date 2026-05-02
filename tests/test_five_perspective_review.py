@@ -119,7 +119,7 @@ class TestOpsFixes:
         from httpx import ASGITransport
         mod = importlib.import_module("async_scheduler.api.app")
         async with httpx.AsyncClient(transport=ASGITransport(app=mod.app), base_url="http://test") as client:
-            resp = await client.get("/health")
+            resp = await client.get("/health/detail")
         assert resp.status_code == 200
         data = resp.json()
         assert "uptime_seconds" in data

@@ -416,7 +416,7 @@ class TestObservabilityApi:
             )
 
             async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-                health_response = await client.get("/health")
+                health_response = await client.get("/health/detail")
                 queue_response = await client.get("/queue/stats")
                 debug_response = await client.get("/debug/summary")
                 empty_history_response = await client.get("/reconciler/history?offset=10")
