@@ -40,7 +40,7 @@ class TestRedisQueueBackend:
 
         assert dequeued is not None
         assert dequeued.id == task.id
-        assert backend.get_queue_count() == 0
+        assert await backend.get_queue_count() == 0
 
     async def test_delayed_task_not_visible_before_ready(self) -> None:
         config = BackendConfig(
@@ -59,8 +59,8 @@ class TestRedisQueueBackend:
         dequeued = await backend.dequeue(timeout=0.01)
 
         assert dequeued is None
-        assert backend.is_scheduled(task.id) is True
-        assert backend.get_scheduled_count() == 1
+        assert await backend.is_scheduled(task.id) is True
+        assert await backend.get_scheduled_count() == 1
 
     async def test_due_delayed_task_is_promoted_on_dequeue(self) -> None:
         config = BackendConfig(
@@ -80,7 +80,7 @@ class TestRedisQueueBackend:
 
         assert dequeued is not None
         assert dequeued.id == task.id
-        assert backend.get_scheduled_count() == 0
+        assert await backend.get_scheduled_count() == 0
 
     async def test_requeue_via_priority_update_keeps_task_available(self) -> None:
         config = BackendConfig(
@@ -125,8 +125,8 @@ class TestRedisQueueBackend:
         assert cancelled_queued is True
         assert cancelled_delayed is True
         assert dequeued is None
-        assert backend.get_queue_count() == 0
-        assert backend.get_scheduled_count() == 0
+        assert await backend.get_queue_count() == 0
+        assert await backend.get_scheduled_count() == 0
 
     async def test_queue_stats_reflect_state(self) -> None:
         config = BackendConfig(
@@ -149,5 +149,5 @@ class TestRedisQueueBackend:
 
         assert sizes[TaskPriority.HIGH.value] == 1
         assert sizes[TaskPriority.NORMAL.value] == 1
-        assert backend.get_queue_count() == 2
-        assert backend.get_scheduled_count() == 1
+        assert await backend.get_queue_count() == 2
+        assert await backend.get_scheduled_count() == 1

@@ -345,3 +345,209 @@ class TaskReconciler:
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
+
+    # ------------------------------------------------------------------
+    # Three-phase reconciliation (deepwiki alignment)
+    # ------------------------------------------------------------------
+
+    async def reconcile_three_phase(
+        self,
+        *,
+        callback_dispatcher: Any | None = None,
+        throttle_mark_failed: int = 50,
+    ) -> dict[str, int]:
+        """Run all three reconciliation phases in sequence.
+
+        Phase 1: Double-write reconciliation
+            Ensure completed_at is populated for all terminal tasks (backfill
+            any gaps caused by partial writes).
+
+        Phase 2: Stuck task recovery
+            Scan RUNNING/QUEUED tasks whose lease has expired and worker is
+            dead; requeue or mark-failed with throttle control.
+
+        Phase 3: Lost callback recovery
+            For terminal tasks with a callback_url that has not been marked
+            delivered, compensate by re-dispatching via callback_dispatcher.
+
+        Returns a dict with per-phase counts.
+        """
+        stats: dict[str, int] = {
+            "phase1_backfilled": 0,
+            "phase2_requeued": 0,
+            "phase2_mark_failed": 0,
+            "phase3_callback_requeued": 0,
+        }
+
+        try:
+            stats["phase1_backfilled"] = await self._phase1_double_write()
+        except Exception:
+            logger.exception("reconcile phase1 failed")
+
+        try:
+            p2 = await self._phase2_stuck_recovery(throttle_mark_failed=throttle_mark_failed)
+            stats["phase2_requeued"] = p2["requeued"]
+            stats["phase2_mark_failed"] = p2["mark_failed"]
+        except Exception:
+            logger.exception("reconcile phase2 failed")
+
+        if callback_dispatcher is not None:
+            try:
+                stats["phase3_callback_requeued"] = await self._phase3_lost_callbacks(callback_dispatcher)
+            except Exception:
+                logger.exception("reconcile phase3 failed")
+
+        return stats
+
+    async def _phase1_double_write(self) -> int:
+        """Ensure completed_at is populated for all terminal tasks."""
+        terminal_statuses = [
+            TaskStatus.SUCCESS,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.TIMEOUT,
+        ]
+        backfilled = 0
+        async with await get_session_no_context() as session:
+            for status in terminal_statuses:
+                tasks = await TaskRepository.list_all(
+                    session, status=status, limit=self.config.max_tasks_per_run
+                )
+                for task in tasks:
+                    if task.completed_at is None:
+                        try:
+                            async with get_session() as ws:
+                                await TaskRepository.update(
+                                    ws,
+                                    task.id,
+                                    completed_at=task.updated_at or datetime.utcnow(),
+                                )
+                            backfilled += 1
+                            logger.info(
+                                "phase1: backfilled completed_at task=%s status=%s",
+                                task.id,
+                                task.status.value,
+                            )
+                        except Exception:
+                            logger.exception("phase1: failed to backfill task %s", task.id)
+        return backfilled
+
+    async def _phase2_stuck_recovery(self, *, throttle_mark_failed: int = 50) -> dict[str, int]:
+        """Detect stuck RUNNING/QUEUED tasks and repair them."""
+        requeued = 0
+        mark_failed = 0
+        threshold = datetime.utcnow() - timedelta(seconds=self.config.stuck_after_seconds)
+
+        async with await get_session_no_context() as session:
+            running_tasks = await TaskRepository.list_all(
+                session, status=TaskStatus.RUNNING, limit=self.config.max_tasks_per_run
+            )
+            queued_tasks = await TaskRepository.list_all(
+                session, status=TaskStatus.QUEUED, limit=self.config.max_tasks_per_run
+            )
+
+        for task in running_tasks + queued_tasks:
+            updated_at = task.updated_at or task.created_at
+            if updated_at > threshold:
+                continue
+            async with await get_session_no_context() as session:
+                repairable = await self._is_repairable_running_task(session, task, threshold)
+            if not repairable:
+                continue
+
+            if self.config.repair_strategy == RepairStrategy.REQUEUE and self.queue_manager is not None:
+                try:
+                    await self.queue_manager.enqueue(task)
+                    async with get_session() as session:
+                        await TaskRepository.update(
+                            session,
+                            task.id,
+                            status=TaskStatus.QUEUED,
+                            error_message="reconciler-phase2: requeued after lease expiry",
+                            started_at=None,
+                            retry_count=(task.retry_count or 0) + 1,
+                        )
+                    requeued += 1
+                    self._record_repair(
+                        task_id=task.id,
+                        action="phase2_requeue",
+                        attempt_id=None,
+                        attempt_status=ExecutionAttemptStatus.ABANDONED.value,
+                        task_status=TaskStatus.QUEUED.value,
+                        error_message="reconciler-phase2: requeued after lease expiry",
+                    )
+                except Exception:
+                    logger.exception("phase2: requeue failed task=%s", task.id)
+            else:
+                if mark_failed >= throttle_mark_failed:
+                    logger.warning("phase2: throttle reached; deferring remaining")
+                    break
+                error_msg = "reconciler-phase2: marked failed after lease expiry"
+                try:
+                    async with get_session() as session:
+                        await TaskRepository.update(
+                            session,
+                            task.id,
+                            status=TaskStatus.FAILED,
+                            error_message=error_msg,
+                            completed_at=datetime.utcnow(),
+                        )
+                        latest = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+                        if latest is not None:
+                            await ExecutionAttemptRepository.finalize(
+                                session,
+                                latest.id,
+                                status=ExecutionAttemptStatus.ABANDONED,
+                                error_message=error_msg,
+                            )
+                    mark_failed += 1
+                    self._record_repair(
+                        task_id=task.id,
+                        action="phase2_mark_failed",
+                        attempt_id=None,
+                        attempt_status=ExecutionAttemptStatus.ABANDONED.value,
+                        task_status=TaskStatus.FAILED.value,
+                        error_message=error_msg,
+                    )
+                except Exception:
+                    logger.exception("phase2: mark_failed failed task=%s", task.id)
+
+        return {"requeued": requeued, "mark_failed": mark_failed}
+
+    async def _phase3_lost_callbacks(self, callback_dispatcher: Any) -> int:
+        """Re-enqueue callbacks for terminal tasks never delivered."""
+        requeued = 0
+        terminal_statuses = [
+            TaskStatus.SUCCESS,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.TIMEOUT,
+        ]
+        async with await get_session_no_context() as session:
+            for status in terminal_statuses:
+                tasks = await TaskRepository.list_all(
+                    session, status=status, limit=self.config.max_tasks_per_run
+                )
+                for task in tasks:
+                    if not getattr(task, "callback_url", None):
+                        continue
+                    if await callback_dispatcher.is_done(task.id):
+                        continue
+                    if await callback_dispatcher.is_in_retry_queue(task.id):
+                        continue
+                    try:
+                        await callback_dispatcher.dispatch(
+                            task.callback_url,
+                            {
+                                "task_id": task.id,
+                                "status": task.status.value,
+                                "result": getattr(task, "result", None),
+                                "error_message": getattr(task, "error_message", None),
+                            },
+                            task_id=task.id,
+                        )
+                        requeued += 1
+                        logger.info("phase3: compensated callback task=%s", task.id)
+                    except Exception:
+                        logger.exception("phase3: dispatch failed task=%s", task.id)
+        return requeued

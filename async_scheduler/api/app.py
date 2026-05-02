@@ -144,8 +144,8 @@ async def health():
         repair_history_count = len(services.reconciler.list_repair_history(limit=1000, offset=0))
     return {
         "status": "healthy",
-        "queue_size": services.queue_manager.get_queue_count() if services else 0,
-        "scheduled_count": services.queue_manager.get_scheduled_count() if services else 0,
+        "queue_size": await services.queue_manager.get_queue_count() if services else 0,
+        "scheduled_count": await services.queue_manager.get_scheduled_count() if services else 0,
         "consumer_running": services.task_consumer.is_running() if services else False,
         "scheduler_running": services.cron_scheduler.is_running() if services else False,
         "reconciler_running": services.reconciler.is_running() if services else False,
@@ -424,8 +424,8 @@ async def queue_stats():
 
     return {
         "queue_sizes": sizes,
-        "total_queued": services.queue_manager.get_queue_count(),
-        "scheduled_count": services.queue_manager.get_scheduled_count(),
+        "total_queued": await services.queue_manager.get_queue_count(),
+        "scheduled_count": await services.queue_manager.get_scheduled_count(),
         "running_tasks": services.task_executor.get_running_count(),
         "worker_count": worker_count,
         "reconciler_running": services.reconciler.is_running(),
@@ -517,8 +517,8 @@ async def debug_summary():
         },
         "queue": {
             "sizes": queue_sizes,
-            "total_queued": services.queue_manager.get_queue_count(),
-            "scheduled_count": services.queue_manager.get_scheduled_count(),
+            "total_queued": await services.queue_manager.get_queue_count(),
+            "scheduled_count": await services.queue_manager.get_scheduled_count(),
             "running_tasks": services.task_executor.get_running_count(),
         },
         "workers": {
@@ -592,7 +592,8 @@ async def list_workers(include_stale: bool = Query(False)):
 @app.get("/workers/{worker_id}")
 async def get_worker(worker_id: str):
     if not services or services.worker_registry is None:
-        raise HTTPException(status_code=503, detail="Worker registry not available")
+        # No registry in this deployment: the worker cannot exist
+        raise HTTPException(status_code=404, detail="Worker not found")
     workers = await services.worker_registry.list_workers(include_stale=True)
     for worker in workers:
         if worker.worker_id == worker_id:

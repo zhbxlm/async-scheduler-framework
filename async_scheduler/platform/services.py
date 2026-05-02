@@ -101,7 +101,7 @@ async def build_service_container(
         factory = BackendFactory()
         queue_backend = factory.create_queue_backend()
         lock_backend = factory.create_lock_backend()
-        worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0")
+        worker_registry = None  # in-memory mode: no distributed registry needed
 
     step_executors = StepExecutors(enable_metrics=True)
     callback_dispatcher = CallbackDispatcher()

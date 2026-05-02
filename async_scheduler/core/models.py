@@ -11,9 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskStatus(str, Enum):
-    """Task execution status."""
+    """Task execution status.
+
+    Aligned with deepwiki ray-amu task state machine.
+    SCHEDULED is added to represent tasks awaiting their scheduled_at time.
+    """
 
     PENDING = "pending"
+    SCHEDULED = "scheduled"  # has future scheduled_at; waiting in delayed queue
     QUEUED = "queued"
     RUNNING = "running"
     SUCCESS = "success"
@@ -21,6 +26,10 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
     RETRY = "retry"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT}
 
 
 class ExecutionAttemptStatus(str, Enum):
@@ -35,12 +44,31 @@ class ExecutionAttemptStatus(str, Enum):
 
 
 class TaskPriority(int, Enum):
-    """Task priority levels."""
+    """Task priority levels.
 
-    LOW = 1
-    NORMAL = 5
-    HIGH = 10
-    CRITICAL = 20
+    Aligned with deepwiki ray-amu spec.
+    ``priority_rank`` is the sort key used in queue score encoding:
+    score = priority_rank * 10**13 + timestamp_ms
+    Smaller rank ⇒ higher priority (VERY_HIGH = 1, TIDE = 5).
+    """
+
+    VERY_HIGH = 1   # rank 1 – highest
+    HIGH = 2        # rank 2
+    NORMAL = 3      # rank 3 – default
+    LOW = 4         # rank 4
+    TIDE = 5        # rank 5 – lowest (tidal / best-effort)
+
+    # Legacy aliases kept for backward compatibility
+    CRITICAL = 1    # maps to VERY_HIGH
+
+    @property
+    def priority_rank(self) -> int:
+        """Sort rank used in Redis score encoding (1 = highest priority)."""
+        return self.value
+
+    @property
+    def label(self) -> str:
+        return self.name.lower()
 
 
 class ScheduleStatus(str, Enum):

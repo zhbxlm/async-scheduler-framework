@@ -86,7 +86,7 @@ class InMemoryQueueBackend(QueueBackend):
     async def dequeue(self, timeout: float | None = None) -> Task | None:
         """Get the next highest priority task."""
         # Check queues in priority order (highest first)
-        for priority in sorted(self._queues.keys(), reverse=True):
+        for priority in sorted(self._queues.keys(), reverse=False):
             queue = self._queues[priority]
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=timeout)
@@ -100,7 +100,7 @@ class InMemoryQueueBackend(QueueBackend):
         """Peek at the next tasks without removing them."""
         tasks: list[Task] = []
 
-        for priority in sorted(self._queues.keys(), reverse=True):
+        for priority in sorted(self._queues.keys(), reverse=False):
             queue = self._queues[priority]
             size = queue.qsize()
 

@@ -341,7 +341,7 @@ class RedisQueueBackend(QueueBackend):
         deadline = None if timeout is None else asyncio.get_running_loop().time() + timeout
         while True:
             if self._client_supports_queue_ops:
-                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
                     task_id = await self._client.lpop(self._ready_key(priority.value))
                     if task_id is None:
                         continue
@@ -356,7 +356,7 @@ class RedisQueueBackend(QueueBackend):
                     await self._client.hdel(self._task_data_key, task_id)
                     return self._deserialize_task(payload)
             else:
-                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
                     queue = self._ready_store[priority.value]
                     payload = queue.pop(0) if queue else None
                     if payload is None:
@@ -378,7 +378,7 @@ class RedisQueueBackend(QueueBackend):
         await self._promote_due_tasks()
         if self._client_supports_queue_ops:
             tasks: list[Task] = []
-            for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+            for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
                 task_ids = await self._client.lrange(self._ready_key(priority.value), 0, limit - len(tasks) - 1)
                 for task_id in task_ids:
                     is_cancelled = await self._client.sismember(self._cancelled_set_key, task_id)
@@ -391,7 +391,7 @@ class RedisQueueBackend(QueueBackend):
                             return tasks
             return tasks
         tasks: list[Task] = []
-        for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+        for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
             values = self._ready_store[priority.value][:limit]
             for payload in values:
                 task = self._deserialize_task(payload)

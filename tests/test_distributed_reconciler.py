@@ -94,7 +94,7 @@ class TestDistributedReconciler:
         assert updated_task.retry_count == 1
         assert updated_attempt is not None
         assert updated_attempt.status == ExecutionAttemptStatus.ABANDONED
-        assert queue_manager.get_queue_count() == 1
+        assert await queue_manager.get_queue_count() == 1
 
     async def test_active_leased_task_is_not_stolen(self) -> None:
         factory = BackendFactory(
@@ -156,7 +156,7 @@ class TestDistributedReconciler:
         assert repaired == 0
         assert updated_task is not None
         assert updated_task.status == TaskStatus.RUNNING
-        assert queue_manager.get_queue_count() == 0
+        assert await queue_manager.get_queue_count() == 0
 
     async def test_two_reconcilers_do_not_double_repair_same_task(self) -> None:
         factory = BackendFactory(
@@ -225,4 +225,4 @@ class TestDistributedReconciler:
         assert sum(repaired_counts) == 1
         assert updated_task is not None
         assert updated_task.status == TaskStatus.QUEUED
-        assert queue_manager.get_queue_count() == 1
+        assert await queue_manager.get_queue_count() == 1

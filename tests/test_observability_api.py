@@ -106,8 +106,12 @@ class TestObservabilityApi:
         transport = ASGITransport(app=app)
         async with app.router.lifespan_context(app):
             from async_scheduler.api.app import services
+            from async_scheduler.distributed.worker_registry import WorkerRegistry
 
             assert services is not None
+            # In in-memory mode worker_registry may be None; create one for this test
+            if services.worker_registry is None:
+                services.worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0")
             assert services.worker_registry is not None
             await services.worker_registry.register(WorkerInfo(worker_id="worker-observe", name="observe"))
 
@@ -396,9 +400,11 @@ class TestObservabilityApi:
         transport = ASGITransport(app=app)
         async with app.router.lifespan_context(app):
             from async_scheduler.api.app import services
+            from async_scheduler.distributed.worker_registry import WorkerRegistry
 
             assert services is not None
-            assert services.worker_registry is not None
+            if services.worker_registry is None:
+                services.worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0")
             await services.worker_registry.register(WorkerInfo(worker_id="worker-health", name="health"))
             services.reconciler._record_repair(
                 task_id="task-health",

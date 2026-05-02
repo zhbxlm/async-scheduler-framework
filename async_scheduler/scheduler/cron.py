@@ -1,9 +1,9 @@
-"""Cron scheduler for recurring task schedules."""
+"""Cron scheduler for recurring task schedules with distributed leader election."""
 
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from croniter import croniter
 
@@ -16,19 +16,61 @@ logger = logging.getLogger(__name__)
 
 
 class CronScheduler:
-    """Schedules recurring tasks based on cron expressions."""
+    """Schedules recurring tasks based on cron expressions.
+
+    Distributed Leader Election
+    ---------------------------
+    When a Redis client is provided (``redis_client`` parameter), the scheduler
+    participates in distributed leader election using a Redis SET NX lease.
+    Only the instance holding the lease executes schedule processing;
+    other instances wait and retry on each poll interval.  This prevents
+    duplicate task creation when multiple replicas run CronScheduler.
+
+    Idempotency
+    -----------
+    Each scheduled task uses an ``idempotency_key`` of the form
+    ``schedule:{id}:{bucket}`` where ``bucket = floor(now / dedup_window)``.
+    This prevents duplicate creation within the same trigger window even if
+    the lease is briefly held by two nodes during failover.
+    """
+
+    _LEADER_LEASE_KEY = "cron:scheduler:leader"
+    _LEADER_LEASE_TTL = 90  # seconds – must be > poll_interval
 
     def __init__(
         self,
         queue_manager: QueueManager,
         poll_interval: float = 60.0,
+        redis_client: Any | None = None,
+        leader_lease_ttl: int = 90,
+        instance_id: str | None = None,
     ) -> None:
-        """Initialize the cron scheduler."""
+        """Initialize the cron scheduler.
+
+        Parameters
+        ----------
+        queue_manager:
+            Queue manager to enqueue scheduled tasks.
+        poll_interval:
+            Seconds between schedule checks.
+        redis_client:
+            Optional async Redis client for distributed leader election.
+        leader_lease_ttl:
+            TTL in seconds for the leader lease key.
+        instance_id:
+            Unique identifier for this scheduler instance (default: random UUID).
+        """
+        import uuid as _uuid
         self._queue_manager = queue_manager
         self._poll_interval = poll_interval
+        self._redis = redis_client
+        self._leader_lease_ttl = leader_lease_ttl
+        self._instance_id = instance_id or str(_uuid.uuid4())
+        self._leader_key = self._LEADER_LEASE_KEY
         self._running = False
         self._scheduler_task: asyncio.Task[None] | None = None
         self._last_check: datetime | None = None
+        self._is_leader: bool = False
         self._registry = ScheduleRegistry()
 
     async def start(self) -> None:
@@ -57,12 +99,47 @@ class CronScheduler:
 
         logger.info("Cron scheduler stopped")
 
+    async def _try_acquire_leader_lease(self) -> bool:
+        """Try to acquire or renew the distributed leader lease.
+
+        Returns True if this instance is the leader.
+        """
+        if self._redis is None:
+            return True  # single-node mode: always leader
+
+        key = self._leader_key
+        token = self._instance_id
+        ttl = self._leader_lease_ttl
+
+        # Try SET NX (acquire if not held)
+        acquired = await self._redis.set(key, token, ex=ttl, nx=True)
+        if acquired:
+            self._is_leader = True
+            return True
+
+        # Check if we already own it (renew)
+        current = await self._redis.get(key)
+        if current == token:
+            await self._redis.expire(key, ttl)
+            self._is_leader = True
+            return True
+
+        self._is_leader = False
+        return False
+
     async def _scheduler_loop(self) -> None:
-        """Main scheduler loop."""
+        """Main scheduler loop with distributed leader election."""
         while self._running:
             try:
-                await self._process_schedules()
-                self._last_check = datetime.utcnow()
+                is_leader = await self._try_acquire_leader_lease()
+                if is_leader:
+                    await self._process_schedules()
+                    self._last_check = datetime.utcnow()
+                else:
+                    logger.debug(
+                        "cron scheduler: not leader instance_id=%s; skipping",
+                        self._instance_id,
+                    )
                 await asyncio.sleep(self._poll_interval)
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}", exc_info=True)
