@@ -1,8 +1,8 @@
 # Async Scheduler Framework
 
-一个本地可运行并已演进到 **分布式执行内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
+一个本地可运行、并已经演进到 **可验证的分布式调度内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
 
-> 当前仓库已具备 **partial real-Redis transition-state distributed kernel semantics**：包括 queue、lease、worker heartbeat、execution attempts、completion idempotency、distributed reconciler、attempt-consistency 收敛，以及 multi-worker / recovery / overlap 测试覆盖。当前状态已经不再是纯 stand-in：queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径；lock 与 queue 的关键路径已补入 Lua/CAS-style 原子化；并且已经提供 shared-client integration、recovery invariant、以及 opt-in 的 live Redis smoke / recovery / overlap / consumer-recovery 验证套件。与此同时，它仍然不是最终形态的生产级外部 Redis 共享状态运行时：更完整的 live Redis 矩阵、可观测性、以及进一步的生产硬化仍在后续阶段。
+> 当前仓库已经具备一条可工作的 **real Redis-backed distributed kernel path**：包括 queue、lease / heartbeat、worker registry、execution attempts、completion idempotency、distributed reconciler，以及 executor / consumer / worker 之间收敛后的 retry exhaustion 语义。关键共享状态路径（queue / lock / completion dedupe / worker registry）已经支持真实 async Redis client；queue promotion 与 lock compare-and-act 等关键操作已补入 Lua/CAS 风格原子语义；同时保留无真实 Redis client 时的进程内 fallback 模式。仓库还提供 live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证套件，以及一组面向 finalize / callback / reconciler overlap 的高价值 fault-injection 测试。它仍然不是最终形态的生产级 deepwiki 等价实现，但已经具备真正多进程 / 多节点部署所需的核心语义与验证基础。
 
 - FastAPI 任务 API
 - SQLite 持久化
@@ -82,11 +82,13 @@ pytest -q
 python -m scripts.smoke_test
 ```
 
-> 当前 `scripts/smoke_test.py` 主要覆盖内存模式和基础框架可用性；Redis 过渡态验证请使用下面的 integration tests。
+> 当前 `scripts/smoke_test.py` 主要覆盖内存模式和基础框架可用性；涉及真实 Redis 共享状态语义的验证请使用下面的 integration tests。
 
-### 7. 运行 Redis 过渡态集成测试
+### 7. 运行 Redis 集成测试
 
-当前仓库支持一组“real Redis transition state”测试：
+当前仓库支持两类 Redis 相关验证：
+
+#### 7.1 shared-client / fallback 集成测试
 
 ```bash
 pytest -q tests/integration/test_real_redis_coordination.py
@@ -101,6 +103,40 @@ pytest -q tests/integration/test_fakeredis_coordination.py
 ```
 
 若 `fakeredis.aioredis` 不可用，该测试会自动 skip，这是预期行为。
+
+#### 7.2 live Redis 验证套件（推荐）
+
+当你有真实 Redis / Redis-compatible 环境时，优先跑下面这组：
+
+```bash
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_smoke_test.py
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py                 # all
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py smoke           # smoke only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py recovery        # recovery only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap         # overlap/race only
+TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap --fail-fast
+```
+
+也可以按文件单跑：
+
+```bash
+pytest -q tests/integration/test_live_redis_smoke.py
+pytest -q tests/integration/test_live_redis_recovery.py
+pytest -q tests/integration/test_live_redis_completion_overlap.py
+pytest -q tests/integration/test_live_redis_duplicate_completion_overlap.py
+pytest -q tests/integration/test_live_redis_lease_loss_completion_race.py
+pytest -q tests/integration/test_live_redis_attempt_consistency_overlap.py
+pytest -q tests/integration/test_live_redis_multi_worker_overlap.py
+pytest -q tests/integration/test_live_redis_multi_worker_delayed_promotion.py
+pytest -q tests/integration/test_live_redis_multi_worker_dead_owner_recovery.py
+pytest -q tests/integration/test_live_redis_end_to_end_consumer_loop.py
+pytest -q tests/integration/test_live_redis_consumer_recovery.py
+pytest -q tests/integration/test_live_redis_retry_exhaustion.py
+```
+
+说明：
+- 上述 `test_live_redis_*` 用例仅在设置 `TEST_REDIS_URL` 时运行
+- 未设置环境变量时会自动 skip，不影响默认本地回归
 
 ### 8. 运行 distributed smoke test
 
@@ -179,8 +215,9 @@ curl http://127.0.0.1:8000/queue/stats
 ```
 
 说明：
-- `/health` 现在包含 `worker_count` 与 `repair_history_count`
-- `/queue/stats` 现在包含 `worker_count` 与 `reconciler_running`
+- `/health` 提供基础运行状态
+- `/queue/stats` 提供队列大小、调度数量与执行中任务统计
+- 更完整的恢复 / lease / worker 诊断请看下面的 observability 端点
 
 ### 创建租户
 
@@ -235,18 +272,28 @@ curl -X POST http://127.0.0.1:8000/schedules/<schedule_id>/resume
 curl -X POST http://127.0.0.1:8000/reconciler/run
 ```
 
-### 查看 Attempt 与 Worker / Repair 诊断信息
+### 查看 Attempt / Worker / Lease / Reconciler 诊断信息
 
 ```bash
 curl http://127.0.0.1:8000/tasks/<task_id>/attempts
 curl http://127.0.0.1:8000/tasks/<task_id>/attempts/latest
 curl http://127.0.0.1:8000/workers
 curl http://127.0.0.1:8000/workers/<worker_id>
+curl http://127.0.0.1:8000/workers/<worker_id>/leases
 curl http://127.0.0.1:8000/reconciler/history
 curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
 curl 'http://127.0.0.1:8000/reconciler/history?task_id=<task_id>'
 curl http://127.0.0.1:8000/debug/summary
+curl http://127.0.0.1:8000/debug/leases
+curl 'http://127.0.0.1:8000/debug/leases?task_status=running&locked_only=true'
+curl 'http://127.0.0.1:8000/debug/leases?worker_id=<worker_id>'
+curl http://127.0.0.1:8000/debug/leases/<task_id>
 ```
+
+推荐排障顺序：
+- 先看 `/debug/summary`，快速判断是否存在 `running_without_lock_count`、`locked_but_terminal_count`、`abandoned_but_running_count` 这类异常计数
+- 再用 `/debug/leases` 按 `worker_id` / `task_status` / `attempt_status` / `locked_only` 过滤可疑任务
+- 最后用 `/debug/leases/<task_id>` 看单任务 lease / latest attempt 详情
 
 ## 端到端 Demo
 
@@ -274,34 +321,38 @@ curl http://127.0.0.1:8000/debug/summary
 ### 尚未完全对齐的部分
 
 - 还没有 Ray / SchedulerActor / ActorPoolManager
-- 还没有 Redis 队列、Lua 原子操作与分布式锁
 - 还没有 ResourceManager / NodeAgent / Cluster 管理
 - 还没有 Async Proxy sidecar 的真实实现
 - DAG 模型仍是简化版，尚未完整覆盖 step_kind / map / streaming / flask_wrapped 全语义
 - quota 仍是本地内存实现，不是 deepwiki 的 Redis 原子配额执行器
-- reconciler 仍是本地轻量版，不是完整对账补偿链路
+- callback / side-effect delivery 仍是轻量实现，尚未扩展到真实外部交付保证链路
+- 仍缺更完整的生产级 live Redis 矩阵、压测、告警与运行时硬化
 
 ## 当前状态
 
-这是一个 **已经具备分布式执行、幂等收敛与恢复语义，并进入 partial real Redis-backed transition state 的调度内核骨架仓库**，适合继续做二次开发，并进一步向真实 Redis-backed 的 deepwiki 风格分布式架构收敛。
+这是一个 **已经具备真实 Redis 关键共享状态路径、恢复语义收敛、以及故障注入验证的分布式调度内核骨架仓库**，适合继续做二次开发，并进一步向 deepwiki 风格的生产级分布式平台收敛。
 
-### Real Redis Transition State
+### 当前已完成的关键能力
 
-当前以下组件已支持真实 async Redis client 注入路径：
-- `RedisQueueBackend`
-- `RedisLockBackend`
-- `RedisCompletionDedupBackend`
-- `WorkerRegistry`
+- `RedisQueueBackend`：任务数据 / ready queue / delayed queue 使用真实 Redis 结构
+- `RedisLockBackend`：支持真实 lease 获取、释放、续期与锁存活判断
+- `RedisCompletionDedupBackend`：完成态幂等 claim-once
+- `WorkerRegistry`：worker heartbeat / TTL 存活判断
+- `TaskConsumer`：lease heartbeat
+- `TaskReconciler`：orphan recovery / distributed repair gating
+- `TaskCompletionNode`：终态持久化优先、回调失败不回滚终态
+- executor / consumer / worker：retry exhaustion 语义已经对齐收敛
+- observability：已有 `/debug/summary`、`/debug/leases`、`/workers/<worker_id>/leases` 等排障端点
 
-当前已补的验证包括：
-- 单组件 real-Redis-path 测试
-- shared fake-client coordination integration tests
-- recovery / invariant tests
-- lock compare-and-act safety tests
-- queue concurrency invariant tests
-- full regression: `pytest -q` → 101 passed
+### 当前验证覆盖
 
-这意味着当前仓库已经不是“只有 Redis-shaped 接口”，而是已经具备一条可测试的真实 Redis 过渡路径。
+- 单元测试与普通集成测试
+- shared-client / fallback Redis integration tests
+- live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证
+- multi-worker overlap / dead-owner recovery / delayed promotion 验证
+- finalize / callback / reconciler overlap fault-injection tests
+
+这意味着当前仓库已经不再是“只有 Redis-shaped 接口”的过渡原型，而是已经具备真正多进程 / 多节点部署所需的关键语义与一组比较扎实的验证护栏。
 
 ## Backend 抽象层（Batch 1 - 已完成）
 
@@ -312,16 +363,17 @@ curl http://127.0.0.1:8000/debug/summary
 - **QueueBackend** - 任务队列后端抽象
   - `enqueue()` / `dequeue()` / `peek()` / `cancel()` / `update_priority()`
   - 支持优先级队列和延时任务
-  - 当前实现：`InMemoryQueueBackend`（使用 `asyncio.PriorityQueue`）
+  - 当前实现：`InMemoryQueueBackend`（使用 `asyncio.PriorityQueue`）与 `RedisQueueBackend`（真实 Redis 数据结构）
 
 - **LockBackend** - 分布式锁后端抽象
   - `acquire()` / `release()` / `extend()` / `is_locked()`
-  - 当前实现：`InMemoryLockBackend`（使用 `asyncio.Lock`）
+  - 当前实现：`InMemoryLockBackend`（使用 `asyncio.Lock`）与 `RedisLockBackend`（真实 lease / TTL / compare-and-act）
 
 - **RegistryBackend** - 调度注册表后端抽象
   - `create()` / `get()` / `list_active()` / `list_ready()`
   - `advance_next_fire()` / `pause()` / `resume()`
   - 当前实现：`InMemoryRegistryBackend`（使用 SQLite 持久化）
+  - 注：schedule registry 仍以本地持久化为主，分布式关键共享状态当前主要集中在 queue / lock / completion dedupe / worker registry
 
 ### 使用方式
 
@@ -345,9 +397,10 @@ services = await build_service_container(backend_config=config)
 
 # 当前阶段说明：
 # - 这会启用 distributed_settings 配置通路
-# - 当前 queue/lock/completion dedupe/worker registry 已支持真实 async Redis client 路径
+# - 当前 queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径
+# - queue promotion 与 lock compare-and-act 等关键路径已具备 Lua/CAS 风格原子语义
 # - 若环境未提供 redis client / live backend，仍可退回测试友好的 fallback 语义
-# - 生产级 live Redis 部署与 Lua/CAS 原子语义仍在后续阶段
+# - 更完整的生产级运行时硬化、压测与外部 side-effect 交付保证仍在后续阶段
 ```
 
 ## StepExecutors 增强（Batch 2 - 已完成）
@@ -470,6 +523,7 @@ registry.register(
 |------|------|------|
 | **Batch 1** | ✅ 已完成 | Backend 抽象层 + 内存实现，保持现有 API/CLI 行为不变 |
 | **Batch 2** | ✅ 已完成 | StepExecutors 增强 + ScheduleRegistry 生命周期扩展 |
-| **Batch 3** | ✅ 已完成 | TaskCompletionNode/TaskReconciler 集成 + CapabilityRegistry 增强 |
-| **Batch 4** | ✅ 已完成 | 可用性硬化：文档完善、API 补充、操作验证 |
-| **未来** | 🔜 待规划 | Redis 后端实现、PostgreSQL 后端实现、分布式协调器 |
+| **Batch 3** | ✅ 已完成 | TaskCompletionNode / TaskReconciler 集成 + CapabilityRegistry 增强 |
+| **Batch 4** | ✅ 已完成 | 可用性硬化：文档、API、验证套件、observability 补齐 |
+| **当前增量** | ✅ 已完成 | real Redis 关键路径、retry 语义收敛、lease observability、fault injection recovery tests |
+| **未来** | 🔜 待规划 | 更完整压测矩阵、生产级 side-effect 交付链路、更多运行时硬化 |
