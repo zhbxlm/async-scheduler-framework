@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from async_scheduler.core.models import (
@@ -199,6 +199,39 @@ class ExecutionAttemptRepository:
             .limit(limit)
             .offset(offset)
         )
+        return [ExecutionAttempt.model_validate(row) for row in result.scalars().all()]
+
+    @staticmethod
+    async def list_latest_attempts(
+        session: AsyncSession,
+        limit: int = 100,
+        offset: int = 0,
+        worker_id: str | None = None,
+    ) -> list[ExecutionAttempt]:
+        latest_created_subquery = (
+            select(
+                ExecutionAttemptORM.task_id.label("task_id"),
+                func.max(ExecutionAttemptORM.created_at).label("latest_created_at"),
+            )
+            .group_by(ExecutionAttemptORM.task_id)
+            .subquery()
+        )
+
+        query = (
+            select(ExecutionAttemptORM)
+            .join(
+                latest_created_subquery,
+                (ExecutionAttemptORM.task_id == latest_created_subquery.c.task_id)
+                & (ExecutionAttemptORM.created_at == latest_created_subquery.c.latest_created_at),
+            )
+            .order_by(ExecutionAttemptORM.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if worker_id is not None:
+            query = query.where(ExecutionAttemptORM.worker_id == worker_id)
+
+        result = await session.execute(query)
         return [ExecutionAttempt.model_validate(row) for row in result.scalars().all()]
 
 

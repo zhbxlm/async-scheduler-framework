@@ -198,6 +198,126 @@ class TestObservabilityApi:
 
         assert response.status_code == 404
 
+    async def test_debug_lease_endpoint_returns_lock_and_attempt_state(self) -> None:
+        transport = ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            from async_scheduler.api.app import services
+
+            assert services is not None
+            assert services.lock_backend is not None
+
+            async with get_session() as session:
+                task = await TaskRepository.create(session, TaskCreate(name="lease-debug-task", payload={}))
+                await TaskRepository.update(session, task.id, status=TaskStatus.RUNNING)
+                await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task.id,
+                        worker_id="worker-lease-debug",
+                        retry_index=0,
+                        lease_token="lease-debug-token",
+                    ),
+                )
+
+            await services.lock_backend.acquire(f"task:{task.id}", ttl=30)
+
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get(f"/debug/leases/{task.id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["task_id"] == task.id
+        assert body["task_status"] == TaskStatus.RUNNING.value
+        assert body["lease"] is not None
+        assert body["lease"]["locked"] is True
+        assert body["lease"]["key"] == f"task:{task.id}"
+        assert body["latest_attempt"] is not None
+        assert body["latest_attempt"]["worker_id"] == "worker-lease-debug"
+        assert body["latest_attempt"]["lease_token"] == "lease-debug-token"
+
+    async def test_debug_leases_list_and_worker_filter_endpoints(self) -> None:
+        transport = ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            from async_scheduler.api.app import services
+
+            assert services is not None
+            assert services.lock_backend is not None
+
+            async with get_session() as session:
+                task_a = await TaskRepository.create(session, TaskCreate(name="lease-list-a", payload={}))
+                task_b = await TaskRepository.create(session, TaskCreate(name="lease-list-b", payload={}))
+                await TaskRepository.update(session, task_a.id, status=TaskStatus.RUNNING)
+                await TaskRepository.update(session, task_b.id, status=TaskStatus.RUNNING)
+                await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task_a.id,
+                        worker_id="worker-list-a",
+                        retry_index=0,
+                        lease_token="lease-list-a",
+                    ),
+                )
+                await ExecutionAttemptRepository.create(
+                    session,
+                    ExecutionAttemptCreate(
+                        task_id=task_b.id,
+                        worker_id="worker-list-b",
+                        retry_index=1,
+                        lease_token="lease-list-b",
+                    ),
+                )
+
+            await services.lock_backend.acquire(f"task:{task_a.id}", ttl=30)
+            await services.lock_backend.acquire(f"task:{task_b.id}", ttl=30)
+
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                leases_response = await client.get("/debug/leases")
+                worker_response = await client.get("/workers/worker-list-a/leases")
+                filtered_response = await client.get(
+                    f"/debug/leases?worker_id=worker-list-a&task_status={TaskStatus.RUNNING.value}&locked_only=true"
+                )
+                # Debug endpoint to see the item before locked_only filter
+                worker_only_response = await client.get(
+                    f"/debug/leases?worker_id=worker-list-a&task_status={TaskStatus.RUNNING.value}"
+                )
+
+        assert leases_response.status_code == 200
+        leases_body = leases_response.json()
+        assert leases_body["count"] >= 2
+        assert any(item["task_id"] == task_a.id for item in leases_body["items"])
+        assert any(item["task_id"] == task_b.id for item in leases_body["items"])
+
+        assert worker_response.status_code == 200
+        worker_body = worker_response.json()
+        assert worker_body["worker_id"] == "worker-list-a"
+        assert worker_body["count"] == 1
+        assert worker_body["items"][0]["task_id"] == task_a.id
+        assert worker_body["items"][0]["latest_attempt"]["worker_id"] == "worker-list-a"
+
+        # Check worker+task_status filter works
+        assert worker_only_response.status_code == 200
+        worker_only_body = worker_only_response.json()
+        # Should have exactly 1 item
+        assert worker_only_body["count"] == 1, f"Expected 1 item with worker+task_status filter, got {worker_only_body['count']}. Items: {worker_only_body['items']}"
+        item = worker_only_body["items"][0]
+        assert item["task_id"] == task_a.id
+        # Ensure lease info present and locked is True
+        assert item["lease"] is not None, "Lease info missing"
+        assert item["lease"]["locked"] is True, f"Lease not locked: {item['lease']}"
+
+        assert filtered_response.status_code == 200
+        filtered_body = filtered_response.json()
+        # Debug print for troubleshooting
+        # print('filtered_body', filtered_body)
+        # print('items', filtered_body["items"])
+        # if filtered_body["count"] == 0:
+        #     # examine unfiltered list to see what's missing
+        #     pass
+        assert filtered_body["count"] == 1, f"Expected 1 filtered item, got {filtered_body['count']}. Items: {filtered_body['items']}"
+        assert filtered_body["items"][0]["task_id"] == task_a.id
+        assert filtered_body["filters"]["worker_id"] == "worker-list-a"
+        assert filtered_body["filters"]["locked_only"] is True
+
     async def test_health_and_queue_stats_include_observability_counts(self) -> None:
         transport = ASGITransport(app=app)
         async with app.router.lifespan_context(app):
@@ -237,6 +357,12 @@ class TestObservabilityApi:
         assert len(debug_body["reconciler"]["recent_history"]) >= 1
         assert "queue" in debug_body
         assert "health" in debug_body
+        assert "leases" in debug_body
+        assert "locked_count" in debug_body["leases"]
+        assert "running_without_lock_count" in debug_body["leases"]
+        assert "locked_but_terminal_count" in debug_body["leases"]
+        assert "abandoned_but_running_count" in debug_body["leases"]
+        assert "stale_lease_count" in debug_body["leases"]
 
         assert empty_history_response.status_code == 200
         empty_history_body = empty_history_response.json()

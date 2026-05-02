@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from async_scheduler.backends import BackendConfig, BackendFactory
+from async_scheduler.backends.base import LockBackend
 from async_scheduler.core.consumer import TaskConsumer
 from async_scheduler.dag import DAGEngine, StepExecutors
 from async_scheduler.distributed import WorkerRegistry
@@ -42,6 +43,7 @@ class DistributedSettings:
 @dataclass
 class ServiceContainer:
     queue_manager: QueueManager
+    lock_backend: LockBackend | None
     task_executor: TaskExecutor
     dag_engine: DAGEngine
     task_router: TaskRouter
@@ -76,9 +78,11 @@ async def build_service_container(
     """Build the service container with optional backend configuration."""
     distributed_settings: DistributedSettings | None = None
     worker_registry: WorkerRegistry | None = None
+    lock_backend: LockBackend | None = None
 
     if backend_config is not None:
         factory = BackendFactory(backend_config)
+        lock_backend = factory.create_lock_backend()
         if backend_config.distributed_mode:
             distributed_settings = DistributedSettings(
                 redis_url=backend_config.redis_url or "",
@@ -94,7 +98,9 @@ async def build_service_container(
             queue_backend = factory.create_queue_backend()
             worker_registry = WorkerRegistry(redis_url=backend_config.redis_url or "redis://localhost:6379/0")
     else:
-        queue_backend = None
+        factory = BackendFactory()
+        queue_backend = factory.create_queue_backend()
+        lock_backend = factory.create_lock_backend()
         worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0")
 
     step_executors = StepExecutors(enable_metrics=True)
@@ -111,7 +117,7 @@ async def build_service_container(
 
     task_handler = RegistryTaskHandler(registry)
     dag_handler = RegistryDagHandler(registry)
-    reconciler = TaskReconciler(completion_node=completion_node)
+    reconciler = TaskReconciler(completion_node=completion_node, lock_backend=lock_backend, worker_registry=worker_registry)
 
     task_consumer = TaskConsumer(
         queue_manager=queue_manager,
@@ -121,6 +127,7 @@ async def build_service_container(
         poll_interval=1.0,
         quota_manager=quota_manager,
         completion_node=completion_node,
+        lock_backend=lock_backend,
     )
 
     cron_scheduler = CronScheduler(
@@ -132,6 +139,7 @@ async def build_service_container(
 
     return ServiceContainer(
         queue_manager=queue_manager,
+        lock_backend=lock_backend,
         task_executor=task_executor,
         dag_engine=dag_engine,
         task_router=task_router,

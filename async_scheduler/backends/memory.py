@@ -286,6 +286,24 @@ class InMemoryLockBackend(LockBackend):
         """Check if a lock is currently held."""
         return key in self._locks
 
+    async def describe_lock(self, key: str) -> dict[str, Any]:
+        async with self._lock:
+            entry = self._locks.get(key)
+            handle = None if entry is None else entry[1]
+            ttl_ms = None
+            if handle is not None and handle.expires_at is not None:
+                ttl_ms = max(0, int((handle.expires_at - datetime.utcnow()).total_seconds() * 1000))
+            return {
+                "key": key,
+                "backend": "memory",
+                "redis_key": None,
+                "locked": handle is not None,
+                "token": None if handle is None else handle.token,
+                "ttl_ms": ttl_ms,
+                "lease_ttl_seconds": None,
+                "heartbeat_interval_seconds": None,
+            }
+
 
 class InMemoryRegistryBackend(RegistryBackend):
     """In-memory schedule registry implementation using SQLite persistence.

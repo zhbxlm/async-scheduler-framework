@@ -15,6 +15,7 @@ from async_scheduler.core.models import (
     DAGNode,
     DAGNodeExecution,
     ExecutionAttempt,
+    ExecutionAttemptStatus,
     Schedule,
     ScheduleCreate,
     ScheduleStatus,
@@ -30,6 +31,7 @@ from async_scheduler.persistence import (
     TaskRepository,
     TenantRepository,
     get_session,
+    get_session_no_context,
 )
 from async_scheduler.platform import QuotaExceededError
 from async_scheduler.platform import ServiceContainer, build_service_container
@@ -442,6 +444,56 @@ async def debug_summary():
     repair_metrics = services.reconciler.get_metrics()
     repair_history = services.reconciler.list_repair_history(limit=10, offset=0)
 
+    lease_items = []
+    async with await get_session_no_context() as session:
+        latest_attempts = await ExecutionAttemptRepository.list_latest_attempts(session, limit=200, offset=0)
+        for attempt in latest_attempts:
+            task = await TaskRepository.get(session, attempt.task_id)
+            lease = None
+            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+            lease_items.append(
+                {
+                    "task_id": attempt.task_id,
+                    "task_status": None if task is None else task.status,
+                    "worker_id": attempt.worker_id,
+                    "attempt_status": attempt.status,
+                    "locked": False if lease is None else bool(lease.get("locked")),
+                    "lease": lease,  # include for stale check
+                }
+            )
+
+    locked_count = sum(1 for item in lease_items if item["locked"])
+    running_without_lock_count = sum(
+        1 for item in lease_items if item["task_status"] == TaskStatus.RUNNING and not item["locked"]
+    )
+    running_with_lock_count = sum(
+        1 for item in lease_items if item["task_status"] == TaskStatus.RUNNING and item["locked"]
+    )
+    # 新统计：lease 锁着但 task 已经是终态（SUCCESS/FAILED/CANCELLED/TIMEOUT）
+    locked_but_terminal_count = sum(
+        1 for item in lease_items
+        if item["locked"]
+        and item["task_status"]
+        and item["task_status"]
+        in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT)
+    )
+    # 新统计：attempt ABANDONED 但 task 还是 RUNNING
+    abandoned_but_running_count = sum(
+        1 for item in lease_items
+        if item["attempt_status"] == ExecutionAttemptStatus.ABANDONED
+        and item["task_status"] == TaskStatus.RUNNING
+    )
+    # 新统计：stale lease（TTL < 5 秒）
+    stale_lease_count = 0
+    if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+        # 采样检查前几个 locked 项的 TTL
+        for item in lease_items[:10]:
+            if item["locked"] and item["lease"]:
+                ttl_ms = item["lease"].get("ttl_ms")
+                if ttl_ms is not None and 0 < ttl_ms < 5000:
+                    stale_lease_count += 1
+
     return {
         "health": {
             "consumer_running": services.task_consumer.is_running(),
@@ -457,6 +509,16 @@ async def debug_summary():
         "workers": {
             "count": len(workers),
             "items": [worker.__dict__ for worker in workers],
+        },
+        "leases": {
+            "count": len(lease_items),
+            "locked_count": locked_count,
+            "running_with_lock_count": running_with_lock_count,
+            "running_without_lock_count": running_without_lock_count,
+            "locked_but_terminal_count": locked_but_terminal_count,
+            "abandoned_but_running_count": abandoned_but_running_count,
+            "stale_lease_count": stale_lease_count,
+            "items": lease_items[:20],
         },
         "reconciler": {
             "metrics": {
@@ -520,6 +582,155 @@ async def get_worker(worker_id: str):
         if worker.worker_id == worker_id:
             return worker.__dict__
     raise HTTPException(status_code=404, detail="Worker not found")
+
+
+@app.get("/debug/leases")
+async def list_lease_debug(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    worker_id: str | None = Query(None),
+    task_status: str | None = Query(None),
+    attempt_status: str | None = Query(None),
+    locked_only: bool = Query(False),
+):
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    async with await get_session_no_context() as session:
+        attempts = await ExecutionAttemptRepository.list_latest_attempts(
+            session,
+            limit=limit,
+            offset=offset,
+            worker_id=worker_id,
+        )
+        items = []
+        for attempt in attempts:
+            task = await TaskRepository.get(session, attempt.task_id)
+            lease = None
+            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+
+            item = {
+                "task_id": attempt.task_id,
+                "task_status": None if task is None else task.status,
+                "lease": lease,
+                "latest_attempt": {
+                    "id": attempt.id,
+                    "worker_id": attempt.worker_id,
+                    "retry_index": attempt.retry_index,
+                    "status": attempt.status,
+                    "lease_token": attempt.lease_token,
+                    "started_at": attempt.started_at,
+                    "last_heartbeat_at": attempt.last_heartbeat_at,
+                    "completed_at": attempt.completed_at,
+                },
+            }
+
+            if task_status is not None:
+                if task is None:
+                    continue
+                if task.status.value != task_status:
+                    continue
+            if attempt_status is not None:
+                if attempt.status.value != attempt_status:
+                    continue
+            if locked_only and not (lease and lease.get("locked")):
+                continue
+
+            items.append(item)
+
+    return {
+        "items": items,
+        "count": len(items),
+        "limit": limit,
+        "offset": offset,
+        "filters": {
+            "worker_id": worker_id,
+            "task_status": task_status,
+            "attempt_status": attempt_status,
+            "locked_only": locked_only,
+        },
+    }
+
+
+@app.get("/debug/leases/{task_id}")
+async def get_task_lease_debug(task_id: str):
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    lease_info = None
+    if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+        lease_info = await services.lock_backend.describe_lock(f"task:{task_id}")
+
+    latest_attempt = None
+    async with await get_session_no_context() as session:
+        task = await TaskRepository.get(session, task_id)
+        if task is not None:
+            latest_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task_id)
+
+    if latest_attempt is None and task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {
+        "task_id": task_id,
+        "task_status": None if task is None else task.status,
+        "lease": lease_info,
+        "latest_attempt": None if latest_attempt is None else {
+            "id": latest_attempt.id,
+            "worker_id": latest_attempt.worker_id,
+            "retry_index": latest_attempt.retry_index,
+            "status": latest_attempt.status,
+            "lease_token": latest_attempt.lease_token,
+            "started_at": latest_attempt.started_at,
+            "last_heartbeat_at": latest_attempt.last_heartbeat_at,
+            "completed_at": latest_attempt.completed_at,
+        },
+    }
+
+
+@app.get("/workers/{worker_id}/leases")
+async def get_worker_leases(worker_id: str, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+    if not services:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    async with await get_session_no_context() as session:
+        attempts = await ExecutionAttemptRepository.list_latest_attempts(
+            session,
+            limit=limit,
+            offset=offset,
+            worker_id=worker_id,
+        )
+        items = []
+        for attempt in attempts:
+            task = await TaskRepository.get(session, attempt.task_id)
+            lease = None
+            if services.lock_backend is not None and hasattr(services.lock_backend, "describe_lock"):
+                lease = await services.lock_backend.describe_lock(f"task:{attempt.task_id}")
+            items.append(
+                {
+                    "task_id": attempt.task_id,
+                    "task_status": None if task is None else task.status,
+                    "lease": lease,
+                    "latest_attempt": {
+                        "id": attempt.id,
+                        "worker_id": attempt.worker_id,
+                        "retry_index": attempt.retry_index,
+                        "status": attempt.status,
+                        "lease_token": attempt.lease_token,
+                        "started_at": attempt.started_at,
+                        "last_heartbeat_at": attempt.last_heartbeat_at,
+                        "completed_at": attempt.completed_at,
+                    },
+                }
+            )
+
+    return {
+        "worker_id": worker_id,
+        "items": items,
+        "count": len(items),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @app.post("/reconciler/run")

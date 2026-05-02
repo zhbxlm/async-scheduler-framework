@@ -215,6 +215,40 @@ class RedisLockBackend(LockBackend):
             self._purge_if_expired(key)
             return key in self._leases
 
+    async def describe_lock(self, key: str) -> dict[str, Any]:
+        redis_key = self._redis_key(key)
+        if self._client_supports_basic_ops:
+            token = await self._client.get(redis_key)
+            ttl_ms = None
+            if token is not None and hasattr(self._client, "pttl"):
+                ttl_ms = await self._client.pttl(redis_key)
+            return {
+                "key": key,
+                "backend": "redis",
+                "redis_key": redis_key,
+                "locked": token is not None,
+                "token": token,
+                "ttl_ms": None if ttl_ms is None or ttl_ms < 0 else int(ttl_ms),
+                "lease_ttl_seconds": self._lease_ttl_seconds,
+                "heartbeat_interval_seconds": self._heartbeat_interval_seconds,
+            }
+        async with self._guard:
+            self._purge_if_expired(key)
+            handle = self._leases.get(key)
+            ttl_ms = None
+            if handle is not None and handle.expires_at is not None:
+                ttl_ms = max(0, int((handle.expires_at - datetime.utcnow()).total_seconds() * 1000))
+            return {
+                "key": key,
+                "backend": "fallback",
+                "redis_key": redis_key,
+                "locked": handle is not None,
+                "token": None if handle is None else handle.token,
+                "ttl_ms": ttl_ms,
+                "lease_ttl_seconds": self._lease_ttl_seconds,
+                "heartbeat_interval_seconds": self._heartbeat_interval_seconds,
+            }
+
     async def _compare_delete(self, key: str, token: str) -> int:
         if hasattr(self._client, "compare_delete"):
             return int(await self._client.compare_delete(key, token))
