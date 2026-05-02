@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from async_scheduler.core.models import (
@@ -1143,3 +1144,168 @@ async def get_clusters_for_capability(capability: str):
         raise HTTPException(status_code=404, detail="Cluster registry not available")
     clusters = await services.cluster_registry.get_clusters_for_capability(capability)
     return {"capability": capability, "clusters": [c.to_dict() for c in clusters]}
+
+
+# ---------------------------------------------------------------------------
+# Streaming: DAG execution progress via Server-Sent Events (SSE)
+# ---------------------------------------------------------------------------
+#
+# GET /dags/{dag_id}/stream
+#   Streams node status changes as SSE events while the DAG runs.
+#   Each event is a JSON line: {"event": "node_update"|"dag_done", ...}
+#
+# POST /dags/stream
+#   Create + execute a DAG and stream its progress in one call.
+#
+# Internal: _DagProgressBus — in-process asyncio.Queue per dag_id
+
+import json as _json
+from asyncio import Queue as _Queue
+
+_dag_progress_buses: dict[str, _Queue] = {}
+_MAX_SSE_QUEUE = 256
+
+
+def _get_or_create_bus(dag_id: str) -> _Queue:
+    if dag_id not in _dag_progress_buses:
+        _dag_progress_buses[dag_id] = _Queue(maxsize=_MAX_SSE_QUEUE)
+    return _dag_progress_buses[dag_id]
+
+
+def _push_event(dag_id: str, event: dict) -> None:
+    """Non-blocking push to bus; drops if full (old events obsolete)."""
+    bus = _dag_progress_buses.get(dag_id)
+    if bus is not None:
+        try:
+            bus.put_nowait(event)
+        except Exception:
+            pass
+
+
+async def _sse_generator(dag_id: str, timeout: float = 120.0):
+    """Yield SSE-formatted lines from the dag progress bus."""
+    bus = _get_or_create_bus(dag_id)
+    import time as _time
+    deadline = _time.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                yield "data: {\"event\": \"timeout\"}\n\n"
+                break
+            try:
+                event = await asyncio.wait_for(bus.get(), timeout=min(remaining, 5.0))
+                yield f"data: {_json.dumps(event)}\n\n"
+                if event.get("event") in ("dag_done", "dag_failed", "dag_cancelled"):
+                    break
+            except asyncio.TimeoutError:
+                yield "data: {\"event\": \"heartbeat\"}\n\n"
+    finally:
+        _dag_progress_buses.pop(dag_id, None)
+
+
+def _make_progress_handler(dag_id: str, original_handler):
+    """Wrap a handler to emit SSE progress events on each node call."""
+    async def _wrapped(task_type: str, payload: dict):
+        _push_event(dag_id, {
+            "event": "node_start",
+            "node": payload.get("__node_id__", task_type),
+            "task_type": task_type,
+        })
+        try:
+            result = await original_handler(task_type, payload)
+            _push_event(dag_id, {
+                "event": "node_done",
+                "node": payload.get("__node_id__", task_type),
+                "task_type": task_type,
+                "result": result if isinstance(result, dict) else {"value": str(result)},
+            })
+            return result
+        except Exception as exc:
+            _push_event(dag_id, {
+                "event": "node_error",
+                "node": payload.get("__node_id__", task_type),
+                "task_type": task_type,
+                "error": str(exc),
+            })
+            raise
+    return _wrapped
+
+
+@app.get("/dags/{dag_id}/stream", response_class=StreamingResponse)
+async def stream_dag_progress(dag_id: str, timeout: float = Query(120.0, ge=1.0, le=600.0)):
+    """Stream DAG node progress as Server-Sent Events.
+
+    Connect before or immediately after starting DAG execution.
+    Events: node_start | node_done | node_error | dag_done | dag_failed | heartbeat | timeout
+    """
+    _get_or_create_bus(dag_id)  # ensure bus exists before DAG starts
+    return StreamingResponse(
+        _sse_generator(dag_id, timeout=timeout),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/dags/stream", response_class=StreamingResponse)
+async def create_and_stream_dag(dag_create: DAGCreate):
+    """Create a DAG, execute it, and stream node progress as SSE.
+
+    Combines dag creation + execution + streaming in one endpoint.
+    The response body is a text/event-stream of JSON lines.
+    """
+    if services is None:
+        raise HTTPException(status_code=503, detail="Services not available")
+
+    dag = DAG(**dag_create.model_dump())
+    dag_id = dag.id
+    bus = _get_or_create_bus(dag_id)
+
+    # Annotate nodes with __node_id__ so wrapper can emit correct id
+    for node in dag.nodes:
+        node.payload["__node_id__"] = node.id
+
+    async def _run_and_stream():
+        from async_scheduler.platform.handlers import RegistryTaskHandler
+
+        async def _exec():
+            try:
+                handler = services.task_handler
+                wrapped = _make_progress_handler(dag_id, handler)
+                result = await services.dag_engine.execute(dag, wrapped)
+                final_event = {
+                    "event": "dag_done" if result.status.value == "success" else
+                             ("dag_failed" if result.status.value == "failed" else "dag_cancelled"),
+                    "dag_id": dag_id,
+                    "status": result.status.value,
+                    "node_statuses": {
+                        nid: {
+                            "status": ex.status.value,
+                            "skipped": ex.skipped,
+                            "error": ex.error_message,
+                        }
+                        for nid, ex in result.node_executions.items()
+                    },
+                }
+                _push_event(dag_id, final_event)
+            except Exception as exc:
+                _push_event(dag_id, {"event": "dag_failed", "dag_id": dag_id, "error": str(exc)})
+
+        asyncio.create_task(_exec())
+
+        async for chunk in _sse_generator(dag_id, timeout=300.0):
+            yield chunk
+
+    return StreamingResponse(
+        _run_and_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

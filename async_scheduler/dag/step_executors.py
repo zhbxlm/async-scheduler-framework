@@ -22,18 +22,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-
 class ExecutionMode(str, Enum):
     """Execution modes for DAG steps.
 
     SYNC: Standard synchronous execution - handler runs and returns result directly.
     ASYNC: Asynchronous execution - returns immediately with invocation_id for later result lookup.
     FLASK_WRAPPED: Execution via external Flask service endpoint.
+    STREAMING: Handler is an AsyncGenerator; chunks are collected and emitted via on_chunk callback.
     """
     SYNC = "sync"
     ASYNC = "async"
     FLASK_WRAPPED = "flask_wrapped"
-
+    STREAMING = "streaming"
 
 class StepStatus(str, Enum):
     """Status of a step execution."""
@@ -44,7 +44,6 @@ class StepStatus(str, Enum):
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
 
-
 @dataclass
 class StepExecutionContext:
     """Context for executing a single DAG step."""
@@ -54,7 +53,7 @@ class StepExecutionContext:
     flask_url: str | None = None
     step_id: str | None = None
     dag_id: str | None = None
-
+    on_chunk: "Callable[[str, Any], None] | None" = None  # streaming: called per chunk
 
 @dataclass
 class StepExecutionResult:
@@ -79,7 +78,6 @@ class StepExecutionResult:
             "duration_ms": self.duration_ms,
         }
 
-
 @dataclass
 class ExecutionMetrics:
     """Metrics for step executions."""
@@ -102,7 +100,6 @@ class ExecutionMetrics:
         if completed == 0:
             return 0.0
         return self.total_duration_ms / completed
-
 
 class StepExecutors:
     """Executes a single step according to its execution mode.
@@ -162,6 +159,8 @@ class StepExecutors:
                 result = await self._execute_async(ctx, handler)
             elif mode == ExecutionMode.FLASK_WRAPPED:
                 result = await self._execute_flask_wrapped(ctx, handler)
+            elif mode == ExecutionMode.STREAMING:
+                result = await self._execute_streaming(ctx, handler)
             else:
                 raise ValueError(f"Unsupported execution mode: {mode}")
         except asyncio.TimeoutError:
@@ -327,6 +326,106 @@ class StepExecutors:
             self._running_executions[invocation_id].cancel()
             return True
         return False
+
+    async def _execute_streaming(
+        self,
+        ctx: StepExecutionContext,
+        handler: Callable,
+    ) -> StepExecutionResult:
+        """Execute a streaming handler (AsyncGenerator).
+
+        The handler must be an async generator that yields chunks.
+        Chunks are:
+          - Collected into a list stored in result.value["chunks"]
+          - Passed one-by-one to ctx.on_chunk(step_id, chunk) if provided
+
+        Final result.value is built by merging all dict chunks (last-write-wins)
+        plus a ``chunks`` key holding the raw stream.
+
+        Example handler::
+
+            async def streaming_llm(payload):
+                for token in ["Hello", " world", "!"]:
+                    await asyncio.sleep(0.01)
+                    yield {"token": token}
+                yield {"done": True, "total_tokens": 3}
+        """
+        import inspect
+        started = datetime.utcnow()
+        chunks: list[Any] = []
+        merged: dict[str, Any] = {}
+
+        try:
+            # Detect handler signature: (task_type, payload) vs (payload)
+            _sig = inspect.signature(handler)
+            _params = list(_sig.parameters)
+            if len(_params) >= 2:
+                result_or_gen = handler(ctx.task_type, ctx.payload)
+            else:
+                result_or_gen = handler(ctx.payload)
+
+            # Support both regular async functions and async generators
+            # Also handle the case where an awaitable returns an asyncgen
+            if inspect.isasyncgen(result_or_gen):
+                gen = result_or_gen
+            elif inspect.isawaitable(result_or_gen):
+                awaited = await result_or_gen
+                if inspect.isasyncgen(awaited):
+                    gen = awaited
+                else:
+                    # Plain return value, not a generator
+                    chunks.append(awaited)
+                    if isinstance(awaited, dict):
+                        merged.update(awaited)
+                    merged["chunks"] = chunks
+                    merged["chunk_count"] = len(chunks)
+                    completed = datetime.utcnow()
+                    return StepExecutionResult(
+                        status=StepStatus.COMPLETED,
+                        value=merged,
+                        started_at=started,
+                        completed_at=completed,
+                        duration_ms=(completed - started).total_seconds() * 1000,
+                    )
+                gen = awaited
+            else:
+                gen = result_or_gen
+
+            async for chunk in gen:
+                chunks.append(chunk)
+                if isinstance(chunk, dict):
+                    merged.update(chunk)
+                if ctx.on_chunk is not None:
+                    try:
+                        ctx.on_chunk(ctx.step_id or ctx.task_type, chunk)
+                    except Exception as _cb_err:
+                        logger.debug("on_chunk callback error: %s", _cb_err)
+
+            merged["chunks"] = chunks
+            merged["chunk_count"] = len(chunks)
+
+            return StepExecutionResult(
+                status=StepStatus.COMPLETED,
+                value=merged,
+                started_at=started,
+                completed_at=datetime.utcnow(),
+            )
+
+        except asyncio.CancelledError:
+            return StepExecutionResult(
+                status=StepStatus.CANCELLED,
+                error="Streaming step cancelled",
+                started_at=started,
+                completed_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            logger.error("Streaming step failed step_id=%s: %s", ctx.step_id, exc, exc_info=True)
+            return StepExecutionResult(
+                status=StepStatus.FAILED,
+                error=str(exc),
+                started_at=started,
+                completed_at=datetime.utcnow(),
+            )
 
     def get_metrics(self) -> ExecutionMetrics | None:
         """Get the current execution metrics.
