@@ -122,6 +122,27 @@ class FailingBlockingCallbackDispatcher(CallbackDispatcher):
         raise RuntimeError("callback boom")
 
 
+class ExtendFailOnceLockBackend:
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.extend_calls = 0
+
+    async def acquire(self, key: str, ttl: float | None = None, wait: float | None = None):
+        return await self._inner.acquire(key, ttl=ttl, wait=wait)
+
+    async def release(self, handle):
+        return await self._inner.release(handle)
+
+    async def extend(self, handle, ttl: float):
+        self.extend_calls += 1
+        if self.extend_calls == 1:
+            return False
+        return await self._inner.extend(handle, ttl=ttl)
+
+    async def is_locked(self, key: str):
+        return await self._inner.is_locked(key)
+
+
 @pytest.mark.asyncio
 async def test_lease_loss_during_callback_dispatch_does_not_requeue_terminal_task() -> None:
     await drop_db()
@@ -586,6 +607,141 @@ async def test_concurrent_reconcile_does_not_double_requeue_same_orphan_task() -
     assert len(repair_history) == 1
     assert repair_history[0]["task_id"] == task.id
     assert repair_history[0]["action"] == "requeue"
+
+
+@pytest.mark.asyncio
+async def test_transient_heartbeat_extend_failure_converges_to_failed_abandoned() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=1.0,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    raw_lock_backend = factory.create_lock_backend()
+    lock_backend = ExtendFailOnceLockBackend(raw_lock_backend)
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="transient-extend-failure", payload={}))
+    await queue_manager.enqueue(task)
+
+    async def slow_handler(payload):
+        await asyncio.sleep(0.12)
+        return {"ok": True}
+
+    consumer = TaskConsumer(
+        queue_manager=queue_manager,
+        executor=TaskExecutor(),
+        handler=slow_handler,
+        lock_backend=lock_backend,
+        worker_id="worker-transient-extend-failure",
+        lease_ttl_seconds=1.0,
+        heartbeat_interval_seconds=0.05,
+    )
+
+    processed = await consumer._process_next_once()
+    assert processed is True
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert lock_backend.extend_calls >= 1
+    assert final_task is not None
+    assert final_task.status == TaskStatus.FAILED
+    assert final_task.error_message == "lease lost during execution"
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.ABANDONED
+    assert final_attempt.error_message == "lease lost during execution"
+
+
+@pytest.mark.asyncio
+async def test_worker_registry_loss_during_long_running_execution_does_not_trigger_repair_while_lease_is_live() -> None:
+    await drop_db()
+    await init_db()
+
+    factory = BackendFactory(
+        BackendConfig(
+            queue_type="redis",
+            lock_type="redis",
+            registry_type="memory",
+            redis_url="redis://localhost:6379/0",
+            distributed_mode=True,
+            lease_ttl_seconds=1.0,
+            heartbeat_interval_seconds=0.05,
+        )
+    )
+    queue_manager = QueueManager(factory.create_queue_backend())
+    lock_backend = factory.create_lock_backend()
+    worker_registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.1)
+    reconciler = TaskReconciler(
+        config=ReconciliationConfig(stuck_after_seconds=0, repair_strategy=RepairStrategy.REQUEUE),
+        queue_manager=queue_manager,
+        lock_backend=lock_backend,
+        worker_registry=worker_registry,
+    )
+
+    gate = asyncio.Event()
+
+    async with get_session() as session:
+        task = await TaskRepository.create(session, TaskCreate(name="live-lease-beats-dead-worker", payload={}))
+    await queue_manager.enqueue(task)
+
+    async def blocked_handler(payload):
+        await gate.wait()
+        return {"ok": True}
+
+    worker_id = "worker-live-lease-beats-dead-worker"
+    await worker_registry.register(WorkerInfo(worker_id=worker_id, name="live-lease-beats-dead-worker"))
+    consumer = TaskConsumer(
+        queue_manager=queue_manager,
+        executor=TaskExecutor(),
+        handler=blocked_handler,
+        lock_backend=lock_backend,
+        worker_id=worker_id,
+        lease_ttl_seconds=1.0,
+        heartbeat_interval_seconds=0.05,
+    )
+
+    process_task = asyncio.create_task(consumer._process_next_once())
+    await asyncio.sleep(0.12)
+    await worker_registry.deregister(worker_id)
+
+    repaired = await reconciler.reconcile()
+
+    async with await get_session_no_context() as session:
+        running_task = await TaskRepository.get(session, task.id)
+        running_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert repaired == 0
+    assert running_task is not None
+    assert running_task.status == TaskStatus.RUNNING
+    assert running_attempt is not None
+    assert running_attempt.status in {
+        ExecutionAttemptStatus.CLAIMED,
+        ExecutionAttemptStatus.RUNNING,
+    }
+
+    gate.set()
+    processed = await process_task
+    assert processed is True
+
+    async with await get_session_no_context() as session:
+        final_task = await TaskRepository.get(session, task.id)
+        final_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
+
+    assert final_task is not None
+    assert final_task.status == TaskStatus.SUCCESS
+    assert final_attempt is not None
+    assert final_attempt.status == ExecutionAttemptStatus.SUCCEEDED
 
 
 @pytest.mark.asyncio
