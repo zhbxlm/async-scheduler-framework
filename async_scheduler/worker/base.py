@@ -10,7 +10,7 @@ from typing import Any
 
 from async_scheduler.core.models import Task, TaskStatus
 from async_scheduler.executor import TaskExecutor
-from async_scheduler.persistence import get_session_no_context, TaskRepository
+from async_scheduler.persistence import TaskRepository, get_session, get_session_no_context
 from async_scheduler.queue import QueueManager
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ class TaskWorker(Worker):
 
                 # Update status to running
                 task.status = TaskStatus.RUNNING
-                async with await get_session_no_context() as session:
+                async with get_session() as session:
                     await TaskRepository.update(session, task.id, status=TaskStatus.RUNNING)
 
                 # Process task
@@ -130,13 +130,11 @@ class TaskWorker(Worker):
             # Execute with retry handling
             result = await self._executor.execute(task, self.process)
 
-            # Update status based on result
+            # TaskExecutor already consumes the full retry budget internally.
+            # When execute() returns a failed result here, the task should
+            # converge to FAILED instead of being requeued a second time.
             if result.success:
                 await self._update_task_status(task, TaskStatus.SUCCESS, result=result.result)
-            elif result.should_retry:
-                task.retry_count += 1
-                await self._update_task_status(task, TaskStatus.RETRY)
-                await self._queue_manager.enqueue(task)
             else:
                 await self._update_task_status(task, TaskStatus.FAILED, error=str(result.error))
 
@@ -152,8 +150,8 @@ class TaskWorker(Worker):
         result: dict[str, Any] | None = None,
     ) -> None:
         """Update task status in database."""
-        async with await get_session_no_context() as session:
-            update_data = {"status": status, "updated_at": task.updated_at}
+        async with get_session() as session:
+            update_data = {"status": status, "updated_at": task.updated_at, "retry_count": task.retry_count}
 
             if status == TaskStatus.RUNNING:
                 update_data["started_at"] = task.started_at
