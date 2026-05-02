@@ -8,6 +8,7 @@ from typing import Any, Callable
 from async_scheduler.backends.base import LockBackend, LockHandle
 from async_scheduler.core.models import ExecutionAttemptCreate, ExecutionAttemptStatus, Task, TaskStatus
 from async_scheduler.executor import TaskExecutor
+from async_scheduler.observability import task_context
 from async_scheduler.persistence import ExecutionAttemptRepository, TaskRepository, get_session, get_session_no_context
 from async_scheduler.platform.completion import TaskCompletionNode
 from async_scheduler.platform.quota import TenantQuotaManager
@@ -226,6 +227,7 @@ class TaskConsumer:
                 if fresh_task and fresh_task.status == TaskStatus.CANCELLED:
                     return
 
+            result = await self._executor.execute(task, handler=self._handler, lease_lost_event=lease_lost_event)
 
             if heartbeat_task is not None and heartbeat_task.done():
                 exc = heartbeat_task.exception()
