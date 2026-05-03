@@ -1,0 +1,91 @@
+version: '3.9'
+
+x-common-env: &common-env
+  DATABASE_URL: mysql+asyncmy://async_scheduler:async_scheduler@mysql:3306/async_scheduler
+  REDIS_URL: redis://redis:6379/0
+  QUEUE_TYPE: redis
+  LOCK_TYPE: redis
+  REGISTRY_TYPE: memory
+  LOG_FORMAT: json
+  LOG_LEVEL: INFO
+  INIT_DB_ON_START: "true"
+
+x-app-base: &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: async-scheduler-framework:latest
+  restart: unless-stopped
+  environment:
+    <<: *common-env
+  depends_on:
+    redis:
+      condition: service_started
+    mysql:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: async_scheduler
+      MYSQL_USER: async_scheduler
+      MYSQL_PASSWORD: async_scheduler
+    command: ["mysqld", "--default-authentication-plugin=mysql_native_password"]
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  api:
+    <<: *app-base
+    command: ["async-scheduler", "api", "--host", "0.0.0.0", "--port", "8000", "--init-db"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: scheduler-api
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *app-base
+    command: ["async-scheduler", "worker", "--workers", "2", "--max-concurrent", "16", "--init-db"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: scheduler-worker
+    deploy:
+      replicas: 1
+
+  scheduler:
+    <<: *app-base
+    command: ["async-scheduler", "scheduler-service", "--poll-interval", "15", "--init-db"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: scheduler-cron
+
+  reconciler:
+    <<: *app-base
+    command: ["async-scheduler", "reconciler-service", "--interval", "20", "--init-db"]
+    environment:
+      <<: *common-env
+      SERVICE_NAME: scheduler-reconciler
+
+volumes:
+  redis_data:
+  mysql_data:

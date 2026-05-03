@@ -555,3 +555,26 @@ registry.register(
 | **Batch 4** | ✅ 已完成 | 可用性硬化：文档、API、验证套件、observability 补齐 |
 | **当前增量** | ✅ 已完成 | real Redis 关键路径、retry 语义收敛、lease observability、fault injection recovery tests |
 | **未来** | 🔜 待规划 | 更完整压测矩阵、生产级 side-effect 交付链路、更多运行时硬化 |
+
+## Docker 部署
+
+当前仓库已提供分服务 Docker 部署骨架，默认依赖：
+
+- MySQL 8（任务元数据）
+- Redis（队列/锁/协调）
+- api / worker / scheduler / reconciler 四个应用服务
+
+快速启动：
+
+```bash
+docker compose up -d --build
+```
+
+无 Docker 场景下，也可使用：
+
+```bash
+cp .env.example .env
+./scripts/run_local_split.sh start
+```
+
+详见：`docs/deployment/docker.md`
