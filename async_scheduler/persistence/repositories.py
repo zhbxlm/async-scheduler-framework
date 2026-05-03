@@ -98,10 +98,11 @@ class TaskRepository:
         values["updated_at"] = datetime.utcnow()
 
         result = await session.execute(
-            update(TaskORM).where(TaskORM.id == task_id).values(**values).returning(TaskORM)
+            update(TaskORM).where(TaskORM.id == task_id).values(**values)
         )
-        db_task = result.scalar_one_or_none()
-        return Task.model_validate(db_task) if db_task else None
+        if result.rowcount == 0:
+            return None
+        return await TaskRepository.get(session, task_id)
 
     @staticmethod
     async def delete(session: AsyncSession, task_id: str) -> bool:
@@ -150,10 +151,10 @@ class ExecutionAttemptRepository:
             update(ExecutionAttemptORM)
             .where(ExecutionAttemptORM.id == attempt_id)
             .values(**values)
-            .returning(ExecutionAttemptORM)
         )
-        db_attempt = result.scalar_one_or_none()
-        return ExecutionAttempt.model_validate(db_attempt) if db_attempt else None
+        if result.rowcount == 0:
+            return None
+        return await ExecutionAttemptRepository.get(session, attempt_id)
 
     @staticmethod
     async def finalize(
@@ -178,7 +179,7 @@ class ExecutionAttemptRepository:
         result = await session.execute(
             select(ExecutionAttemptORM)
             .where(ExecutionAttemptORM.task_id == task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc())
+            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(1)
         )
         db_attempt = result.scalar_one_or_none()
@@ -194,7 +195,7 @@ class ExecutionAttemptRepository:
         result = await session.execute(
             select(ExecutionAttemptORM)
             .where(ExecutionAttemptORM.task_id == task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc())
+            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -223,7 +224,7 @@ class ExecutionAttemptRepository:
                 (ExecutionAttemptORM.task_id == latest_created_subquery.c.task_id)
                 & (ExecutionAttemptORM.created_at == latest_created_subquery.c.latest_created_at),
             )
-            .order_by(ExecutionAttemptORM.created_at.desc())
+            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -263,7 +264,7 @@ class ExecutionAttemptRepository:
                 & (ExecutionAttemptORM.created_at == latest_subq.c.latest_created_at),
             )
             .outerjoin(TaskORM, TaskORM.id == ExecutionAttemptORM.task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc())
+            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -320,10 +321,11 @@ class ScheduleRepository:
         values["updated_at"] = datetime.utcnow()
 
         result = await session.execute(
-            update(ScheduleORM).where(ScheduleORM.id == schedule_id).values(**values).returning(ScheduleORM)
+            update(ScheduleORM).where(ScheduleORM.id == schedule_id).values(**values)
         )
-        db_schedule = result.scalar_one_or_none()
-        return Schedule.model_validate(db_schedule) if db_schedule else None
+        if result.rowcount == 0:
+            return None
+        return await ScheduleRepository.get(session, schedule_id)
 
     @staticmethod
     async def delete(session: AsyncSession, schedule_id: str) -> bool:
@@ -401,12 +403,11 @@ class DAGRepository:
         values["updated_at"] = datetime.utcnow()
 
         result = await session.execute(
-            update(DAGExecutionORM).where(DAGExecutionORM.id == dag_id).values(**values).returning(DAGExecutionORM)
+            update(DAGExecutionORM).where(DAGExecutionORM.id == dag_id).values(**values)
         )
-        db_dag = result.scalar_one_or_none()
-        if db_dag:
-            return await DAGRepository.get(session, dag_id)
-        return None
+        if result.rowcount == 0:
+            return None
+        return await DAGRepository.get(session, dag_id)
 
     @staticmethod
     async def list_all(session: AsyncSession, limit: int = 100) -> list[DAG]:

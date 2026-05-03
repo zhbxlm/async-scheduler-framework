@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+
+pytestmark = pytest.mark.mysql_required
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 

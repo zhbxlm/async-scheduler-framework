@@ -246,9 +246,17 @@ class TaskConsumer:
                 if exc is not None:
                     lease_lost = True
 
-            # Also check lease_lost_event
+            # Also check lease_lost_event. Lease-loss semantics take precedence over
+            # successful handler completion in distributed mode.
             if lease_lost_event.is_set():
                 lease_lost = True
+
+            # Final ownership check after handler returns: if we can no longer extend the
+            # lease, another worker may have taken over or our lease already expired.
+            if handle is not None and self._lock_backend is not None:
+                still_owner = await self._lock_backend.extend(handle, ttl=self._lease_ttl_seconds)
+                if not still_owner:
+                    lease_lost = True
 
             if lease_lost:
                 final_status = TaskStatus.FAILED

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.redis_required
+
+
 from async_scheduler.backends.redis import RedisLockBackend
 from async_scheduler.backends.base import LockHandle
 

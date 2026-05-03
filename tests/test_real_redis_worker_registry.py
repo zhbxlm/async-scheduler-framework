@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.redis_required
+
+
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry
 
 

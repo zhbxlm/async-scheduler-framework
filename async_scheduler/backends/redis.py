@@ -48,8 +48,8 @@ class RedisCompletionDedupBackend(CompletionDedupBackend):
     async def claim_once(self, key: str, ttl_seconds: float | None = None) -> bool:
         namespaced = self._key(key)
         if self._client_supports_set:
-            ttl = None if ttl_seconds is None else max(1, int(ttl_seconds))
-            result = await self._client.set(namespaced, "1", ex=ttl, nx=True)
+            ttl_ms = None if ttl_seconds is None else max(1, int(ttl_seconds * 1000))
+            result = await self._client.set(namespaced, "1", px=ttl_ms, nx=True)
             return bool(result)
 
         async with self._fallback_guard:
@@ -89,7 +89,7 @@ COMPARE_DELETE_SCRIPT = dedent(
 COMPARE_EXPIRE_SCRIPT = dedent(
     """
     if redis.call('get', KEYS[1]) == ARGV[1] then
-        return redis.call('expire', KEYS[1], tonumber(ARGV[2]))
+        return redis.call('pexpire', KEYS[1], tonumber(ARGV[2]))
     end
     return 0
     """
@@ -401,8 +401,8 @@ class RedisLockBackend(LockBackend):
         while True:
             handle = self._build_handle(key, effective_ttl)
             if self._client_supports_basic_ops:
-                ttl_int = max(1, int(effective_ttl)) if effective_ttl is not None else None
-                result = await self._client.set(self._redis_key(key), handle.token, ex=ttl_int, nx=True)
+                ttl_ms = max(1, int(effective_ttl * 1000)) if effective_ttl is not None else None
+                result = await self._client.set(self._redis_key(key), handle.token, px=ttl_ms, nx=True)
                 if result:
                     return handle
             else:
@@ -433,8 +433,8 @@ class RedisLockBackend(LockBackend):
     async def extend(self, handle: LockHandle, ttl: float) -> bool:
         if self._client_supports_basic_ops:
             key = self._redis_key(handle.key)
-            ttl_int = max(1, int(ttl))
-            extended = await self._compare_expire(key, handle.token, ttl_int)
+            ttl_ms = max(1, int(ttl * 1000))
+            extended = await self._compare_expire(key, handle.token, ttl_ms)
             if not extended:
                 return False
             handle.expires_at = datetime.utcnow() + timedelta(seconds=ttl)
@@ -503,18 +503,18 @@ class RedisLockBackend(LockBackend):
             return 0
         return int(await self._client.delete(key))
 
-    async def _compare_expire(self, key: str, token: str, ttl_int: int) -> bool:
+    async def _compare_expire(self, key: str, token: str, ttl_ms: int) -> bool:
         if hasattr(self._client, "compare_expire"):
-            return bool(await self._client.compare_expire(key, token, ttl_int))
+            return bool(await self._client.compare_expire(key, token, ttl_ms))
         if hasattr(self._client, "eval"):
-            return bool(await self._client.eval(COMPARE_EXPIRE_SCRIPT, 1, key, token, ttl_int))
+            return bool(await self._client.eval(COMPARE_EXPIRE_SCRIPT, 1, key, token, ttl_ms))
         current = await self._client.get(key)
         if current != token:
             return False
         current_after_check = await self._client.get(key)
         if current_after_check != token:
             return False
-        return bool(await self._client.expire(key, ttl_int))
+        return bool(await self._client.pexpire(key, ttl_ms))
 
     def _build_handle(self, key: str, ttl: float | None) -> LockHandle:
         self._token_counter += 1

@@ -4,6 +4,9 @@ import asyncio
 from datetime import datetime
 
 import pytest
+
+pytestmark = pytest.mark.mysql_required
+
 import pytest_asyncio
 
 from async_scheduler.core.models import (

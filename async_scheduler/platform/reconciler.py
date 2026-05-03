@@ -167,17 +167,28 @@ class TaskReconciler:
                 worker_live = await self.worker_registry.is_live(latest_attempt.worker_id)
             except Exception as exc:
                 logger.warning(
-                    "Worker liveness lookup failed for %s during reconcile; skipping repair for safety: %s",
+                    "Worker liveness lookup failed for %s during reconcile; continuing with lease/heartbeat signals only: %s",
                     latest_attempt.worker_id,
                     exc,
                 )
-                return False
+                worker_live = False
 
         lease_live = False
         if self.lock_backend is not None:
             lease_live = await self.lock_backend.is_locked(f"task:{task.id}")
 
-        return not worker_live and not lease_live
+        heartbeat_at = latest_attempt.last_heartbeat_at or latest_attempt.started_at or latest_attempt.created_at
+        heartbeat_stale = heartbeat_at <= threshold
+
+        # Aggressive repair policy for distributed recovery:
+        # - if lease is gone and heartbeat is stale, repair
+        # - if worker is not live and lease is gone, repair
+        # - if no attempt exists we already repair above
+        if not lease_live and heartbeat_stale:
+            return True
+        if not worker_live and not lease_live:
+            return True
+        return False
 
     async def _repair_task(self, task: Task) -> bool:
         error_message = f"reconciler: task considered stuck after {self.config.stuck_after_seconds} seconds"

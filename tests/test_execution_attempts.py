@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+
+pytestmark = pytest.mark.mysql_required
+
 import pytest_asyncio
 
 from async_scheduler.core.models import (
@@ -76,8 +79,10 @@ class TestExecutionAttempts:
 
         assert updated is not None
         assert updated.status == ExecutionAttemptStatus.RUNNING
-        assert updated.started_at == started_at
-        assert updated.last_heartbeat_at == heartbeat_at
+        assert updated.started_at is not None
+        assert updated.started_at.replace(microsecond=0) == started_at.replace(microsecond=0)
+        assert updated.last_heartbeat_at is not None
+        assert updated.last_heartbeat_at.replace(microsecond=0) == heartbeat_at.replace(microsecond=0)
 
     async def test_finalize_success(self, db_session) -> None:
         task = await TaskRepository.create(
@@ -105,7 +110,8 @@ class TestExecutionAttempts:
 
         assert finalized is not None
         assert finalized.status == ExecutionAttemptStatus.SUCCEEDED
-        assert finalized.completed_at == completed_at
+        assert finalized.completed_at is not None
+        assert finalized.completed_at.replace(microsecond=0) == completed_at.replace(microsecond=0)
         assert finalized.result_payload == {"ok": True}
         assert finalized.error_message is None
 

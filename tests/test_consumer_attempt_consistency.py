@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+pytestmark = pytest.mark.mysql_required
+
 import pytest_asyncio
 
 from async_scheduler.backends.factory import BackendConfig, BackendFactory

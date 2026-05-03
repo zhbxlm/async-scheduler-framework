@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.redis_required
+
+
 from async_scheduler.backends.redis import RedisQueueBackend
 from async_scheduler.core.models import Task, TaskPriority, TaskStatus
 from tests.fake_redis import FullFakeAsyncRedis

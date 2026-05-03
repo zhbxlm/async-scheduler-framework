@@ -130,10 +130,15 @@ async def lifespan(app: FastAPI):
 
     # Ensure structured logging is configured even when started via uvicorn directly
     from async_scheduler.observability import configure_logging as _configure_logging
+    from async_scheduler.settings import get_settings as _get_settings
+
+    _s = _get_settings()
     _configure_logging(
-        service=os.environ.get("SERVICE_NAME", "scheduler-api"),
-        node_id=os.environ.get("NODE_ID"),
-        version=os.environ.get("SERVICE_VERSION"),
+        service=_s.logging.service_name or "scheduler-api",
+        node_id=_s.logging.node_id,
+        version=_s.logging.service_version,
+        level=_s.logging.level,
+        fmt=_s.logging.fmt,
     )
 
     logger.info("Starting Async Scheduler API...")

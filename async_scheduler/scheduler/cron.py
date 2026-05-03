@@ -72,6 +72,15 @@ class CronScheduler:
         self._last_check: datetime | None = None
         self._is_leader: bool = False
         self._registry = ScheduleRegistry()
+        self._leader_renew_task: asyncio.Task[None] | None = None
+        self._metrics: dict[str, Any] = {
+            "poll_iterations": 0,
+            "leader_acquired_count": 0,
+            "leader_lost_count": 0,
+            "schedule_process_errors": 0,
+            "schedule_processed_count": 0,
+            "last_error": None,
+        }
 
     async def start(self) -> None:
         """Start the cron scheduler."""
@@ -81,9 +90,14 @@ class CronScheduler:
 
         self._running = True
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
-        # P1-TODO-7: start leader lease renewal background task
-        self._leader_renew_task: asyncio.Task | None = asyncio.create_task(self._leader_renewal_loop())
-        logger.info("Cron scheduler started")
+        self._leader_renew_task = asyncio.create_task(self._leader_renewal_loop())
+        logger.info(
+            "Cron scheduler started instance_id=%s poll_interval=%s leader_ttl=%s redis=%s",
+            self._instance_id,
+            self._poll_interval,
+            self._leader_lease_ttl,
+            self._redis is not None,
+        )
 
     async def stop(self) -> None:
         """Stop the cron scheduler."""
@@ -125,6 +139,8 @@ class CronScheduler:
         acquired = await self._redis.set(key, token, ex=ttl, nx=True)
         if acquired:
             self._is_leader = True
+            self._metrics["leader_acquired_count"] += 1
+            logger.info("CronScheduler leadership acquired instance_id=%s", self._instance_id)
             return True
 
         # Check if we already own it (renew)
@@ -147,8 +163,8 @@ class CronScheduler:
         # Only set if key exists AND value matches (xx=True)
         result = await self._redis.set(key, token, ex=ttl, xx=True)
         if result is None:
-            # Key expired or taken by another instance
             self._is_leader = False
+            self._metrics["leader_lost_count"] += 1
             return False
         self._is_leader = True
         return True
@@ -171,6 +187,7 @@ class CronScheduler:
         """Main scheduler loop with distributed leader election."""
         while self._running:
             try:
+                self._metrics["poll_iterations"] += 1
                 is_leader = await self._try_acquire_leader_lease()
                 if is_leader:
                     await self._process_schedules()
@@ -182,6 +199,7 @@ class CronScheduler:
                     )
                 await asyncio.sleep(self._poll_interval)
             except Exception as e:
+                self._metrics["last_error"] = str(e)
                 logger.error(f"Error in scheduler loop: {e}", exc_info=True)
                 await asyncio.sleep(self._poll_interval)
 
@@ -192,7 +210,10 @@ class CronScheduler:
             for schedule in schedules:
                 try:
                     await self._process_single_schedule(session, schedule)
+                    self._metrics["schedule_processed_count"] += 1
                 except Exception as e:
+                    self._metrics["schedule_process_errors"] += 1
+                    self._metrics["last_error"] = str(e)
                     logger.error(f"Error processing schedule {schedule.id}: {e}", exc_info=True)
 
     async def _process_single_schedule(

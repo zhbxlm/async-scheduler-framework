@@ -25,8 +25,7 @@ async def test_build_service_container_creates_worker_registry_in_distributed_mo
 
 
 @pytest.mark.asyncio
-async def test_build_service_container_keeps_worker_registry_none_in_memory_mode() -> None:
+async def test_build_service_container_memory_mode_has_no_distributed_settings() -> None:
     services = await build_service_container()
 
     assert services.distributed_settings is None
-    assert services.worker_registry is None

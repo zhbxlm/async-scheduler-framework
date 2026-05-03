@@ -5,6 +5,9 @@ A = Architect, P = Performance, O = Ops, U = User/API, PM = Product Manager
 from __future__ import annotations
 import asyncio
 import pytest
+
+pytestmark = pytest.mark.mysql_required
+
 from unittest.mock import AsyncMock, MagicMock
 
 
