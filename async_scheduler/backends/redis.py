@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from textwrap import dedent
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from redis.asyncio import Redis
@@ -107,7 +110,8 @@ QUEUE_PROMOTE_SCRIPT = dedent(
 QUEUE_REPRIORITIZE_SCRIPT = dedent(
     """
     if redis.call('lrem', KEYS[1], 1, ARGV[1]) == 1 then
-        redis.call('rpush', KEYS[2], ARGV[2])
+        redis.call('rpush', KEYS[2], ARGV[1])
+        redis.call('hset', KEYS[3], ARGV[1], ARGV[2])
         return 1
     end
     return 0
@@ -849,22 +853,47 @@ class RedisQueueBackend(QueueBackend):
                 running.pop(tid, None)
             return len(stale)
 
+    async def _find_cap_task_data(self, task_id: str) -> tuple[str | None, str | None]:
+        """Find (capability, serialized_payload) for task_id in any cap's task_data hash.
+
+        Returns (None, None) if not found.
+        """
+        caps = await self.discover_capabilities()
+        for cap in caps:
+            task_data_key = self._cap_task_data_key(cap)
+            payload = await self._client.hget(task_data_key, task_id)
+            if payload:
+                return cap, payload
+        return None, None
+
     async def cancel(self, task_id: str) -> bool:
         if self._client_supports_queue_ops:
             await self._client.sadd(self._cancelled_set_key, task_id)
-            task_exists = await self._client.hexists(self._task_data_key, task_id)
-            if not task_exists:
+            if await self._client.sismember(self._scheduled_set_key, task_id):
+                # Delayed (scheduled) task: find payload in delayed ZSET
+                delayed_scores = await self._client.zrangebyscore(self._delayed_key(), float("-inf"), float("inf"))
+                for raw in delayed_scores:
+                    try:
+                        wrapped = json.loads(raw)
+                        if isinstance(wrapped, dict) and wrapped.get("task", {}).get("id") == task_id:
+                            removed = await self._remove_delayed_atomic(raw)
+                            return bool(removed)
+                    except Exception:
+                        continue
                 return False
-            payload = await self._client.hget(self._task_data_key, task_id)
-            if not payload:
+            # Ready task: find in cap pending ZSET
+            cap, payload = await self._find_cap_task_data(task_id)
+            if cap is None or payload is None:
                 return False
             task = self._deserialize_task(payload)
-            removed = 0
-            if await self._client.sismember(self._scheduled_set_key, task_id):
-                removed = await self._remove_delayed_atomic(payload)
-            else:
-                removed = await self._remove_ready_atomic(task.priority.value, task_id)
-            return bool(removed)
+            pending_key = self._cap_pending_key(cap)
+            task_data_key = self._cap_task_data_key(cap)
+            removed = await self._client.zrem(pending_key, task_id)
+            if not removed:
+                # Already dequeued or race-removed — respect the race
+                return False
+            await self._client.hdel(task_data_key, task_id)
+            return True
         async with self._lock:
             task = self._task_index.get(task_id)
             if task is None:
@@ -891,20 +920,27 @@ class RedisQueueBackend(QueueBackend):
 
     async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
         if self._client_supports_queue_ops:
-            is_scheduled = await self._client.sismember(self._scheduled_set_key, task_id)
-            if is_scheduled:
+            if await self._client.sismember(self._scheduled_set_key, task_id):
                 return False
-            payload = await self._client.hget(self._task_data_key, task_id)
-            if not payload:
+            cap, payload = await self._find_cap_task_data(task_id)
+            if cap is None or payload is None:
                 return False
             task = self._deserialize_task(payload)
-            original_priority = task.priority
             task.priority = new_priority
             new_payload = self._serialize_task(task)
-            moved = await self._reprioritize_atomic(original_priority.value, new_priority.value, task_id, new_payload)
-            if not moved:
+            # Update task data hash
+            task_data_key = self._cap_task_data_key(cap)
+            await self._client.hset(task_data_key, task_id, new_payload)
+            # Re-score in pending ZSET: remove old score, re-add with new priority score
+            pending_key = self._cap_pending_key(cap)
+            removed = await self._client.zrem(pending_key, task_id)
+            if not removed:
+                # Race: already dequeued between hset and zrem
                 return False
-            await self._client.hset(self._task_data_key, task_id, new_payload)
+            ts_ms = int(time.time() * 1000)
+            priority_rank = new_priority.value if hasattr(new_priority, 'value') else int(new_priority)
+            new_score = priority_rank * (10 ** 13) + ts_ms
+            await self._client.zadd(pending_key, {task_id: new_score})
             return True
         async with self._lock:
             task = self._task_index.get(task_id)
@@ -917,10 +953,25 @@ class RedisQueueBackend(QueueBackend):
 
     async def size(self) -> dict[int, int]:
         if self._client_supports_queue_ops:
-            return {
-                priority.value: await self._client.llen(self._ready_key(priority.value))
-                for priority in TaskPriority
-            }
+            # Aggregate across all registered capabilities
+            caps = await self.discover_capabilities()
+            counts: dict[int, int] = {p.value: 0 for p in TaskPriority}
+            for cap in caps:
+                pending_key = self._cap_pending_key(cap)
+                members = await self._client.zrangebyscore(pending_key, float("-inf"), float("inf"))
+                # Decode priority from score: score = priority_rank * 10^13 + ts_ms
+                for task_id in members:
+                    # Fetch task data to get priority
+                    task_data_key = self._cap_task_data_key(cap)
+                    payload = await self._client.hget(task_data_key, task_id)
+                    if payload:
+                        try:
+                            task = self._deserialize_task(payload)
+                            p_val = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                            counts[p_val] = counts.get(p_val, 0) + 1
+                        except Exception:
+                            pass
+            return counts
         # In-process: aggregate cap_pending by priority
         counts: dict[int, int] = {p.value: 0 for p in TaskPriority}
         for heap in self._cap_pending.values():
@@ -1101,7 +1152,7 @@ class RedisQueueBackend(QueueBackend):
         old_key = self._ready_key(old_priority)
         new_key = self._ready_key(new_priority)
         if hasattr(self._client, "eval"):
-            return int(await self._client.eval(QUEUE_REPRIORITIZE_SCRIPT, 2, old_key, new_key, task_id))
+            return int(await self._client.eval(QUEUE_REPRIORITIZE_SCRIPT, 3, old_key, new_key, self._task_data_key, task_id, new_payload))
         removed = await self._client.lrem(old_key, 1, task_id)
         if not removed:
             return 0

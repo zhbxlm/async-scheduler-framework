@@ -166,7 +166,9 @@ class ExecutionAttempt(ExecutionAttemptBase):
 class ExecutionAttemptCreate(ExecutionAttemptBase):
     """Execution-attempt creation request."""
 
-    pass
+    status: ExecutionAttemptStatus = ExecutionAttemptStatus.CLAIMED
+    started_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
 
 
 class ScheduleBase(BaseModel):

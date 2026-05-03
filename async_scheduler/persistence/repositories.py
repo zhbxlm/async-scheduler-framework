@@ -128,7 +128,6 @@ class ExecutionAttemptRepository:
     async def create(session: AsyncSession, attempt: ExecutionAttemptCreate) -> ExecutionAttempt:
         attempt_dict = attempt.model_dump()
         attempt_dict["id"] = str(uuid.uuid4())
-        attempt_dict["status"] = ExecutionAttemptStatus.CLAIMED
         db_attempt = ExecutionAttemptORM(**attempt_dict)
         session.add(db_attempt)
         await session.flush()

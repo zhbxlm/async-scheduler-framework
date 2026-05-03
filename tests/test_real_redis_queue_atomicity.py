@@ -6,72 +6,26 @@ import pytest
 
 from async_scheduler.backends.redis import RedisQueueBackend
 from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from tests.fake_redis import FullFakeAsyncRedis
 
 
-class RacingFakeAsyncRedis:
+class RacingFakeAsyncRedis(FullFakeAsyncRedis):
     def __init__(self) -> None:
-        self.lists: dict[str, list[str]] = {}
-        self.zsets: dict[str, dict[str, float]] = {}
+        super().__init__()
         self.on_zrem = None
         self.on_lrem = None
-
-    async def rpush(self, key: str, value: str) -> int:
-        self.lists.setdefault(key, []).append(value)
-        return len(self.lists[key])
-
-    async def lpop(self, key: str):
-        values = self.lists.get(key, [])
-        if not values:
-            return None
-        return values.pop(0)
-
-    async def llen(self, key: str) -> int:
-        return len(self.lists.get(key, []))
 
     async def lrem(self, key: str, count: int, value: str) -> int:
         if self.on_lrem is not None:
             await self.on_lrem(key, value)
             self.on_lrem = None
-        values = self.lists.get(key, [])
-        removed = 0
-        kept: list[str] = []
-        for item in values:
-            if item == value and (count == 0 or removed < count):
-                removed += 1
-                continue
-            kept.append(item)
-        self.lists[key] = kept
-        return removed
-
-    async def zadd(self, key: str, mapping: dict[str, float]) -> int:
-        bucket = self.zsets.setdefault(key, {})
-        for member, score in mapping.items():
-            bucket[member] = score
-        return len(mapping)
-
-    async def zrangebyscore(self, key: str, min_score: float, max_score: float):
-        bucket = self.zsets.get(key, {})
-        return [member for member, score in bucket.items() if min_score <= score <= max_score]
+        return await super().lrem(key, count, value)
 
     async def zrem(self, key: str, member: str) -> int:
         if self.on_zrem is not None:
             await self.on_zrem(key, member)
             self.on_zrem = None
-        bucket = self.zsets.get(key, {})
-        existed = member in bucket
-        bucket.pop(member, None)
-        return 1 if existed else 0
-
-    async def delete(self, *keys: str) -> int:
-        count = 0
-        for key in keys:
-            if key in self.lists:
-                del self.lists[key]
-                count += 1
-            if key in self.zsets:
-                del self.zsets[key]
-                count += 1
-        return count
+        return await super().zrem(key, member)
 
 
 def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
@@ -110,11 +64,13 @@ async def test_reprioritize_does_not_duplicate_when_old_entry_removed_by_race() 
     task = make_task("race-reprio", TaskPriority.LOW)
     await backend.enqueue(task)
 
-    async def steal_before_remove(key: str, value: str) -> None:
-        values = client.lists.get(key, [])
-        client.lists[key] = [item for item in values if item != value]
+    # Simulate another worker dequeuing the task between hset and zrem
+    async def steal_before_zrem(key: str, member: str) -> None:
+        # Remove from all cap pending zsets (simulate concurrent dequeue)
+        for k in list(client.zsets.keys()):
+            client.zsets[k].pop(member, None)
 
-    client.on_lrem = steal_before_remove
+    client.on_zrem = steal_before_zrem
     updated = await backend.update_priority(task.id, TaskPriority.HIGH)
 
     assert updated is False
