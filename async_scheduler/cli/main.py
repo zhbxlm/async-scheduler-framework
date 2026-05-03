@@ -17,13 +17,18 @@ from async_scheduler.persistence import init_db
 from async_scheduler.queue import QueueManager
 from async_scheduler.observability import configure_logging
 from async_scheduler.scheduler import CronScheduler
+from async_scheduler.settings import get_settings
 from async_scheduler.worker import WorkerPool, create_default_workers
 
-# Configure structured JSON logging (respects LOG_LEVEL / LOG_FORMAT env vars)
+_settings = get_settings()
+
+# Configure structured JSON logging from unified settings
 configure_logging(
-    service=os.environ.get("SERVICE_NAME", "async-scheduler"),
-    node_id=os.environ.get("NODE_ID"),
-    version=os.environ.get("SERVICE_VERSION"),
+    service=_settings.logging.service_name,
+    node_id=_settings.logging.node_id,
+    version=_settings.logging.service_version,
+    level=_settings.logging.level,
+    fmt=_settings.logging.fmt,
 )
 logger = logging.getLogger(__name__)
 
@@ -281,9 +286,13 @@ def init_db_cmd(force):
 
 async def _init_database():
     """Initialize database."""
-    # Ensure data directory exists
-    data_dir = os.path.dirname("/home/gem/.openclaw/workspace/projects/async-scheduler-framework/data/scheduler.db")
-    os.makedirs(data_dir, exist_ok=True)
+    from async_scheduler.settings import get_settings
+
+    db_url = get_settings().database.url
+    if db_url.startswith("sqlite"):
+        # Ensure data directory exists only for SQLite file mode
+        data_dir = os.path.dirname("/home/gem/.openclaw/workspace/projects/async-scheduler-framework/data/scheduler.db")
+        os.makedirs(data_dir, exist_ok=True)
 
     await init_db()
 
@@ -339,6 +348,101 @@ def reconcile_cmd():
     except Exception as e:
         click.echo(f"Error running reconciler: {e}")
         sys.exit(1)
+
+
+@cli.command("scheduler-service")
+@click.option("--poll-interval", default=60.0, type=float, help="Cron poll interval in seconds")
+@click.option("--init-db", is_flag=True, help="Initialize database on startup")
+def scheduler_service_cmd(poll_interval, init_db):
+    """Run cron scheduler as a dedicated long-running service."""
+    if init_db:
+        asyncio.run(_init_database())
+
+    async def _run():
+        from async_scheduler.backends import BackendConfig
+        from async_scheduler.platform.services import build_service_container
+        from async_scheduler.settings import get_settings
+
+        b = get_settings().backends
+        services = await build_service_container(
+            BackendConfig(
+                queue_type=b.queue_type,
+                lock_type=b.lock_type,
+                registry_type=b.registry_type,
+                redis_url=b.redis_url,
+                lease_ttl_seconds=b.lease_ttl_seconds,
+                heartbeat_interval_seconds=b.heartbeat_interval_seconds,
+            )
+        )
+        services.cron_scheduler._poll_interval = poll_interval
+        await services.cron_scheduler.start()
+        logger.info("Scheduler service started successfully")
+        try:
+            while True:
+                await asyncio.sleep(1)
+        finally:
+            await services.cron_scheduler.stop()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        click.echo("\nShutting down scheduler service")
+
+
+@cli.command("reconciler-service")
+@click.option("--interval", default=30.0, type=float, help="Reconciler interval in seconds")
+@click.option("--init-db", is_flag=True, help="Initialize database on startup")
+def reconciler_service_cmd(interval, init_db):
+    """Run reconciler as a dedicated long-running service."""
+    if init_db:
+        asyncio.run(_init_database())
+
+    async def _run():
+        from async_scheduler.backends import BackendConfig
+        from async_scheduler.platform.services import build_service_container
+        from async_scheduler.settings import get_settings
+
+        b = get_settings().backends
+        services = await build_service_container(
+            BackendConfig(
+                queue_type=b.queue_type,
+                lock_type=b.lock_type,
+                registry_type=b.registry_type,
+                redis_url=b.redis_url,
+                lease_ttl_seconds=b.lease_ttl_seconds,
+                heartbeat_interval_seconds=b.heartbeat_interval_seconds,
+            )
+        )
+        logger.info("Reconciler service started successfully")
+        try:
+            while True:
+                repaired = await services.reconciler.reconcile()
+                logger.info("Reconciler iteration finished repaired=%s", repaired)
+                await asyncio.sleep(interval)
+        finally:
+            logger.info("Reconciler service stopped")
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        click.echo("\nShutting down reconciler service")
+
+
+@cli.command()
+@click.option("--json", is_flag=True, help="Output as JSON")
+@click.option("--env", is_flag=True, help="Show environment variables")
+def config_cmd(json: bool, env: bool):
+    """Print current configuration."""
+    from async_scheduler.config import config
+    from async_scheduler.config.__main__ import main
+    import sys
+
+    sys.argv = ["async_scheduler.config"]
+    if json:
+        sys.argv.append("--json")
+    if env:
+        sys.argv.append("--env")
+    main()
 
 
 if __name__ == "__main__":

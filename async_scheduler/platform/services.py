@@ -34,6 +34,7 @@ from async_scheduler.platform.router import TaskRouter
 from async_scheduler.queue import QueueManager
 from async_scheduler.registry import CapabilityRegistry
 from async_scheduler.scheduler import CronScheduler
+from async_scheduler.settings import get_settings
 from async_scheduler.worker import WorkerPool, create_default_workers
 
 
@@ -98,10 +99,25 @@ def _try_redis_client(distributed_settings: "DistributedSettings | None") -> "An
 async def build_service_container(
     backend_config: BackendConfig | None = None,
 ) -> ServiceContainer:
-    """Build the service container with optional backend configuration."""
+    """Build the service container with optional backend configuration.
+
+    If backend_config is omitted, configuration is loaded from unified runtime
+    settings (environment variables via async_scheduler.settings).
+    """
     distributed_settings: DistributedSettings | None = None
     worker_registry: WorkerRegistry | None = None
     lock_backend: LockBackend | None = None
+
+    if backend_config is None:
+        _b = get_settings().backends
+        backend_config = BackendConfig(
+            queue_type=_b.queue_type,
+            lock_type=_b.lock_type,
+            registry_type=_b.registry_type,
+            redis_url=_b.redis_url,
+            lease_ttl_seconds=_b.lease_ttl_seconds,
+            heartbeat_interval_seconds=_b.heartbeat_interval_seconds,
+        )
 
     if backend_config is not None:
         factory = BackendFactory(backend_config)
@@ -156,6 +172,8 @@ async def build_service_container(
     cron_scheduler = CronScheduler(
         queue_manager=queue_manager,
         poll_interval=60.0,
+        redis_client=_try_redis_client(distributed_settings),
+        leader_lease_ttl=int(distributed_settings.lease_ttl_seconds) if distributed_settings else 90,
     )
 
     worker_pool = WorkerPool(create_default_workers(queue_manager, task_executor, num_workers=1))

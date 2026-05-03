@@ -16,3 +16,14 @@ data/
 *.orig
 *.swp
 *.swo
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+venv/
+env/
+
+# local runtime artifacts
+logs/
+.run/

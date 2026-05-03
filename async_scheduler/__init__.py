@@ -29,3 +29,10 @@ __all__ = [
     "TaskExecutor",
     "DAGEngine",
 ]
+
+# Advanced config (optional)
+try:
+    from async_scheduler.config import ConfigContext, config
+    __all__.extend(["ConfigContext", "config"])
+except ImportError:
+    pass
