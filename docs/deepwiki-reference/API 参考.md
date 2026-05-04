@@ -22,7 +22,7 @@
 
 ## 引言
 
-本文档详细说明了 Ray AMU 平台的 RESTful API 接口规范，涵盖任务管理、DAG 编排、集群管理、能力注册、节点调度、定时调度、租户管理以及运维操作等核心功能。所有 API 均遵循 REST 设计原则，使用 JSON 格式进行数据交换，并通过 HTTP 头部进行身份认证和租户上下文传递。
+本文档详细说明了 Ray Async 平台的 RESTful API 接口规范，涵盖任务管理、DAG 编排、集群管理、能力注册、节点调度、定时调度、租户管理以及运维操作等核心功能。所有 API 均遵循 REST 设计原则，使用 JSON 格式进行数据交换，并通过 HTTP 头部进行身份认证和租户上下文传递。
 
 ## 认证方式
 
@@ -31,7 +31,7 @@ API 使用基于 API Key 的认证机制，通过 HTTP 头部传递认证信息�
 - `X-API-Key`: 租户的 API 密钥（必填，多租户模式下）
 - `X-Tenant-Id`: 租户标识符（可选，用于验证 Key 归属）
 
-在单租户模式下，系统使用环境变量 `RAY_AMU_API_KEY` 配置的全局 Key 进行认证。多租户模式下，每个租户拥有独立的 API Key，系统通过 `TenantRegistry` 验证 Key 的有效性并解析对应的租户上下文。超级管理员可使用 `super_admin_api_key` 执行跨租户管理操作。
+在单租户模式下，系统使用环境变量 `RAY_ASYNC_API_KEY` 配置的全局 Key 进行认证。多租户模式下，每个租户拥有独立的 API Key，系统通过 `TenantRegistry` 验证 Key 的有效性并解析对应的租户上下文。超级管理员可使用 `super_admin_api_key` 执行跨租户管理操作。
 
 认证失败时返回以下错误码：
 - `401 Unauthorized`: API Key 无效或租户不存在
