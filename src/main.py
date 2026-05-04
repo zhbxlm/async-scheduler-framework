@@ -34,7 +34,8 @@ class _DefaultServices:
     Supported: callback_dispatcher, async_proxy_sidecar, async_proxy,
                quota_manager, quota_enforcer, resource_manager
                capability_registry, cluster_registry, node_registry,
-               schedule_registry, tenant_registry, dag_loader
+               schedule_registry, tenant_registry, dag_loader,
+               task_reconciler, cron_scheduler, queue_manager
     """
     capability_registry = None
     cluster_registry = None
@@ -42,6 +43,9 @@ class _DefaultServices:
     schedule_registry = None
     tenant_registry = None
     dag_loader = None
+    task_reconciler = None
+    cron_scheduler = None
+    queue_manager = None
 
 
 services = _DefaultServices()
@@ -55,8 +59,11 @@ async def init_services() -> None:
     from src.platform.schedule_registry import ScheduleRegistry
     from src.platform.tenant_registry import TenantRegistry
     from src.platform.dag_loader import DagLoader
+    from src.platform.task_reconciler import TaskReconciler
+    from src.platform.cron_scheduler import CronScheduler
+    from src.platform.queue_manager import QueueManager
     from src.common.redis_client import create_redis_client
-    from src.common.db import init_engine
+    from src.common.db import init_engine, get_db
     from config.settings import settings
 
     redis_client = create_redis_client(settings.redis.url or None)
@@ -70,6 +77,23 @@ async def init_services() -> None:
     services.schedule_registry = ScheduleRegistry(redis_client)
     services.tenant_registry = TenantRegistry(redis_client)
     services.dag_loader = DagLoader(redis_client=redis_client)  # uses default config/dags
+    services.queue_manager = QueueManager(redis_client)
+    services.task_reconciler = TaskReconciler(
+        redis_client=redis_client,
+        db_session_factory=get_db if settings.infra.mysql.url else None,
+        queue_manager=services.queue_manager,
+        interval_seconds=settings.background.reconcile.interval_seconds,
+        stuck_max_per_tick=settings.background.reconcile.stuck_max_per_tick,
+        stuck_task_max_age_seconds=settings.background.reconcile.stuck_task_max_age_seconds,
+        batch_size=settings.background.reconcile.batch_size,
+    )
+    # TODO: CronScheduler needs a proper task_creator with create_task method
+    # services.cron_scheduler = CronScheduler(
+    #     redis_client=redis_client,
+    #     schedule_repository=services.schedule_registry,
+    #     task_creator=services.queue_manager,  # QueueManager lacks create_task
+    #     poll_interval=settings.background.cron.check_interval,
+    # )
     # other services can be added here when needed
 
 
@@ -84,6 +108,12 @@ async def startup_event() -> None:
     app.state.schedule_registry = services.schedule_registry
     app.state.tenant_registry = services.tenant_registry
     app.state.dag_loader = services.dag_loader
+    app.state.task_reconciler = services.task_reconciler
+    # Start background services if enabled
+    if settings.background.reconcile.enabled and services.task_reconciler:
+        await services.task_reconciler.start()
+    # if settings.background.cron.enabled and services.cron_scheduler:
+    #     await services.cron_scheduler.start()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

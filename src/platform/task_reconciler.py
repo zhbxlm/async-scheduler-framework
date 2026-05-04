@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ _REQUEUE_DEDUP_KEY = "requeue_dedup:{task_id}"
 _REQUEUE_DEDUP_TTL = 300
 _STUCK_MAX_PER_TICK = 20
 _STUCK_TASK_MAX_AGE_SECONDS = 300
+_RECONCILE_LEADER_KEY = "reconcile_leader"
+_LEADER_TTL = 90  # seconds
 
 
 class TaskReconciler:
@@ -40,6 +43,8 @@ class TaskReconciler:
         stuck_max_per_tick: int = _STUCK_MAX_PER_TICK,
         stuck_task_max_age_seconds: float = _STUCK_TASK_MAX_AGE_SECONDS,
         batch_size: int = 100,
+        instance_id: str | None = None,
+        leader_ttl: int = _LEADER_TTL,
     ) -> None:
         self._r = redis_client
         self._db = db_session_factory
@@ -48,6 +53,8 @@ class TaskReconciler:
         self._stuck_max_per_tick = stuck_max_per_tick
         self._stuck_max_age = stuck_task_max_age_seconds
         self._batch_size = batch_size
+        self._instance_id = instance_id or str(uuid.uuid4())
+        self._leader_ttl = leader_ttl
         self._running = False
         self._scan_cursor: int = 0
 
@@ -63,9 +70,25 @@ class TaskReconciler:
     # Main loop
     # ------------------------------------------------------------------
 
+    async def _try_become_leader(self) -> bool:
+        """Redis SET NX EX for leader election."""
+        if self._r is None:
+            return True  # no redis → single instance mode
+        ok = await self._r.set(_RECONCILE_LEADER_KEY, self._instance_id, nx=True, ex=self._leader_ttl)
+        if ok:
+            return True
+        current = await self._r.get(_RECONCILE_LEADER_KEY)
+        current_id = current.decode() if isinstance(current, bytes) else current
+        if current_id == self._instance_id:
+            await self._r.expire(_RECONCILE_LEADER_KEY, self._leader_ttl)
+            return True
+        return False
+
     async def _loop(self) -> None:
         while self._running:
             await asyncio.sleep(self._interval)
+            if not await self._try_become_leader():
+                continue  # not leader, skip tick
             try:
                 task_batch = await self._scan_task_batch()
                 if task_batch:
