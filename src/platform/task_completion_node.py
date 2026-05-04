@@ -95,7 +95,7 @@ class TaskCompletionNode:
                     if error_msg:
                         error_msg = error_msg[:2000]  # truncate to 2000 chars
                 if row:
-                    update_values = {"status": status, "output": result_json}
+                    update_values = {"status": status, "output_data": result_json}
                     if error_msg:
                         update_values["error_message"] = error_msg
                     await session.execute(
@@ -108,7 +108,7 @@ class TaskCompletionNode:
                         "task_id": task_id,
                         "tenant_id": tenant_id,
                         "status": status,
-                        "output": result_json,
+                        "output_data": result_json,
                     }
                     if error_msg:
                         create_values["error_message"] = error_msg

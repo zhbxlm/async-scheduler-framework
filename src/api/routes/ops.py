@@ -7,6 +7,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.platform import queue_keys as qk
 
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
 
@@ -66,7 +67,7 @@ async def ops_overview(request: Request) -> dict:
                 # Try to get circuit_state from redis stats hash
                 if redis is not None:
                     try:
-                        stats_key = f"queue:{cap}:stats"
+                        stats_key = qk.stats(cap)
                         circuit_raw = await redis.hget(stats_key, "circuit_state")
                         if circuit_raw:
                             circuit_state = circuit_raw.decode() if isinstance(circuit_raw, bytes) else circuit_raw

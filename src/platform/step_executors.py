@@ -155,9 +155,10 @@ class MapStepExecutor:
     def __init__(
         self,
         *,
-        max_parallelism: int = 8,
+        max_parallelism: int = 16,
     ) -> None:
-        self._semaphore = asyncio.Semaphore(max_parallelism)
+        self._max_parallelism = max_parallelism
+        self._step_semaphore: asyncio.Semaphore | None = None
 
     async def execute(
         self,
@@ -166,14 +167,19 @@ class MapStepExecutor:
         input_data: dict[str, Any],
         dispatch: DispatchFn,
         shards: list[Any] | None = None,
+        step: Any = None,  # DagStep with max_concurrency field
     ) -> list[dict[str, Any]]:
         """Execute step once per shard in parallel; return list of results."""
         if not shards:
             logger.warning("MapStepExecutor: no shards for step=%s", step_name)
             return []
 
+        # Use step.max_concurrency if available (default to 16)
+        max_concurrency = getattr(step, "max_concurrency", 0) or self._max_parallelism
+        semaphore = asyncio.Semaphore(max_concurrency)
+
         async def _one(shard: Any, idx: int) -> dict[str, Any]:
-            async with self._semaphore:
+            async with semaphore:
                 shard_input = {**input_data, "shard": shard, "shard_index": idx}
                 return await dispatch(capability, f"{step_name}[{idx}]", shard_input)
 

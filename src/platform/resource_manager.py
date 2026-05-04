@@ -37,9 +37,25 @@ class AgentClient:
 
     def __init__(self, timeout_seconds: float = 15.0) -> None:
         self._timeout = timeout_seconds
+        self._client: Any = None
+        self._client_lock = asyncio.Lock()
+
+    async def _get_client(self):
+        import httpx
+        async with self._client_lock:
+            loop = asyncio.get_event_loop()
+            if (
+                self._client is None
+                or self._client.is_closed
+                or getattr(self._client, "_loop", loop) is not loop
+            ):
+                if self._client and not self._client.is_closed:
+                    await self._client.aclose()
+                self._client = httpx.AsyncClient(timeout=self._timeout)
+                self._client._loop = loop  # type: ignore[attr-defined]
+            return self._client
 
     async def invite(self, node: NodeInfo, cluster: ClusterInfo) -> bool:
-        import httpx
         url = node.agent_url + "/invite"
         payload = {
             "cluster_id": cluster.cluster_id,
@@ -48,24 +64,28 @@ class AgentClient:
             "custom_resources": node.custom_resources,
         }
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return bool(data.get("accepted"))
+            client = await self._get_client()
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return bool(resp.json().get("accepted"))
         except Exception as e:
             logger.error("AgentClient.invite node=%s failed: %s", node.node_id, e)
             return False
 
     async def release(self, node: NodeInfo, cluster_id: str, graceful: bool = True) -> bool:
-        import httpx
         url = node.agent_url + "/release"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json={"cluster_id": cluster_id, "graceful": graceful})
-                return resp.status_code < 400
+            client = await self._get_client()
+            resp = await client.post(url, json={"cluster_id": cluster_id, "graceful": graceful})
+            return resp.status_code < 400
         except Exception:
             return False
+
+    async def close(self) -> None:
+        async with self._client_lock:
+            if self._client and not self._client.is_closed:
+                await self._client.aclose()
+                self._client = None
 
 
 class ResourceManager:
@@ -212,6 +232,6 @@ class ResourceManager:
 
     async def confirm(self, node: NodeInfo, cluster: ClusterInfo) -> bool:
         """Phase 4: CONFIRM — mark node as fully JOINED in registry."""
-        await self._registry.set_node_state(node.node_id, "JOINED")
+        await self._nodes.mark_joined(node.node_id)
         return True
 

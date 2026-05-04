@@ -77,7 +77,21 @@ class SchedulerClient:
         idempotency_key: str | None = None,
         timeout_seconds: int = 3600,
     ) -> dict[str, Any]:
-        """Submit a new task and return the creation response."""
+        """Submit a new task and return the creation response.
+
+        Args:
+            dag_id: DAG identifier (mapped to task_type in API).
+            capability: Internal routing hint (currently not sent to API;
+                       routing uses task_type/dag_id internally).
+            input_data: Task input parameters.
+            priority: Task priority ("very_high", "high", "normal", "low", "tide").
+            tenant_id: Tenant identifier for multi-tenancy.
+            idempotency_key: Unique key for idempotent task creation.
+            timeout_seconds: Maximum execution time in seconds.
+
+        Returns:
+            Task creation response with task_id and status.
+        """
         payload: dict[str, Any] = {
             "task_type": dag_id,
             "input_data": input_data or {},
@@ -163,6 +177,39 @@ class SchedulerClient:
                 )
 
             await asyncio.sleep(poll_interval)
+
+    async def submit_and_wait(
+        self,
+        dag_id: str,
+        input_data: dict[str, Any] | None = None,
+        *,
+        priority: str = "normal",
+        tenant_id: str = "",
+        idempotency_key: str | None = None,
+        timeout_seconds: int = 3600,
+        poll_interval: float = _DEFAULT_POLL_INTERVAL,
+        wait_timeout: float = _DEFAULT_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Submit a task and wait for completion. Returns final task info.
+
+        Convenience wrapper around submit_task + wait_for_task.
+        Raises RuntimeError if task fails or is cancelled.
+        Raises TimeoutError if wait_timeout elapses.
+        """
+        task = await self.submit_task(
+            dag_id=dag_id,
+            capability="",  # Not used by API, kept for signature compatibility
+            input_data=input_data,
+            priority=priority,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            timeout_seconds=timeout_seconds,
+        )
+        return await self.wait_for_task(
+            task["task_id"],
+            poll_interval=poll_interval,
+            timeout=wait_timeout,
+        )
 
     # ── Capability operations ─────────────────────────────────────────────
 

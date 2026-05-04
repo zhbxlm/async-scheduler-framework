@@ -16,7 +16,13 @@ def create_redis_client(
 ) -> aioredis.Redis:
     url = url or os.getenv("REDIS_URL", "")
     if url:
-        return aioredis.from_url(url, decode_responses=decode_responses, max_connections=max_connections)
+        return aioredis.from_url(
+            url,
+            decode_responses=decode_responses,
+            max_connections=max_connections,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
     return aioredis.Redis(
         host=host,
         port=port,
@@ -24,4 +30,8 @@ def create_redis_client(
         db=db,
         decode_responses=decode_responses,
         max_connections=max_connections,
+        retry_on_timeout=True,
+        health_check_interval=30,
+        socket_keepalive=True,
+        socket_connect_timeout=5,
     )

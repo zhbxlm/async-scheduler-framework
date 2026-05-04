@@ -158,11 +158,11 @@ class TaskReconciler:
 
         try:
             async with self._db() as session:
-                from sqlalchemy import select, text
+                from sqlalchemy import select
+                from src.models.task import TaskRecord
+
                 result = await session.execute(
-                    text(
-                        "SELECT task_id FROM tasks WHERE task_id IN :ids"
-                    ).bindparams(ids=tuple(task_ids))
+                    select(TaskRecord.task_id).where(TaskRecord.task_id.in_(task_ids))
                 )
                 persisted_ids = {row[0] for row in result.fetchall()}
 
