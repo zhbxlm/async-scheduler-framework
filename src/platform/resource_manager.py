@@ -209,3 +209,9 @@ class ResourceManager:
             available_memory_gb=round(sum(n.resources.get_effective_memory_mb() / 1024 for n in joined), 2),
         )
         await self._clusters.update_resources(cluster_id, observed)
+
+    async def confirm(self, node: NodeInfo, cluster: ClusterInfo) -> bool:
+        """Phase 4: CONFIRM — mark node as fully JOINED in registry."""
+        await self._registry.set_node_state(node.node_id, "JOINED")
+        return True
+

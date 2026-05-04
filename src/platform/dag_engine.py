@@ -176,3 +176,20 @@ class DagEngine:
                         next_q.append(nbr)
             queue = next_q
         return waves
+
+    def topological_sort(self, steps):
+        """Public alias for _topo_sort (doc API compatibility)."""
+        return self._topo_sort(steps)
+
+    def get_ready_nodes(self, step_names, completed, failed):
+        """Return steps whose all dependencies are in completed set."""
+        ready = []
+        for name in step_names:
+            step = next((s for s in self._current_steps if s.step_name == name), None)
+            if step is None:
+                continue
+            deps = set(step.dependencies or [])
+            if deps.issubset(completed) and name not in completed and name not in failed:
+                ready.append(name)
+        return ready
+
