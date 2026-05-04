@@ -5,6 +5,7 @@ Full-spec DAG execution engine:
 - Condition expression evaluation via simple context lookup
 - SYNC / ASYNC / FLASK_WRAPPED execution modes
 - MAP scatter-gather
+- STREAMING: blpop Redis buffer, per-chunk downstream dispatch, sentinel detection
 - on_failure: ABORT / SKIP / FALLBACK
 - Incremental context persistence (every step)
 - CheckpointConfig support
@@ -12,10 +13,22 @@ Full-spec DAG execution engine:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import time
 from typing import Any, Callable, Awaitable
+
+_STREAMING_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_streaming_executor(max_workers: int = 64) -> concurrent.futures.ThreadPoolExecutor:
+    global _STREAMING_EXECUTOR
+    if _STREAMING_EXECUTOR is None:
+        _STREAMING_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="dag_streaming"
+        )
+    return _STREAMING_EXECUTOR
 
 from src.models.dag import (
     DagContext, DagDefinition, DagStatus, DagStep,
@@ -33,9 +46,14 @@ class DagEngine:
         context_store: Any | None = None,
         *,
         max_parallelism: int = 8,
+        redis: Any | None = None,
+        streaming_executor_max_workers: int = 64,
     ) -> None:
         self._store = context_store
         self._max_parallelism = max_parallelism
+        self._redis = redis
+        self._streaming_executor_max_workers = streaming_executor_max_workers
+        self._current_steps: list = []  # for get_ready_nodes
 
     async def execute(
         self,
@@ -45,7 +63,7 @@ class DagEngine:
     ) -> DagContext:
         """Execute *dag_def* and return the final DagContext."""
         ctx = DagContext(
-            task_id=dag_def.dag_id,
+            task_id=(initial_context or {}).get("task_id") or dag_def.dag_id,
             dag_id=dag_def.dag_id,
             tenant_id=dag_def.tenant_id,
             input_data=initial_context or {},
@@ -54,6 +72,7 @@ class DagEngine:
         )
 
         step_map = {s.step_name: s for s in dag_def.steps}
+        self._current_steps = dag_def.steps
         order = self._topo_sort(dag_def.steps)
 
         if not order:
@@ -100,30 +119,47 @@ class DagEngine:
 
         result: dict[str, Any] = {}
         async with semaphore:
-            for attempt in range(step.retry_policy.max_retries + 1):
+            # ── STREAMING step ──────────────────────────────────────────
+            if step.step_kind == StepKind.STREAMING and step.streaming_trigger:
                 try:
-                    if step.execution_mode == ExecutionMode.SYNC:
-                        result = await asyncio.wait_for(
-                            dispatch(step.capability, step.step_name, input_data),
-                            timeout=step.timeout_seconds,
-                        )
-                    elif step.execution_mode == ExecutionMode.ASYNC:
-                        result = await dispatch(step.capability, step.step_name, input_data)
-                    elif step.execution_mode == ExecutionMode.FLASK_WRAPPED:
-                        flask_url = (step.flask.url if step.flask else "") or ""
-                        result = await self._flask_dispatch(flask_url, input_data)
-                    break
+                    result = await self._run_streaming_step(step, ctx, dispatch, input_data)
                 except Exception as e:
-                    if attempt < step.retry_policy.max_retries:
-                        await asyncio.sleep(step.retry_policy.retry_delay_seconds)
-                        continue
-                    # All retries exhausted
+                    # Clean up Redis buffer on failure
+                    if self._redis and step.streaming_trigger:
+                        bk = step.streaming_trigger.buffer_key.replace("{task_id}", ctx.task_id)
+                        await self._redis.delete(bk)
                     if step.on_failure == OnFailureAction.FALLBACK and step.fallback:
                         result = dict(step.fallback.output_mapping)
                     elif step.on_failure == OnFailureAction.SKIP:
                         result = {}
                     else:
                         raise
+            else:
+                # ── normal step (SYNC / ASYNC / FLASK_WRAPPED) ──────────
+                for attempt in range(step.retry_policy.max_retries + 1):
+                    try:
+                        if step.execution_mode == ExecutionMode.SYNC:
+                            result = await asyncio.wait_for(
+                                dispatch(step.capability, step.step_name, input_data),
+                                timeout=step.timeout_seconds,
+                            )
+                        elif step.execution_mode == ExecutionMode.ASYNC:
+                            result = await dispatch(step.capability, step.step_name, input_data)
+                        elif step.execution_mode == ExecutionMode.FLASK_WRAPPED:
+                            flask_url = (step.flask.url if step.flask else "") or ""
+                            result = await self._flask_dispatch(flask_url, input_data)
+                        break
+                    except Exception as e:
+                        if attempt < step.retry_policy.max_retries:
+                            await asyncio.sleep(step.retry_policy.retry_delay_seconds)
+                            continue
+                        # All retries exhausted
+                        if step.on_failure == OnFailureAction.FALLBACK and step.fallback:
+                            result = dict(step.fallback.output_mapping)
+                        elif step.on_failure == OnFailureAction.SKIP:
+                            result = {}
+                        else:
+                            raise
 
         # Output mapping
         for dst, src in step.output_mapping.items():
@@ -138,6 +174,94 @@ class DagEngine:
             await self._store.save(ctx)
 
         return result
+
+    async def _run_streaming_step(
+        self,
+        step,
+        ctx: DagContext,
+        dispatch: Callable,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute STREAMING step: inject buffer_key, dispatch, consume chunks via blpop."""
+        trigger = step.streaming_trigger
+        buffer_key = trigger.buffer_key.replace("{task_id}", ctx.task_id)
+
+        # Inject buffer key so worker knows where to push chunks
+        enriched = {**input_data, "_streaming_buffer_key": buffer_key}
+
+        # Submit the streaming step — must actually await so the producer coroutine
+        # runs and starts the background thread before we enter blpop.
+        await dispatch(step.capability, step.step_name, enriched)
+
+        # Small yield to let the producer thread start up
+        await asyncio.sleep(0)
+
+        loop = asyncio.get_event_loop()
+        executor = _get_streaming_executor(self._streaming_executor_max_workers)
+        result: dict[str, Any] = {}
+
+        while True:
+            # Prefer async_blpop (e.g. MockRedis / aioredis) to avoid thread blocking
+            if hasattr(self._redis, "async_blpop"):
+                item = await self._redis.async_blpop(buffer_key, timeout=30)
+            else:
+                # Sync redis — run in thread pool
+                item = await loop.run_in_executor(
+                    executor,
+                    lambda bk=buffer_key: self._redis_blpop_sync(bk, timeout=30),
+                )
+            raw = item[1] if item else None
+            if raw is None:
+                raise TimeoutError(f"STREAMING: blpop timeout on buffer_key={buffer_key}")
+
+            try:
+                chunk = json.loads(raw)
+            except Exception:
+                chunk = {"__raw__": raw}
+
+            # Sentinel: producer finished
+            if chunk.get("__done__"):
+                if chunk.get("__error__"):
+                    raise RuntimeError(f"STREAMING step error: {chunk['__error__']}")
+                summary = chunk.get("summary", {})
+                for dst, src in step.output_mapping.items():
+                    if src in summary:
+                        result[dst] = summary[src]
+                if trigger.flush_on_complete and self._redis:
+                    await self._redis.delete(buffer_key)
+                break
+
+            # Non-sentinel chunk — dispatch each downstream step
+            for ds_name in trigger.downstream_steps:
+                try:
+                    ds_result = await dispatch(
+                        step.capability, ds_name,
+                        {"chunk": chunk, **enriched},
+                    )
+                    acc_key = f"_streaming_results_{ds_name}"
+                    if acc_key not in ctx.context:
+                        ctx.context[acc_key] = []
+                    ctx.context[acc_key].append(ds_result)
+                except Exception as e:
+                    logger.warning("STREAMING: downstream step %s failed: %s", ds_name, e)
+
+        return result
+
+    def _redis_blpop_sync(self, key: str, timeout: int = 30):
+        """Synchronous blpop — runs in thread executor to avoid blocking event loop."""
+        if self._redis is None:
+            return None
+        # For async redis clients we use the sync interface via run_until_complete
+        # We expect _redis to be a sync redis.Redis instance when streaming is used
+        try:
+            res = self._redis.blpop(key, timeout=timeout)
+            if res is None:
+                return None
+            _, value = res
+            return value
+        except Exception as e:
+            logger.error("STREAMING blpop error: %s", e)
+            return None
 
     async def _flask_dispatch(self, url: str, payload: dict) -> dict:
         import httpx
