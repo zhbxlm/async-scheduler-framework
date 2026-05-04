@@ -3,6 +3,8 @@
 Three-state health FSM: healthy → degraded → unhealthy.
 Debounce logic: needs consecutive N successes/failures to transition.
 Storage: Redis JSON per capability, health counters in separate Hash.
+
+Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
@@ -11,12 +13,13 @@ import logging
 from typing import Any
 
 from src.models.capability import CapabilityInfo, HealthStatus
+from src.platform.base_registry import BaseRedisRegistry
+from src.common.error_handling import log_errors, ExternalServiceError
 
 logger = logging.getLogger(__name__)
 
-_CAP_KEY = "capability:{name}"
-_HEALTH_KEY = "capability_health:{name}"      # hash: status, consec_ok, consec_fail
 _CAP_INDEX = "capabilities:all"
+_HEALTH_KEY = "capability_health:{name}"   # hash: status, consec_ok, consec_fail
 
 # Lua: atomic health FSM transition
 _LUA_UPDATE_HEALTH = """
@@ -47,9 +50,9 @@ elseif status == 'degraded' and consec_fail >= unhealthy_thresh then
     new_status = 'unhealthy'
 end
 
-redis.call('HSET', hkey, 'status', new_status, 'consec_ok', tostring(consec_ok), 'consec_fail', tostring(consec_fail))
+redis.call('HSET', hkey, 'status', new_status,
+           'consec_ok', tostring(consec_ok), 'consec_fail', tostring(consec_fail))
 
--- sync status back into capability JSON
 local raw = redis.call('GET', capkey)
 if raw then
     local cap = cjson.decode(raw)
@@ -60,16 +63,32 @@ end
 return new_status
 """
 
+# Sentinel tenant for global (no-tenant) capabilities
+_GLOBAL_TENANT = "_global_"
 
-class CapabilityRegistry:
-    """Redis-backed capability registry with three-state health FSM."""
+
+class CapabilityRegistry(BaseRedisRegistry):
+    """Redis-backed capability registry with three-state health FSM.
+
+    Inherits BaseRedisRegistry for unified CRUD interface.
+    Capabilities are global (no tenant isolation), so tenant_id="_global_".
+    """
 
     def __init__(self, redis_client: Any) -> None:
-        self._r = redis_client
+        super().__init__(
+            redis_client=redis_client,
+            key_prefix="capability",
+            ttl_seconds=0,          # capabilities don't expire
+        )
 
+    # ------------------------------------------------------------------
+    # High-level API (domain methods used by routes)
+    # ------------------------------------------------------------------
+
+    @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def register(self, cap: CapabilityInfo) -> None:
-        key = _CAP_KEY.format(name=cap.capability_name)
-        await self._r.set(key, cap.model_dump_json())
+        """Register or update a capability + initialise health counters."""
+        await self.set(_GLOBAL_TENANT, cap.capability_name, cap.model_dump())
         await self._r.sadd(_CAP_INDEX, cap.capability_name)
         hkey = _HEALTH_KEY.format(name=cap.capability_name)
         await self._r.hset(hkey, mapping={
@@ -79,16 +98,30 @@ class CapabilityRegistry:
         })
         logger.info("CapabilityRegistry.register name=%s", cap.capability_name)
 
-    async def get(self, name: str) -> CapabilityInfo | None:
-        key = _CAP_KEY.format(name=name)
-        raw = await self._r.get(key)
-        if raw is None:
+    @log_errors(log_level="WARNING", raise_exception=False)
+    async def get_capability(self, name: str) -> CapabilityInfo | None:
+        """Get a capability by name."""
+        data = await self.get(_GLOBAL_TENANT, name)
+        if data is None:
             return None
-        return CapabilityInfo.model_validate(json.loads(raw))
+        return CapabilityInfo.model_validate(data)
 
+    # Backward-compatible single-arg get (used by tests and existing callers)
+    async def get(self, name_or_tenant: str, item_id: str | None = None) -> CapabilityInfo | None:  # type: ignore[override]
+        """Get capability by name. Supports both get(name) and get(tenant, name) forms."""
+        if item_id is None:
+            # Legacy single-arg call: get(name)
+            return await self.get_capability(name_or_tenant)
+        # Two-arg call from BaseRedisRegistry (internal)
+        data = await super().get(name_or_tenant, item_id)
+        if data is None:
+            return None
+        return CapabilityInfo.model_validate(data)
+
+    @log_errors(log_level="WARNING", raise_exception=False)
     async def find_capability(self, name: str) -> CapabilityInfo | None:
-        """Return capability only if healthy or degraded (not unhealthy)."""
-        cap = await self.get(name)
+        """Return capability only if healthy or degraded (filters UNHEALTHY)."""
+        cap = await self.get_capability(name)
         if cap is None:
             return None
         if cap.health_status == HealthStatus.UNHEALTHY:
@@ -96,21 +129,26 @@ class CapabilityRegistry:
             return None
         return cap
 
+    @log_errors(log_level="ERROR", raise_exception=False)
     async def list_all(self) -> list[CapabilityInfo]:
+        """Return all registered capabilities."""
         names = await self._r.smembers(_CAP_INDEX)
-        caps = []
-        for n in names:
-            name = n.decode() if isinstance(n, bytes) else n
-            cap = await self.get(name)
+        caps: list[CapabilityInfo] = []
+        for raw_name in names:
+            name = raw_name.decode() if isinstance(raw_name, bytes) else raw_name
+            cap = await self.get_capability(name)
             if cap:
                 caps.append(cap)
         return caps
 
+    @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def unregister(self, name: str) -> None:
-        await self._r.delete(_CAP_KEY.format(name=name))
+        """Remove a capability from registry."""
+        await self.delete(_GLOBAL_TENANT, name)
         await self._r.delete(_HEALTH_KEY.format(name=name))
         await self._r.srem(_CAP_INDEX, name)
 
+    @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def update_health(
         self,
         name: str,
@@ -121,7 +159,7 @@ class CapabilityRegistry:
     ) -> HealthStatus:
         """Update health FSM for *name* given a check result."""
         hkey = _HEALTH_KEY.format(name=name)
-        capkey = _CAP_KEY.format(name=name)
+        capkey = self._make_key(_GLOBAL_TENANT, name)
         result = await self._r.eval(
             _LUA_UPDATE_HEALTH,
             2, hkey, capkey,
@@ -131,7 +169,7 @@ class CapabilityRegistry:
         )
         status_str = result.decode() if isinstance(result, bytes) else str(result)
         status = HealthStatus(status_str)
-        if status == HealthStatus.UNHEALTHY and success is False:
+        if status == HealthStatus.UNHEALTHY and not success:
             logger.warning("CapabilityRegistry: %s → UNHEALTHY", name)
         elif status == HealthStatus.HEALTHY and success:
             logger.info("CapabilityRegistry: %s recovered → HEALTHY", name)

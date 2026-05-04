@@ -6,6 +6,8 @@ Manages cluster machine nodes in Redis:
 - Greedy GPU node selection
 - Dead-node detection via heartbeat sorted set
 - Lease management
+
+Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
@@ -14,22 +16,27 @@ import logging
 import time
 from typing import Any
 
+from src.platform.base_registry import BaseRedisRegistry
+from src.common.error_handling import log_errors, ExternalServiceError
+
 logger = logging.getLogger(__name__)
 
-# Redis key helpers
-_NODE_KEY = "node:{node_id}"                      # node JSON hash
-_HEARTBEAT_ZSET = "nodes:heartbeat"               # zset score=timestamp
-_LEASE_KEY = "node_lease:{node_id}"               # lease TTL key
-_NODE_INDEX_KEY = "nodes:all"                     # set of all node_ids
+_HEARTBEAT_ZSET = "nodes:heartbeat"      # zset score=timestamp
+_LEASE_KEY = "node_lease:{node_id}"      # lease TTL key
+_NODE_INDEX_KEY = "nodes:all"            # set of all node_ids
+
+# Sentinel tenant for global nodes
+_GLOBAL_TENANT = "_global_"
 
 
-class NodeRegistry:
+class NodeRegistry(BaseRedisRegistry):
     """Redis-backed registry for cluster machine nodes.
 
-    All state is persisted in Redis.  Provides:
-    - ``register`` / ``heartbeat`` / ``get`` / ``list_all``
+    Inherits BaseRedisRegistry for unified CRUD interface.
+    Provides:
+    - ``register`` / ``heartbeat`` / ``get_node`` / ``list_all``
     - ``select_nodes`` — greedy GPU selection
-    - ``reserve_node`` — Lua CAS IDLE→RESERVED
+    - ``reserve_node`` — Lua CAS IDLE → RESERVED
     - ``mark_joined`` / ``mark_released`` / ``mark_draining`` / ``mark_offline``
     - ``detect_dead_nodes`` — heartbeat timeout scan
     """
@@ -57,16 +64,20 @@ return 'ok'
 """
 
     def __init__(self, redis_client: Any, *, lease_ttl_ms: int = 30_000) -> None:
-        self._r = redis_client
+        super().__init__(
+            redis_client=redis_client,
+            key_prefix="node",
+            ttl_seconds=0,      # nodes don't expire; use heartbeat detection
+        )
         self._lease_ttl_ms = lease_ttl_ms
 
     # ------------------------------------------------------------------
     # Registration & heartbeat
     # ------------------------------------------------------------------
 
+    @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def register(self, node_info: Any) -> None:
         """Register or update a node (NodeInfo Pydantic model or dict)."""
-        from src.models.node import NodeInfo as NodeInfoModel  # lazy import
         if hasattr(node_info, "model_dump"):
             data = node_info.model_dump()
         else:
@@ -76,45 +87,61 @@ return 'ok'
         data.setdefault("registered_at", now)
         data["last_heartbeat"] = now
 
-        key = _NODE_KEY.format(node_id=node_id)
-        await self._r.set(key, json.dumps(data))
+        await self.set(_GLOBAL_TENANT, node_id, data)
         await self._r.sadd(_NODE_INDEX_KEY, node_id)
         await self._r.zadd(_HEARTBEAT_ZSET, {node_id: now})
         logger.debug("NodeRegistry.register node_id=%s", node_id)
 
-    async def heartbeat(self, node_id: str, resources: dict[str, Any] | None = None) -> None:
+    @log_errors(log_level="WARNING", raise_exception=False)
+    async def heartbeat(
+        self, node_id: str, resources: dict[str, Any] | None = None
+    ) -> None:
         """Update heartbeat timestamp; optionally refresh resource data."""
         now = time.time()
-        key = _NODE_KEY.format(node_id=node_id)
-        raw = await self._r.get(key)
-        if raw is None:
+        data = await self.get(_GLOBAL_TENANT, node_id)
+        if data is None:
             return
-        data = json.loads(raw)
         data["last_heartbeat"] = now
         if resources:
             data["resources"] = resources
-        await self._r.set(key, json.dumps(data))
+        await self.set(_GLOBAL_TENANT, node_id, data)
         await self._r.zadd(_HEARTBEAT_ZSET, {node_id: now})
 
-    async def get(self, node_id: str) -> Any | None:
-        """Return NodeInfo for *node_id*, or None if not found."""
+    @log_errors(log_level="WARNING", raise_exception=False)
+    async def get_node(self, node_id: str) -> Any | None:
+        """Return NodeInfo for *node_id*, or None."""
         from src.models.node import NodeInfo  # lazy import
-        key = _NODE_KEY.format(node_id=node_id)
-        raw = await self._r.get(key)
-        if raw is None:
+        data = await super().get(_GLOBAL_TENANT, node_id)
+        if data is None:
             return None
-        return NodeInfo.model_validate(json.loads(raw))
+        return NodeInfo.model_validate(data)
 
+    # Backward-compatible single-arg get
+    async def get(self, nid_or_tenant: str, item_id: str | None = None) -> Any | None:  # type: ignore[override]
+        """Get node by ID. Supports both get(node_id) and get(tenant, id) forms."""
+        if item_id is None:
+            return await self.get_node(nid_or_tenant)
+        data = await super().get(nid_or_tenant, item_id)
+        if data is None:
+            return None
+        from src.models.node import NodeInfo
+        try:
+            return NodeInfo.model_validate(data)
+        except Exception:
+            return data
+
+    @log_errors(log_level="ERROR", raise_exception=False)
     async def list_all(self) -> list[Any]:
         """Return all registered nodes."""
         from src.models.node import NodeInfo  # lazy import
         node_ids = await self._r.smembers(_NODE_INDEX_KEY)
-        nodes = []
-        for nid in node_ids:
-            raw = await self._r.get(_NODE_KEY.format(node_id=nid))
-            if raw:
+        nodes: list[Any] = []
+        for raw_nid in node_ids:
+            nid = raw_nid.decode() if isinstance(raw_nid, bytes) else raw_nid
+            data = await self.get(_GLOBAL_TENANT, nid)
+            if data:
                 try:
-                    nodes.append(NodeInfo.model_validate(json.loads(raw)))
+                    nodes.append(NodeInfo.model_validate(data))
                 except Exception:
                     pass
         return nodes
@@ -123,6 +150,7 @@ return 'ok'
     # Node selection (greedy GPU)
     # ------------------------------------------------------------------
 
+    @log_errors(log_level="WARNING", raise_exception=False)
     async def select_nodes(self, required_gpus: int) -> list[Any]:
         """Greedily select IDLE nodes with enough GPU to satisfy *required_gpus*.
 
@@ -148,9 +176,10 @@ return 'ok'
     # State transitions
     # ------------------------------------------------------------------
 
+    @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def reserve_node(self, node_id: str, cluster_id: str) -> bool:
-        """Atomically transition node IDLE → RESERVED.  Returns True on success."""
-        key = _NODE_KEY.format(node_id=node_id)
+        """Atomically transition node IDLE → RESERVED. Returns True on success."""
+        key = self._make_key(_GLOBAL_TENANT, node_id)
         lease_key = _LEASE_KEY.format(node_id=node_id)
         result = await self._r.eval(
             self._LUA_RESERVE,
@@ -158,7 +187,7 @@ return 'ok'
             key, lease_key,
             cluster_id, str(self._lease_ttl_ms), str(time.time()),
         )
-        if result == b"ok" or result == "ok":
+        if result in (b"ok", "ok"):
             logger.debug("NodeRegistry.reserve_node node=%s cluster=%s OK", node_id, cluster_id)
             return True
         logger.warning("NodeRegistry.reserve_node node=%s FAILED result=%s", node_id, result)
@@ -183,6 +212,7 @@ return 'ok'
     # Dead node detection
     # ------------------------------------------------------------------
 
+    @log_errors(log_level="WARNING", raise_exception=False)
     async def detect_dead_nodes(self, timeout_seconds: float = 60.0) -> list[str]:
         """Return node_ids whose heartbeat is older than *timeout_seconds*.
 
@@ -190,7 +220,10 @@ return 'ok'
         """
         cutoff = time.time() - timeout_seconds
         dead_ids_raw = await self._r.zrangebyscore(_HEARTBEAT_ZSET, "-inf", cutoff)
-        dead_ids = [n.decode() if isinstance(n, bytes) else n for n in dead_ids_raw]
+        dead_ids = [
+            n.decode() if isinstance(n, bytes) else n
+            for n in dead_ids_raw
+        ]
         for node_id in dead_ids:
             await self.mark_offline(node_id)
             logger.warning("NodeRegistry: node %s timed out (dead)", node_id)
@@ -201,11 +234,9 @@ return 'ok'
     # ------------------------------------------------------------------
 
     async def _update_state(self, node_id: str, state: str, **extra: Any) -> None:
-        key = _NODE_KEY.format(node_id=node_id)
-        raw = await self._r.get(key)
-        if raw is None:
+        data = await self.get(_GLOBAL_TENANT, node_id)
+        if data is None:
             return
-        data = json.loads(raw)
         data["state"] = state
         data.update(extra)
-        await self._r.set(key, json.dumps(data))
+        await self.set(_GLOBAL_TENANT, node_id, data)

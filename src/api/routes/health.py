@@ -6,7 +6,7 @@ import time
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from src.common.error_handling import log_errors
 
@@ -92,8 +92,8 @@ async def readiness_probe() -> Dict[str, Any]:
     }
 
 
-@router.get("/metrics")
-async def metrics_prometheus() -> str:
+@router.get("/metrics", response_class=Response)
+async def metrics_prometheus() -> Response:
     """Prometheus metrics endpoint (text format)."""
     # Simple metrics for now, can be expanded with prometheus_client
     process = psutil.Process()
@@ -116,7 +116,8 @@ async def metrics_prometheus() -> str:
     cpu_times = process.cpu_times()
     metrics.append(f"scheduler_cpu_seconds_total {cpu_times.user + cpu_times.system}")
     
-    return "\n".join(metrics)
+    content = "\n".join(metrics)
+    return Response(content=content, media_type="text/plain")
 
 
 # Health check endpoints for external services

@@ -1,69 +1,74 @@
-# ── Stage 1: builder ──────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+# syntax=docker/dockerfile:1
+# =====================================================================
+# Multi-stage Dockerfile for async-scheduler-framework
+# Stages:
+#   builder  — install Python deps with pip
+#   runtime  — minimal runtime image
+#   dev      — development image with hot-reload
+# =====================================================================
+
+# ---- base -------------------------------------------------------
+FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-WORKDIR /build
-
-# Install build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    default-libmysqlclient-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy package manifests first (better layer caching)
-COPY pyproject.toml setup.py README.md ./
-
-# Copy source packages
-COPY config/ ./config/
-COPY src/     ./src/
-
-# Install into a prefix for clean copy
-RUN pip install --prefix=/install --no-warn-script-location .
-
-# ── Stage 2: api runtime ──────────────────────────────────────────────────
-FROM python:3.11-slim AS api
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
-
 WORKDIR /app
 
+# ---- builder ----------------------------------------------------
+FROM base AS builder
+
+# Install build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    default-libmysqlclient-dev \
+    gcc \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python deps
+COPY requirements.txt requirements-prod.txt* ./
+RUN pip install --prefix=/install -r requirements.txt \
+    && if [ -f requirements-prod.txt ]; then pip install --prefix=/install -r requirements-prod.txt; fi
+
+# ---- runtime ----------------------------------------------------
+FROM base AS runtime
+
+# Copy installed packages from builder
 COPY --from=builder /install /usr/local
+
+# Copy application source
+COPY src/ ./src/
 COPY config/ ./config/
-COPY src/     ./src/
+COPY alembic.ini* ./
+COPY alembic/ ./alembic/
+
+# Non-root user for security
+RUN addgroup --system --gid 1001 appgroup \
+    && adduser --system --uid 1001 --ingroup appgroup --no-create-home appuser
+
+USER appuser
 
 EXPOSE 8000
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD curl -fs http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')" \
+    || exit 1
 
-# ── Stage 3: task-api runtime ─────────────────────────────────────────────
-FROM api AS task-api
+# Default: main API
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-EXPOSE 8001
-CMD ["uvicorn", "src.main_task_api:app", "--host", "0.0.0.0", "--port", "8001"]
+# ---- dev --------------------------------------------------------
+FROM runtime AS dev
 
-# ── Stage 4: agent runtime ────────────────────────────────────────────────
-FROM api AS agent
+USER root
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ray \
-    && rm -rf /var/lib/apt/lists/* || true
+RUN pip install watchfiles pytest pytest-asyncio httpx
 
-EXPOSE 9100
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD curl -fs http://localhost:9100/health || exit 1
+# Mount source for hot-reload
+VOLUME ["/app/src", "/app/config", "/app/tests"]
 
-CMD ["uvicorn", "src.agent.server:app", "--host", "0.0.0.0", "--port", "9100"]
+USER appuser
+
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

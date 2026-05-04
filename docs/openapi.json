@@ -1,0 +1,3087 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ray Async API",
+    "description": "Async task scheduling framework powered by Ray.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/tasks/": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "List tasks",
+        "operationId": "list_tasks_tasks__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TaskStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "task_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Type"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque pagination cursor (task_id)",
+              "title": "Cursor"
+            },
+            "description": "Opaque pagination cursor (task_id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit task",
+        "operationId": "create_task_tasks__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get task detail",
+        "operationId": "get_task_tasks__task_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Cancel task",
+        "operationId": "cancel_task_tasks__task_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCancelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{task_id}/result": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get task result",
+        "operationId": "get_task_result_tasks__task_id__result_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/capabilities/": {
+      "get": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "List all capabilities",
+        "operationId": "list_capabilities_ops_v1_capabilities__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Capabilities Ops V1 Capabilities  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Register capability",
+        "operationId": "register_capability_ops_v1_capabilities__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Register Capability Ops V1 Capabilities  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/capabilities/{capability_id}": {
+      "get": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Get capability detail",
+        "operationId": "get_capability_ops_v1_capabilities__capability_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Capability Ops V1 Capabilities  Capability Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Update capability",
+        "operationId": "update_capability_ops_v1_capabilities__capability_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Capability Ops V1 Capabilities  Capability Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Unregister capability",
+        "operationId": "delete_capability_ops_v1_capabilities__capability_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/capabilities/{capability_id}/health": {
+      "get": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Get capability health",
+        "operationId": "get_capability_health_ops_v1_capabilities__capability_id__health_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Capability Health Ops V1 Capabilities  Capability Id  Health Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/clusters/": {
+      "get": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "List all clusters",
+        "operationId": "list_clusters_ops_v1_clusters__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Clusters Ops V1 Clusters  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Register cluster",
+        "operationId": "register_cluster_ops_v1_clusters__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Register Cluster Ops V1 Clusters  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/clusters/{cluster_id}": {
+      "get": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Get cluster detail",
+        "operationId": "get_cluster_ops_v1_clusters__cluster_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Cluster Ops V1 Clusters  Cluster Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Update cluster",
+        "operationId": "update_cluster_ops_v1_clusters__cluster_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Cluster Ops V1 Clusters  Cluster Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Unregister cluster",
+        "operationId": "delete_cluster_ops_v1_clusters__cluster_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/clusters/{cluster_id}/resources": {
+      "get": {
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Get cluster observed resources",
+        "operationId": "get_cluster_resources_ops_v1_clusters__cluster_id__resources_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Cluster Resources Ops V1 Clusters  Cluster Id  Resources Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/dags/": {
+      "get": {
+        "tags": [
+          "dags"
+        ],
+        "summary": "List registered DAGs",
+        "description": "List DAG IDs via Redis scan (dag_def:{tenant_id}:* keys).",
+        "operationId": "list_dags_ops_v1_dags__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Dags Ops V1 Dags  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "dags"
+        ],
+        "summary": "Register DAG definition",
+        "operationId": "register_dag_ops_v1_dags__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Register Dag Ops V1 Dags  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/dags/{dag_id}": {
+      "get": {
+        "tags": [
+          "dags"
+        ],
+        "summary": "Get DAG definition",
+        "operationId": "get_dag_ops_v1_dags__dag_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dag Id"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Dag Ops V1 Dags  Dag Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "dags"
+        ],
+        "summary": "Update DAG definition",
+        "operationId": "update_dag_ops_v1_dags__dag_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Dag Ops V1 Dags  Dag Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "dags"
+        ],
+        "summary": "Delete DAG definition",
+        "operationId": "delete_dag_ops_v1_dags__dag_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dag Id"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/nodes/": {
+      "get": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "List all nodes",
+        "operationId": "list_nodes_ops_v1_nodes__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cluster_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Cluster Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Nodes Ops V1 Nodes  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/nodes/{node_id}": {
+      "get": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Get node detail",
+        "operationId": "get_node_ops_v1_nodes__node_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Node Ops V1 Nodes  Node Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Unregister node",
+        "operationId": "delete_node_ops_v1_nodes__node_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/nodes/{node_id}/invite": {
+      "post": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Invite node to join cluster",
+        "operationId": "invite_node_ops_v1_nodes__node_id__invite_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Invite Node Ops V1 Nodes  Node Id  Invite Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/nodes/{node_id}/drain": {
+      "post": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Start draining node",
+        "operationId": "drain_node_ops_v1_nodes__node_id__drain_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Drain Node Ops V1 Nodes  Node Id  Drain Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/nodes/{node_id}/release": {
+      "post": {
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Release node from cluster",
+        "operationId": "release_node_ops_v1_nodes__node_id__release_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Release Node Ops V1 Nodes  Node Id  Release Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/health": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Service health check",
+        "description": "Return health of Redis, DB and registered components.",
+        "operationId": "ops_health_ops_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Ops Health Ops V1 Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/stats": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Queue stats across all capabilities",
+        "description": "Return queue depths for all registered capabilities.",
+        "operationId": "ops_stats_ops_v1_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Ops Stats Ops V1 Stats Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ops/v1/reconcile": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Manually trigger task reconciliation",
+        "description": "Trigger one reconcile cycle (all three phases).",
+        "operationId": "trigger_reconcile_ops_v1_reconcile_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Trigger Reconcile Ops V1 Reconcile Post"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ops/v1/callbacks/process": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Process due callback retries",
+        "description": "Drain due entries from the callback retry ZSET.",
+        "operationId": "process_callbacks_ops_v1_callbacks_process_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "batch_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Batch Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Process Callbacks Ops V1 Callbacks Process Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/queue/{capability}/snapshot": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Queue snapshot for one capability",
+        "operationId": "queue_snapshot_ops_v1_queue__capability__snapshot_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Queue Snapshot Ops V1 Queue  Capability  Snapshot Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/queue/{capability}/cleanup-stale": {
+      "post": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Cleanup stale running entries",
+        "operationId": "cleanup_stale_ops_v1_queue__capability__cleanup_stale_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Capability"
+            }
+          },
+          {
+            "name": "max_age_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 300.0,
+              "title": "Max Age Seconds"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cleanup Stale Ops V1 Queue  Capability  Cleanup Stale Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/schedules/": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "List all cron schedules",
+        "operationId": "list_schedules_ops_v1_schedules__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Schedules Ops V1 Schedules  Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Create cron schedule",
+        "operationId": "create_schedule_ops_v1_schedules__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Schedule Ops V1 Schedules  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ops/v1/schedules/{schedule_id}": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Get schedule detail",
+        "operationId": "get_schedule_ops_v1_schedules__schedule_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Schedule Ops V1 Schedules  Schedule Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Update schedule",
+        "operationId": "update_schedule_ops_v1_schedules__schedule_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Schedule Ops V1 Schedules  Schedule Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Delete schedule",
+        "operationId": "delete_schedule_ops_v1_schedules__schedule_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/schedules/{schedule_id}/toggle": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Enable or disable schedule",
+        "operationId": "toggle_schedule_ops_v1_schedules__schedule_id__toggle_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Toggle Schedule Ops V1 Schedules  Schedule Id  Toggle Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/tenants/": {
+      "get": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "List tenants (super-admin only)",
+        "operationId": "list_tenants_ops_v1_tenants__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Tenants Ops V1 Tenants  Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Register tenant (super-admin only)",
+        "operationId": "register_tenant_ops_v1_tenants__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Register Tenant Ops V1 Tenants  Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ops/v1/tenants/{tenant_id}": {
+      "get": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Get tenant detail",
+        "operationId": "get_tenant_ops_v1_tenants__tenant_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Tenant Ops V1 Tenants  Tenant Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Update tenant",
+        "operationId": "update_tenant_ops_v1_tenants__tenant_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Tenant Ops V1 Tenants  Tenant Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Unregister tenant (super-admin only)",
+        "operationId": "delete_tenant_ops_v1_tenants__tenant_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/tenants/{tenant_id}/api-keys": {
+      "post": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Generate API key for tenant",
+        "operationId": "generate_api_key_ops_v1_tenants__tenant_id__api_keys_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Generate Api Key Ops V1 Tenants  Tenant Id  Api Keys Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ops/v1/tenants/{tenant_id}/usage": {
+      "get": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "Get tenant resource usage",
+        "operationId": "get_tenant_usage_ops_v1_tenants__tenant_id__usage_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Tenant Usage Ops V1 Tenants  Tenant Id  Usage Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Overview",
+        "description": "Basic health check.",
+        "operationId": "health_overview_health__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Overview Health  Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/detailed": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Detailed",
+        "description": "Detailed health check with system metrics.",
+        "operationId": "health_detailed_health_detailed_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Detailed Health Detailed Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness Probe",
+        "description": "Readiness probe for Kubernetes/load balancers.",
+        "operationId": "readiness_probe_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Readiness Probe Health Ready Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/metrics": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Metrics Prometheus",
+        "description": "Prometheus metrics endpoint (text format).",
+        "operationId": "metrics_prometheus_health_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/health/redis": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Redis",
+        "description": "Redis health check.",
+        "operationId": "health_redis_health_redis_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Redis Health Redis Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/mysql": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Mysql",
+        "description": "MySQL health check.",
+        "operationId": "health_mysql_health_mysql_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Mysql Health Mysql Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/callbacks/stats": {
+      "get": {
+        "summary": "Callbacks Stats",
+        "operationId": "callbacks_stats_callbacks_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/async-proxy/stats": {
+      "get": {
+        "summary": "Async Proxy Stats",
+        "operationId": "async_proxy_stats_async_proxy_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/quota/stats": {
+      "get": {
+        "summary": "Quota Stats",
+        "operationId": "quota_stats_quota_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/stats": {
+      "get": {
+        "summary": "Resources Stats",
+        "operationId": "resources_stats_resources_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "TaskCancelResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "cancelled": {
+            "type": "boolean",
+            "title": "Cancelled"
+          },
+          "prior_status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "cancelled",
+          "prior_status"
+        ],
+        "title": "TaskCancelResponse",
+        "description": "Task cancellation response."
+      },
+      "TaskCreate": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "default": ""
+          },
+          "task_type": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Type"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority",
+            "default": "normal"
+          },
+          "dispatch_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskDispatchMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input Data"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "callback_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback Url"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "default": 3600
+          },
+          "max_retries": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Max Retries",
+            "default": 3
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled At"
+          },
+          "delay_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delay Seconds"
+          },
+          "cron_expr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron Expr"
+          },
+          "artifact_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Url"
+          },
+          "artifact_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Sha256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_type"
+        ],
+        "title": "TaskCreate",
+        "description": "Request body for task creation."
+      },
+      "TaskCreateResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "default": ""
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "dispatch_mode": {
+            "$ref": "#/components/schemas/TaskDispatchMode",
+            "default": "dag_orchestrated"
+          },
+          "cluster_id": {
+            "type": "string",
+            "title": "Cluster Id",
+            "default": ""
+          },
+          "estimated_wait_seconds": {
+            "type": "integer",
+            "title": "Estimated Wait Seconds",
+            "default": 0
+          },
+          "queue_position": {
+            "type": "integer",
+            "title": "Queue Position",
+            "default": 0
+          },
+          "scheduled_at": {
+            "type": "string",
+            "title": "Scheduled At",
+            "default": ""
+          },
+          "idempotent_reused": {
+            "type": "boolean",
+            "title": "Idempotent Reused",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "status"
+        ],
+        "title": "TaskCreateResponse",
+        "description": "Response body after successful task creation."
+      },
+      "TaskDispatchMode": {
+        "type": "string",
+        "enum": [
+          "dag_orchestrated",
+          "raydata_native"
+        ],
+        "title": "TaskDispatchMode",
+        "description": "Task dispatch mode."
+      },
+      "TaskInfo": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "default": ""
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "default": ""
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type",
+            "default": ""
+          },
+          "dag_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dag Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "pending"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority",
+            "default": "normal"
+          },
+          "dispatch_mode": {
+            "$ref": "#/components/schemas/TaskDispatchMode",
+            "default": "dag_orchestrated"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "current_step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Step"
+          },
+          "input_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input Data"
+          },
+          "output_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Output Data"
+          },
+          "metadata_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata Json"
+          },
+          "callback_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback Url"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "title": "Timeout Seconds",
+            "default": 3600
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "default": 3
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled At"
+          },
+          "cron_expr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cron Expr"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt",
+            "default": 0
+          },
+          "artifact_url": {
+            "type": "string",
+            "title": "Artifact Url",
+            "default": ""
+          },
+          "artifact_sha256": {
+            "type": "string",
+            "title": "Artifact Sha256",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "TaskInfo",
+        "description": "Full task information schema for query responses."
+      },
+      "TaskListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "title": "TaskListResponse",
+        "description": "Cursor-paginated task list response."
+      },
+      "TaskPriority": {
+        "type": "string",
+        "enum": [
+          "very_high",
+          "high",
+          "normal",
+          "low",
+          "tide"
+        ],
+        "title": "TaskPriority",
+        "description": "Task priority — lower weight = higher priority."
+      },
+      "TaskResultResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "output_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Output Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "status"
+        ],
+        "title": "TaskResultResponse",
+        "description": "Response body for task result queries."
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "scheduled",
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "TaskStatus",
+        "description": "Task lifecycle status."
+      },
+      "TaskSummary": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "default": ""
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type",
+            "default": ""
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "default": "pending"
+          },
+          "cluster_id": {
+            "type": "string",
+            "title": "Cluster Id",
+            "default": ""
+          },
+          "dispatch_mode": {
+            "$ref": "#/components/schemas/TaskDispatchMode",
+            "default": "dag_orchestrated"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskSummary",
+        "description": "Task summary schema for list endpoints (omits large fields)."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

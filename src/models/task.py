@@ -104,6 +104,18 @@ class TaskRecord(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    # Composite indexes for common query patterns
+    __table_args__ = (
+        # Hot query: tenant tasks by status (list endpoint)
+        Index("ix_tasks_tenant_status", "tenant_id", "status"),
+        # Hot query: tenant tasks ordered by creation time (pagination)
+        Index("ix_tasks_tenant_created", "tenant_id", "created_at"),
+        # Reconciler: find stuck/running tasks quickly
+        Index("ix_tasks_status_updated", "status", "updated_at"),
+        # Cron: find scheduled tasks due for execution
+        Index("ix_tasks_scheduled_at", "scheduled_at"),
+    )
+
 
 # ---------------------------------------------------------------------------
 # API Transfer Models

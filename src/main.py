@@ -11,8 +11,25 @@ from src.common.error_handling import (
     handle_business_error,
     handle_external_service_error,
 )
+from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
 
-app = FastAPI(title="Ray Async API", version="0.1.0")
+# Initialise tracing before creating app
+setup_tracing(
+    service_name="scheduler-api",
+    service_version="1.0.0",
+)
+
+app = FastAPI(
+    title="Ray Async API",
+    version="1.0.0",
+    description="Async task scheduling framework powered by Ray.",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
+
+# Instrument FastAPI for automatic request tracing
+instrument_fastapi(app)
 
 # Register exception handlers
 app.add_exception_handler(SystemError, handle_system_error)
@@ -83,12 +100,12 @@ async def init_services() -> None:
     from src.common.redis_client import create_redis_client
     from src.common.async_db import init_async_engine, get_async_db
     from src.common.lifecycle import get_lifecycle_manager, TaskReconcilerResource, CronSchedulerResource
-    from config.settings import settings
+    from config.settings_compat import settings
 
     redis_client = create_redis_client(settings.redis.url or None)
     # DB engine (optional)
-    if settings.infra.mysql.url:
-        init_async_engine(settings.infra.mysql.url)
+    if settings.mysql.url:
+        init_async_engine(settings.mysql.url)
 
     services.capability_registry = CapabilityRegistry(redis_client)
     services.cluster_registry = ClusterRegistry(redis_client)
@@ -104,7 +121,7 @@ async def init_services() -> None:
     )
     services.task_reconciler = TaskReconciler(
         redis_client=redis_client,
-        db_session_factory=get_async_db if settings.infra.mysql.url else None,
+        db_session_factory=get_async_db if settings.mysql.url else None,
         queue_manager=services.queue_manager,
         interval_seconds=settings.background.reconcile.interval_seconds,
         stuck_max_per_tick=settings.background.reconcile.stuck_max_per_tick,
@@ -144,6 +161,15 @@ async def startup_event() -> None:
     
     # Start all registered resources
     await manager.start_all()
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    # Stop all background resources gracefully
+    manager = get_lifecycle_manager()
+    await manager.stop_all()
+    # Flush OpenTelemetry spans
+    shutdown_tracing()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

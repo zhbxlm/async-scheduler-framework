@@ -1,116 +1,208 @@
-version: '3.9'
+# docker-compose.yml — async-scheduler-framework
+# Usage:
+#   docker compose up                    # start all services
+#   docker compose up api task-api       # start specific services
+#   docker compose --profile dev up      # start with dev tools (Jaeger, etc.)
+#   docker compose run --rm test         # run test suite
 
-# ── 公共环境变量 ──────────────────────────────────────────────────────────
-x-env: &env
-  # MySQL (port 3307 on host, 3306 inside container)
-  MYSQL_HOST: mysql
-  MYSQL_PORT: "3306"
-  MYSQL_USER: ray_async
-  MYSQL_PASSWORD: ray_async
-  MYSQL_DATABASE: ray_async
+version: "3.9"
 
-  # Redis
-  REDIS_HOST: redis
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
+# ---- Shared environment ----------------------------------------
+x-common-env: &common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+  MYSQL_URL: mysql+aiomysql://${MYSQL_USER:-scheduler}:${MYSQL_PASSWORD:-scheduler}@mysql:3306/${MYSQL_DB:-scheduler}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  DEBUG: ${DEBUG:-false}
+  # OpenTelemetry
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+  OTEL_SERVICE_NAME: async-scheduler
 
-  # API
-  API_HOST: "0.0.0.0"
-  API_PORT: "8000"
-  RAY_ASYNC_API_KEY: dev-secret-key
-
-  # Misc
-  LOG_LEVEL: INFO
-  PYTHONUNBUFFERED: "1"
-  PYTHONPATH: /app
-
-x-app: &app
+x-api-common: &api-common
   build:
     context: .
     dockerfile: Dockerfile
-    target: api
-  image: ray-async:latest
-  restart: unless-stopped
-  environment:
-    <<: *env
+    target: runtime
+  environment: *common-env
   depends_on:
+    redis:
+      condition: service_healthy
     mysql:
       condition: service_healthy
-    redis:
-      condition: service_started
+  restart: unless-stopped
+  networks:
+    - scheduler-net
 
-# ── Services ──────────────────────────────────────────────────────────────
+# ---- Services --------------------------------------------------
 services:
 
-  # ── Infrastructure ──
+  # Main API (scheduling, registry, etc.)
+  api:
+    <<: *api-common
+    container_name: scheduler-api
+    command: ["python", "-m", "uvicorn", "src.main:app",
+              "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      <<: *common-env
+      BACKGROUND__RECONCILE__ENABLED: "true"
+      BACKGROUND__CRON__ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.scheduler-api.rule=Host(`scheduler.example.com`)"
+
+  # Task API (lightweight: only task CRUD)
+  task-api:
+    <<: *api-common
+    container_name: scheduler-task-api
+    command: ["python", "-m", "uvicorn", "src.main_task_api:app",
+              "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
+    ports:
+      - "${TASK_API_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ---- Infrastructure ----------------------------------------
+
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    container_name: scheduler-redis
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-}
+      --maxmemory ${REDIS_MAXMEM:-2gb}
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --appendonly yes
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scheduler-net
 
   mysql:
     image: mysql:8.0
-    restart: unless-stopped
+    container_name: scheduler-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: ray_async
-      MYSQL_USER: ray_async
-      MYSQL_PASSWORD: ray_async
-    command:
-      - mysqld
-      - --default-authentication-plugin=mysql_native_password
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DB:-scheduler}
+      MYSQL_USER: ${MYSQL_USER:-scheduler}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-scheduler}
     ports:
-      - "3307:3306"      # expose as 3307 on host (matches dev MySQL port)
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --max_connections=200
+      --innodb_buffer_pool_size=512M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${MYSQL_USER:-scheduler}",
+             "-p${MYSQL_PASSWORD:-scheduler}"]
       interval: 10s
       timeout: 5s
-      retries: 20
+      retries: 10
       start_period: 30s
+    restart: unless-stopped
+    networks:
+      - scheduler-net
 
-  # ── Application services ──
-  api:
-    <<: *app
+  # ---- Observability (dev profile) ----------------------------
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    container_name: scheduler-jaeger
+    profiles: ["dev", "observability"]
+    ports:
+      - "16686:16686"    # Jaeger UI
+      - "4317:4317"      # OTLP gRPC
+      - "4318:4318"      # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - scheduler-net
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: scheduler-prometheus
+    profiles: ["dev", "observability"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./scripts/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      - scheduler-net
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: scheduler-grafana
+    profiles: ["dev", "observability"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./scripts/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - scheduler-net
+
+  # ---- Test runner --------------------------------------------
+
+  test:
     build:
       context: .
       dockerfile: Dockerfile
-      target: api
+      target: dev
+    container_name: scheduler-test
+    profiles: ["test"]
+    command: ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
     environment:
-      <<: *env
-      SERVICE_NAME: ray-async-api
-    ports:
-      - "8000:8000"
-    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+      <<: *common-env
+      REDIS_URL: redis://redis:6379/15    # use DB 15 for tests
+      MYSQL_URL: ""                        # tests use in-memory SQLite
+      ENVIRONMENT: testing
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+    networks:
+      - scheduler-net
 
-  agent:
-    <<: *app
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: agent
-    environment:
-      <<: *env
-      SERVICE_NAME: ray-async-agent
-      AGENT_HOST: "0.0.0.0"
-      AGENT_PORT: "9100"
-      AGENT_NODE_ID: "local-node-01"
-    ports:
-      - "9100:9100"
-
-# ── Volumes ───────────────────────────────────────────────────────────────
+# ---- Volumes & Networks ----------------------------------------
 volumes:
-  redis_data:
-  mysql_data:
+  redis-data:
+  mysql-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  scheduler-net:
+    driver: bridge
