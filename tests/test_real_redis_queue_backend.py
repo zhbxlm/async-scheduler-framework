@@ -8,7 +8,7 @@ pytestmark = pytest.mark.redis_required
 
 
 from async_scheduler.backends.redis import RedisQueueBackend
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 
 
 class FakeAsyncRedis:
@@ -211,7 +211,7 @@ class FakeAsyncRedis:
         return 0
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -226,7 +226,7 @@ async def test_real_redis_queue_backend_enqueue_and_dequeue() -> None:
     client = FakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    task = make_task("task-1", TaskPriority.HIGH)
+    task = make_task("task-1", -1)
     await backend.enqueue(task)
     popped = await backend.dequeue()
 

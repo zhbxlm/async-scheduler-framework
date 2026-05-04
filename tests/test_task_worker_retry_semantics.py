@@ -59,6 +59,6 @@ class TestTaskWorkerRetrySemantics:
 
         assert stored_task is not None
         assert stored_task.status == TaskStatus.FAILED
-        assert stored_task.error_message == "boom-21"
+        assert stored_task.error == "boom-21"
         assert stored_task.retry_count == 1
         assert await queue_manager.dequeue(timeout=0.01) is None

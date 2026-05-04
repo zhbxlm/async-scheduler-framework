@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
@@ -36,12 +37,20 @@ GLOBAL_CHANNEL = "task:events:global"
 class TaskEvent:
     """Event emitted when a task changes state."""
     task_id: str
-    status: str  # "success" | "failed" | "cancelled" | "timeout"
+    status: str  # "running" | "success" | "failed" | "cancelled" | "timeout"
     result: dict[str, Any] | None = None
     error: str | None = None
     worker_id: str | None = None
     timestamp: float = field(default_factory=time.time)
     attempt_id: str | None = None
+    task_name: str | None = None
+    tenant_id: str | None = None
+    callback_url: str | None = None
+    completed_at: float | None = None
+    completion_kind: str | None = None
+    callback_delivery: str | None = None
+    callback_retry_queue_size: int = 0
+    callback_dead_letter_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +61,14 @@ class TaskEvent:
             "worker_id": self.worker_id,
             "timestamp": self.timestamp,
             "attempt_id": self.attempt_id,
+            "task_name": self.task_name,
+            "tenant_id": self.tenant_id,
+            "callback_url": self.callback_url,
+            "completed_at": self.completed_at,
+            "completion_kind": self.completion_kind,
+            "callback_delivery": self.callback_delivery,
+            "callback_retry_queue_size": self.callback_retry_queue_size,
+            "callback_dead_letter_size": self.callback_dead_letter_size,
         }
 
     @classmethod
@@ -97,6 +114,13 @@ class AsyncProxySidecar:
         self._subscribers: list[Callable[[TaskEvent], Awaitable[None]]] = []
         self._running = False
         self._pubsub_task: asyncio.Task | None = None
+        self._published_total = 0
+        self._wait_requests_total = 0
+        self._wait_timeouts_total = 0
+        self._subscriber_errors_total = 0
+        self._redis_publish_failures_total = 0
+        self._status_counts: dict[str, int] = {}
+        self._recent_events: deque[dict[str, Any]] = deque(maxlen=20)
 
     async def start(self) -> None:
         """Start the sidecar. Launches Redis Pub/Sub listener if Redis is available."""
@@ -125,6 +149,22 @@ class AsyncProxySidecar:
         """
         payload = event.serialize()
         channel = f"{CHANNEL_PREFIX}:{event.task_id}"
+        self._published_total += 1
+        self._status_counts[event.status] = self._status_counts.get(event.status, 0) + 1
+        self._recent_events.append({
+            "task_id": event.task_id,
+            "status": event.status,
+            "worker_id": event.worker_id,
+            "timestamp": event.timestamp,
+            "attempt_id": event.attempt_id,
+            "task_name": event.task_name,
+            "tenant_id": event.tenant_id,
+            "callback_url": event.callback_url,
+            "completed_at": event.completed_at,
+            "completion_kind": event.completion_kind,
+            "callback_delivery": event.callback_delivery,
+            "error": event.error,
+        })
 
         # Always update in-process state for local waiters
         self._in_process_results[event.task_id] = event
@@ -137,6 +177,7 @@ class AsyncProxySidecar:
             try:
                 await subscriber(event)
             except Exception as e:
+                self._subscriber_errors_total += 1
                 logger.warning("AsyncProxySidecar subscriber error: %s", e)
 
         if self._redis is not None:
@@ -147,6 +188,7 @@ class AsyncProxySidecar:
                 cache_key = f"{CHANNEL_PREFIX}:cache:{event.task_id}"
                 await self._redis.setex(cache_key, int(self._event_ttl), payload)
             except Exception as e:
+                self._redis_publish_failures_total += 1
                 logger.warning("AsyncProxySidecar Redis publish failed: %s", e)
 
         logger.debug("AsyncProxySidecar published task_id=%s status=%s", event.task_id, event.status)
@@ -157,6 +199,8 @@ class AsyncProxySidecar:
         Checks cache first, then waits for real-time notification.
         Returns None on timeout.
         """
+        self._wait_requests_total += 1
+
         # Check in-process cache first
         if task_id in self._in_process_results:
             return self._in_process_results[task_id]
@@ -180,6 +224,7 @@ class AsyncProxySidecar:
             await asyncio.wait_for(local_event.wait(), timeout=timeout)
             return self._in_process_results.get(task_id)
         except asyncio.TimeoutError:
+            self._wait_timeouts_total += 1
             return None
         finally:
             self._in_process_events.pop(task_id, None)
@@ -224,10 +269,31 @@ class AsyncProxySidecar:
             logger.error("AsyncProxySidecar pubsub_loop error: %s", e, exc_info=True)
 
     def get_stats(self) -> dict[str, Any]:
+        status_counts = dict(self._status_counts)
+        terminal_statuses = {"success", "failed", "cancelled", "timeout"}
+        callback_statuses = {"callback_requeued", "callback_dead_letter"}
+        event_summary = {
+            "published_total": self._published_total,
+            "running_total": status_counts.get("running", 0),
+            "terminal_total": sum(status_counts.get(s, 0) for s in terminal_statuses),
+            "callback_event_total": sum(status_counts.get(s, 0) for s in callback_statuses),
+            "wait_requests_total": self._wait_requests_total,
+            "wait_timeouts_total": self._wait_timeouts_total,
+            "subscriber_errors_total": self._subscriber_errors_total,
+            "redis_publish_failures_total": self._redis_publish_failures_total,
+        }
         return {
             "running": self._running,
             "redis_connected": self._redis is not None,
             "cached_events": len(self._in_process_results),
             "active_waiters": len(self._in_process_events),
             "subscriber_count": len(self._subscribers),
+            "published_total": self._published_total,
+            "wait_requests_total": self._wait_requests_total,
+            "wait_timeouts_total": self._wait_timeouts_total,
+            "subscriber_errors_total": self._subscriber_errors_total,
+            "redis_publish_failures_total": self._redis_publish_failures_total,
+            "status_counts": status_counts,
+            "event_summary": event_summary,
+            "recent_events": list(self._recent_events),
         }

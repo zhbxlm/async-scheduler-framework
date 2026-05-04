@@ -146,6 +146,11 @@ class ResourceManager:
         pending = stats.pending
         running = stats.running
 
+        # Cache stats for workload summary
+        if not hasattr(self, "_capability_stats"):
+            self._capability_stats = {}
+        self._capability_stats[capability] = stats
+
         # Determine current actor count
         current_actors = 1
         if self._actor_pool is not None:
@@ -216,9 +221,42 @@ class ResourceManager:
         return [e.to_dict() for e in self._scale_history[-limit:]]
 
     def get_stats(self) -> dict[str, Any]:
+        direction_counts = {ScaleDirection.UP: 0, ScaleDirection.DOWN: 0, ScaleDirection.NONE: 0}
+        capability_counts: dict[str, int] = {}
+        for event in self._scale_history:
+            direction_counts[event.direction] = direction_counts.get(event.direction, 0) + 1
+            capability_counts[event.capability] = capability_counts.get(event.capability, 0) + 1
+
+        # 计算 workload summary（队列深度 + running 数量）
+        workload_summary = {
+            "pending": 0,
+            "running": 0,
+            "scheduled": 0,
+            "capabilities": {},
+        }
+        # 在异步上下文中需要 _capability_stats 缓存
+        for cap, stats in getattr(self, "_capability_stats", {}).items():
+            workload_summary["pending"] += stats.pending
+            workload_summary["running"] += stats.running
+            # 兼容没有 scheduled 字段的旧版 Stats 结构
+            scheduled = getattr(stats, "scheduled", 0)
+            workload_summary["scheduled"] += scheduled
+            workload_summary["capabilities"][cap] = {
+                "pending": stats.pending,
+                "running": stats.running,
+                "scheduled": scheduled,
+            }
+
         return {
             "running": self._running,
             "tracked_capabilities": list(self._policies.keys()),
             "scale_events_total": len(self._scale_history),
             "recent_events": self.get_scale_history(10),
+            "workload_summary": workload_summary,
+            "summary": {
+                "scale_events_total": len(self._scale_history),
+                "direction_counts": direction_counts,
+                "capability_counts": capability_counts,
+                "tracked_capability_count": len(self._policies),
+            },
         }

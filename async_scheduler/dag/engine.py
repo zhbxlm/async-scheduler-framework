@@ -80,8 +80,8 @@ class DAGEngine:
 
         # Build graph
         for node in dag.nodes:
-            in_degree[node.id] = len(node.dependencies)
-            for dep in node.dependencies:
+            in_degree[node.id] = len(node.depends_on)
+            for dep in node.depends_on:
                 adjacency_list[dep].add(node.id)
 
         # Find nodes with no dependencies
@@ -112,7 +112,7 @@ class DAGEngine:
                 continue  # Already executed or skipped
 
             all_deps_complete = True
-            for dep_id in node.dependencies:
+            for dep_id in node.depends_on:
                 dep_exec = dag.node_executions.get(dep_id, DAGNodeExecution(node_id=dep_id))
                 dep_ok = dep_exec.status == TaskStatus.SUCCESS or dep_exec.skipped
                 if not dep_ok:
@@ -403,7 +403,7 @@ class DAGEngine:
                     if blocked_nodes:
                         for node in blocked_nodes:
                             dep_failed = False
-                            for dep_id in node.dependencies:
+                            for dep_id in node.depends_on:
                                 dep_exec = dag.node_executions.get(dep_id)
                                 if dep_exec and dep_exec.status in (
                                     TaskStatus.FAILED,

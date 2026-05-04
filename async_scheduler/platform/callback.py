@@ -95,6 +95,7 @@ class CallbackDispatcher:
         redis_client: Any = None,
         request_timeout_seconds: float = 10.0,
         idempotency_header: str = "Idempotency-Key",
+        async_proxy_sidecar: Any = None,
         # Legacy compat
         max_attempts: int | None = None,
         retry_delay_seconds: float | None = None,
@@ -107,6 +108,7 @@ class CallbackDispatcher:
         self._redis = redis_client
         self._timeout = request_timeout_seconds
         self._idempotency_header = idempotency_header
+        self.async_proxy_sidecar = async_proxy_sidecar
         self._http_client: Any = None
 
     # ------------------------------------------------------------------
@@ -161,6 +163,8 @@ class CallbackDispatcher:
                 next_retry_at=time.time() + self.persistent_base_delay,
             )
             await self._enqueue_retry(event)
+            # Publish sidecar requeued event
+            await self._publish_requeued_event(event)
         return False
 
     async def mark_done(self, task_id: str) -> None:
@@ -248,6 +252,8 @@ class CallbackDispatcher:
                 )
                 event.next_retry_at = time.time() + delay
                 await self._enqueue_retry(event)
+                # Publish requeued event
+                await self._publish_requeued_event(event)
                 logger.info(
                     "callback L2 requeued task_id=%s attempt=%s next_in=%.0fs",
                     event.task_id,
@@ -307,9 +313,127 @@ class CallbackDispatcher:
     async def _move_to_dlq(self, event: CallbackEvent) -> None:
         key = f"{_DLQ_KEY_PREFIX}{event.event_id}"
         await self._redis.set(key, event.to_json(), ex=_DLQ_TTL)
+        # Publish dead-letter event
+        await self._publish_dead_letter_event(event)
+
+    async def get_stats(self) -> dict[str, Any]:
+        retry_queue_size = 0
+        dead_letter_size = 0
+        recent_retry_events: list[dict[str, Any]] = []
+        recent_dead_letters: list[dict[str, Any]] = []
+        if self._redis is not None:
+            try:
+                retry_raw = await self._redis.zrangebyscore(_RETRY_QUEUE_KEY, "-inf", "+inf")
+                retry_queue_size = len(retry_raw)
+                for raw in retry_raw[-5:]:
+                    try:
+                        evt = CallbackEvent.from_json(raw)
+                        recent_retry_events.append({
+                            "task_id": evt.task_id,
+                            "attempt": evt.attempt,
+                            "next_retry_at": evt.next_retry_at,
+                            "callback_url": evt.callback_url,
+                        })
+                    except Exception:
+                        continue
+            except Exception:
+                retry_queue_size = 0
+            try:
+                dlq_keys = await self._redis.keys(f"{_DLQ_KEY_PREFIX}*")
+                dead_letter_size = len(dlq_keys)
+                for key in dlq_keys[-5:]:
+                    try:
+                        raw = await self._redis.get(key)
+                        if not raw:
+                            continue
+                        evt = CallbackEvent.from_json(raw)
+                        recent_dead_letters.append({
+                            "task_id": evt.task_id,
+                            "attempt": evt.attempt,
+                            "callback_url": evt.callback_url,
+                            "event_id": evt.event_id,
+                        })
+                    except Exception:
+                        continue
+            except Exception:
+                dead_letter_size = 0
+
+        return {
+            "redis_backed": self._redis is not None,
+            "retry_queue_size": retry_queue_size,
+            "dead_letter_size": dead_letter_size,
+            "max_inline_attempts": self.max_inline_attempts,
+            "max_persistent_attempts": self.max_persistent_attempts,
+            "recent_retry_events": recent_retry_events,
+            "recent_dead_letters": recent_dead_letters,
+        }
 
     async def close(self) -> None:
         """Close the HTTP client if open."""
         if self._http_client is not None and _HTTPX_AVAILABLE:
             await self._http_client.aclose()
             self._http_client = None
+
+    async def _publish_requeued_event(self, event: CallbackEvent) -> None:
+        if self.async_proxy_sidecar is None:
+            return
+        try:
+            from async_scheduler.platform.async_proxy import TaskEvent
+            await self.async_proxy_sidecar.publish(
+                TaskEvent(
+                    task_id=event.task_id,
+                    status="callback_requeued",
+                    callback_url=event.callback_url,
+                    result={
+                        "event_id": event.event_id,
+                        "attempt": event.attempt,
+                        "next_retry_at": event.next_retry_at,
+                        "retry_queue_size": await self._get_retry_queue_size(),
+                    },
+                    timestamp=time.time(),
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish requeued event for task %s", event.task_id)
+
+    async def _publish_dead_letter_event(self, event: CallbackEvent) -> None:
+        if self.async_proxy_sidecar is None:
+            return
+        try:
+            from async_scheduler.platform.async_proxy import TaskEvent
+            dlq_size = await self._get_dead_letter_size()
+            await self.async_proxy_sidecar.publish(
+                TaskEvent(
+                    task_id=event.task_id,
+                    status="callback_dead_letter",
+                    callback_url=event.callback_url,
+                    result={
+                        "event_id": event.event_id,
+                        "attempt": event.attempt,
+                        "max_attempts": self.max_persistent_attempts,
+                        "dead_letter_size": dlq_size,
+                    },
+                    timestamp=time.time(),
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish dead-letter event for task %s", event.task_id)
+
+    async def _get_retry_queue_size(self) -> int:
+        if self._redis is None:
+            return 0
+        try:
+            return await self._redis.zcard(_RETRY_QUEUE_KEY)
+        except Exception:
+            return 0
+
+    async def _get_dead_letter_size(self) -> int:
+        if self._redis is None:
+            return 0
+        try:
+            # Count keys matching the DLQ pattern
+            pattern = f"{_DLQ_KEY_PREFIX}*"
+            keys = await self._redis.keys(pattern)
+            return len(keys)
+        except Exception:
+            return 0

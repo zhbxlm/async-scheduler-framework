@@ -154,6 +154,11 @@ class FullFakeAsyncRedis:
             return 1
         return 0
 
+    async def pexpire(self, key: str, milliseconds: int) -> int:
+        """Set TTL in milliseconds (stored as seconds for in-memory simplicity)."""
+        seconds = max(1, milliseconds // 1000)
+        return await self.expire(key, seconds)
+
     async def pttl(self, key: str) -> int:
         if key not in self._strings and key not in self.hashes:
             return -2

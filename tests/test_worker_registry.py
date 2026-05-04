@@ -1,3 +1,5 @@
+"""Tests for WorkerRegistry with dual-key architecture (hash + liveness key)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,13 +14,13 @@ class TestWorkerRegistry:
     async def test_worker_registers_and_heartbeats(self) -> None:
         registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=1.0)
 
-        worker = WorkerInfo(worker_id="worker-1", name="primary", capabilities=["default"])
+        worker = WorkerInfo(worker_id="worker-1", name="primary")
         await registry.register(worker)
 
         workers = await registry.list_workers()
         assert len(workers) == 1
         assert workers[0].worker_id == "worker-1"
-        assert workers[0].is_live is True
+        assert workers[0].is_stale is False
 
         await asyncio.sleep(0.05)
         await registry.heartbeat("worker-1")
@@ -26,28 +28,34 @@ class TestWorkerRegistry:
         workers = await registry.list_workers()
         assert len(workers) == 1
         assert workers[0].worker_id == "worker-1"
-        assert workers[0].is_live is True
+        assert workers[0].is_stale is False
 
     async def test_stale_worker_becomes_not_live_after_ttl(self) -> None:
+        """After TTL expiry the worker hash persists but is_live → False."""
         registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=0.1)
 
         worker = WorkerInfo(worker_id="worker-stale", name="stale")
         await registry.register(worker)
 
         assert await registry.is_live("worker-stale") is True
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.20)
         assert await registry.is_live("worker-stale") is False
 
+        # Hash still present → include_stale=True must return it
         workers = await registry.list_workers(include_stale=True)
         assert len(workers) == 1
         assert workers[0].worker_id == "worker-stale"
-        assert workers[0].is_live is False
+        assert workers[0].is_stale is True
+
+        # include_stale=False must exclude it
+        live_workers = await registry.list_workers(include_stale=False)
+        assert live_workers == []
 
     async def test_multiple_workers_appear_independently(self) -> None:
         registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=1.0)
 
-        await registry.register(WorkerInfo(worker_id="worker-a", name="alpha", capabilities=["echo"]))
-        await registry.register(WorkerInfo(worker_id="worker-b", name="beta", capabilities=["compute"]))
+        await registry.register(WorkerInfo(worker_id="worker-a", name="alpha"))
+        await registry.register(WorkerInfo(worker_id="worker-b", name="beta"))
 
         workers = await registry.list_workers()
         worker_ids = {worker.worker_id for worker in workers}
@@ -63,7 +71,8 @@ class TestWorkerRegistry:
         removed = await registry.deregister("worker-x")
         assert removed is True
         assert await registry.is_live("worker-x") is False
-        assert await registry.list_workers() == []
+        # Hash also gone → not visible even with include_stale=True
+        assert await registry.list_workers(include_stale=True) == []
 
     async def test_unknown_worker_heartbeat_returns_false(self) -> None:
         registry = WorkerRegistry(redis_url="redis://localhost:6379/0", heartbeat_ttl_seconds=1.0)

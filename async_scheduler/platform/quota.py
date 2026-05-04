@@ -207,14 +207,55 @@ class TenantQuotaManager:
             }
 
     async def stats(self) -> dict[str, dict[str, Any]]:
-        """Return per-tenant usage + limits (all known tenants)."""
+        """Return per-tenant usage + limits (all known tenants).
+
+        Response shape (per tenant)::
+
+            {
+                "task_count": <int>,
+                "running_count": <int>,
+                "gpu_count": <int>,
+                "actor_count": <int>,
+                "max_queued": <int>,
+                "max_running": <int>,
+                "max_gpu": <int>,
+                "max_actor": <int>,
+            }
+        """
         all_keys = set(self._config) | {"default"}
         result: dict[str, dict[str, Any]] = {}
         for k in all_keys:
             usage = await self.get_usage(k)
-            limits = self._limits(k)
-            result[k] = {**usage, **{f"max_{f}": v for f, v in limits.items()}}
+            limits = self._limits(k)  # keys: max_queued, max_running, max_gpu, max_actor
+            result[k] = {**usage, **limits}
         return result
+
+    async def check_and_reserve(self, tenant_id: str | None, resource_type: str) -> None:
+        """Doc-compatible API: check quota and reserve a slot.
+
+        ``resource_type`` is one of ``"queued"`` or ``"running"``.
+        Delegates to :meth:`admit_queue` / :meth:`admit_running`.
+        Raises :class:`QuotaExceededError` when over limit.
+        """
+        if resource_type == "queued":
+            await self.admit_queue(tenant_id)
+        elif resource_type == "running":
+            await self.admit_running(tenant_id)
+        else:
+            raise ValueError(f"Unknown resource_type: {resource_type!r}")
+
+    async def release(self, tenant_id: str | None, resource_type: str) -> None:
+        """Doc-compatible API: release a previously reserved quota slot.
+
+        ``resource_type`` is one of ``"queued"`` or ``"running"``.
+        Delegates to :meth:`release_queue` / :meth:`release_running`.
+        """
+        if resource_type == "queued":
+            await self.release_queue(tenant_id)
+        elif resource_type == "running":
+            await self.release_running(tenant_id)
+        else:
+            raise ValueError(f"Unknown resource_type: {resource_type!r}")
 
     # ------------------------------------------------------------------
     # Internals

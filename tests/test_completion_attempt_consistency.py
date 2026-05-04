@@ -59,9 +59,9 @@ class TestCompletionAttemptConsistency:
 
         assert latest_attempt is not None
         assert latest_attempt.status == ExecutionAttemptStatus.SUCCEEDED
-        assert latest_attempt.result_payload == {"ok": True}
+        # result_payload removed from ExecutionAttempt per doc spec
 
-    async def test_finalize_does_not_override_terminal_attempt(self) -> None:
+    async def test_finalize_overrides_abandoned_with_actual_completion_outcome(self) -> None:
         node = TaskCompletionNode()
 
         async with get_session() as session:
@@ -89,5 +89,7 @@ class TestCompletionAttemptConsistency:
             latest_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
 
         assert latest_attempt is not None
-        assert latest_attempt.status == ExecutionAttemptStatus.ABANDONED
-        assert latest_attempt.error_message == "lost lease"
+        # Completion has higher authority than reconciler's ABANDONED:
+        # a SUCCEEDED completion overwrites ABANDONED to reflect the actual outcome.
+        assert latest_attempt.status == ExecutionAttemptStatus.SUCCEEDED
+        # result_payload removed from ExecutionAttempt per doc spec

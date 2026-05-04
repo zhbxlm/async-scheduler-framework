@@ -80,9 +80,9 @@ def make_etl_dag() -> "DAG":
     extract = DAGNode(id="extract", name="Extract", task_type="extract",
                       payload={"source": "s3://raw-data/2026/"})
     transform = DAGNode(id="transform", name="Transform", task_type="transform",
-                        payload={}, dependencies=["extract"])
+                        payload={}, depends_on=["extract"])
     load = DAGNode(id="load", name="Load", task_type="load",
-                   payload={}, dependencies=["transform"])
+                   payload={}, depends_on=["transform"])
     return DAG(name="ETL Pipeline", nodes=[extract, transform, load])
 
 
@@ -118,11 +118,11 @@ def make_fanout_dag() -> "DAG":
                      payload={"shards": 3})
     shards = [
         DAGNode(id=f"shard-{i}", name=f"Shard {i}", task_type="process_shard",
-                payload={"shard_id": i}, dependencies=["ingest"])
+                payload={"shard_id": i}, depends_on=["ingest"])
         for i in range(3)
     ]
     merge = DAGNode(id="merge", name="Merge", task_type="merge",
-                    payload={}, dependencies=[f"shard-{i}" for i in range(3)])
+                    payload={}, depends_on=[f"shard-{i}" for i in range(3)])
     return DAG(name="Fan-out Fan-in", nodes=[ingest, *shards, merge], max_parallelism=3)
 
 
@@ -164,13 +164,13 @@ def make_conditional_dag(small_input: bool = True) -> "DAG":
     validate = DAGNode(id="validate", name="Validate", task_type="validate",
                        payload={"size": 50 if small_input else 200})
     fast = DAGNode(id="fast_path", name="Fast Path", task_type="fast_path",
-                   payload={}, dependencies=["validate"],
+                   payload={}, depends_on=["validate"],
                    condition="context.get('is_small', False)")
     slow = DAGNode(id="slow_path", name="Slow Path", task_type="slow_path",
-                   payload={}, dependencies=["validate"],
+                   payload={}, depends_on=["validate"],
                    condition="not context.get('is_small', False)")
     notify = DAGNode(id="notify", name="Notify", task_type="notify",
-                     payload={}, dependencies=["fast_path", "slow_path"],
+                     payload={}, depends_on=["fast_path", "slow_path"],
                      on_failure="skip")
     return DAG(name="Conditional Branch", nodes=[validate, fast, slow, notify],
                context={})
@@ -217,7 +217,7 @@ def make_retry_fallback_dag() -> "DAG":
                     on_failure="fallback",
                     fallback_payload={"api_result": "fallback", "source": "fallback_payload"})
     process = DAGNode(id="process", name="Process", task_type="process_result",
-                      payload={}, dependencies=["flaky"])
+                      payload={}, depends_on=["flaky"])
     return DAG(name="Retry with Fallback", nodes=[flaky, process])
 
 
@@ -283,15 +283,15 @@ def make_ml_pipeline_dag() -> "DAG":
     data_prep = DAGNode(id="data_prep", name="Data Prep", task_type="data_prep",
                         payload={"dataset": "imagenet-subset-2026"})
     feature_eng = DAGNode(id="feature_eng", name="Feature Engineering", task_type="feature_eng",
-                          payload={}, dependencies=["data_prep"])
+                          payload={}, depends_on=["data_prep"])
     train = DAGNode(id="train", name="Train Model", task_type="train_model",
-                    payload={}, dependencies=["feature_eng"])
+                    payload={}, depends_on=["feature_eng"])
     baseline = DAGNode(id="baseline", name="Compute Baseline", task_type="compute_baseline",
-                       payload={}, dependencies=["feature_eng"])
+                       payload={}, depends_on=["feature_eng"])
     evaluate = DAGNode(id="evaluate", name="Evaluate", task_type="evaluate",
-                       payload={}, dependencies=["train", "baseline"])
+                       payload={}, depends_on=["train", "baseline"])
     deploy = DAGNode(id="deploy", name="Deploy", task_type="deploy",
-                     payload={}, dependencies=["evaluate"],
+                     payload={}, depends_on=["evaluate"],
                      condition="context.get('passed', False)")
     return DAG(name="ML Training Pipeline",
                nodes=[data_prep, feature_eng, train, baseline, evaluate, deploy],

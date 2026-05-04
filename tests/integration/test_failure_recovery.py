@@ -500,7 +500,7 @@ async def test_partial_work_then_recovery_then_retry_budget_exhaustion_converges
     assert side_effects == ["attempt-1", "attempt-2"]
     assert final_task is not None
     assert final_task.status == TaskStatus.FAILED
-    assert final_task.error_message == "boom-after-recovery"
+    assert final_task.error == "boom-after-recovery"
     assert final_task.retry_count == 1
     assert final_attempt is not None
     assert final_attempt.status == ExecutionAttemptStatus.FAILED
@@ -859,6 +859,7 @@ async def test_multi_control_point_transient_failure_converges_without_hanging()
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_delayed_promotion_under_concurrent_load() -> None:
     """Multiple delayed tasks become ready simultaneously; promotion and consumption should remain correct."""
     await drop_db()
@@ -927,6 +928,7 @@ async def test_delayed_promotion_under_concurrent_load() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.mysql_required
 async def test_transient_worker_liveness_lookup_failure_skips_repair_for_safety() -> None:
     await drop_db()
     await init_db()
@@ -1083,7 +1085,7 @@ async def test_transient_heartbeat_extend_failure_converges_to_failed_abandoned(
     assert lock_backend.extend_calls >= 1
     assert final_task is not None
     assert final_task.status == TaskStatus.FAILED
-    assert final_task.error_message == "lease lost during execution"
+    assert final_task.error == "lease lost during execution"
     assert final_attempt is not None
     assert final_attempt.status == ExecutionAttemptStatus.ABANDONED
     assert final_attempt.error_message == "lease lost during execution"
@@ -1152,7 +1154,7 @@ async def test_worker_registry_loss_during_long_running_execution_does_not_trigg
     assert running_task.status == TaskStatus.RUNNING
     assert running_attempt is not None
     assert running_attempt.status in {
-        ExecutionAttemptStatus.CLAIMED,
+        ExecutionAttemptStatus.RUNNING,  # (was CLAIMED, removed per doc spec)
         ExecutionAttemptStatus.RUNNING,
     }
 

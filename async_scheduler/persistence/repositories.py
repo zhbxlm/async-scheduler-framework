@@ -115,7 +115,7 @@ class TaskRepository:
             select(TaskORM)
             .where(TaskORM.status == TaskStatus.QUEUED)
             .where((TaskORM.scheduled_at.is_(None)) | (TaskORM.scheduled_at <= datetime.utcnow()))
-            .order_by(TaskORM.priority.desc(), TaskORM.created_at.asc())
+            .order_by(TaskORM.priority.asc(), TaskORM.created_at.asc())
             .limit(limit)
         )
         result = await session.execute(query)
@@ -145,7 +145,6 @@ class ExecutionAttemptRepository:
         values = {k: v for k, v in kwargs.items() if v is not None}
         if not values:
             return await ExecutionAttemptRepository.get(session, attempt_id)
-        values["updated_at"] = datetime.utcnow()
 
         result = await session.execute(
             update(ExecutionAttemptORM)
@@ -163,23 +162,39 @@ class ExecutionAttemptRepository:
         status: ExecutionAttemptStatus,
         completed_at: datetime | None = None,
         error_message: str | None = None,
-        result_payload: dict[str, Any] | None = None,
+        only_if_status: ExecutionAttemptStatus | None = None,
     ) -> ExecutionAttempt | None:
-        return await ExecutionAttemptRepository.update(
-            session,
-            attempt_id,
-            status=status,
-            completed_at=completed_at or datetime.utcnow(),
-            error_message=error_message,
-            result_payload=result_payload,
-        )
+        """Finalize an attempt, optionally using compare-and-set semantics.
+
+        When ``only_if_status`` is provided the UPDATE is conditional: it only
+        succeeds if the attempt's current status matches ``only_if_status``.
+        This prevents a late reconciler write from overwriting a completion
+        that already set a terminal status.
+        """
+        values: dict[str, Any] = {
+            "status": status,
+            "completed_at": completed_at or datetime.utcnow(),
+        }
+        if error_message is not None:
+            values["error_message"] = error_message
+
+
+        stmt = update(ExecutionAttemptORM).where(ExecutionAttemptORM.id == attempt_id)
+        if only_if_status is not None:
+            stmt = stmt.where(ExecutionAttemptORM.status == only_if_status)
+        stmt = stmt.values(**values)
+
+        result = await session.execute(stmt)
+        if result.rowcount == 0:
+            return await ExecutionAttemptRepository.get(session, attempt_id)
+        return await ExecutionAttemptRepository.get(session, attempt_id)
 
     @staticmethod
     async def get_latest_for_task(session: AsyncSession, task_id: str) -> ExecutionAttempt | None:
         result = await session.execute(
             select(ExecutionAttemptORM)
             .where(ExecutionAttemptORM.task_id == task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
+            .order_by(ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(1)
         )
         db_attempt = result.scalar_one_or_none()
@@ -195,7 +210,7 @@ class ExecutionAttemptRepository:
         result = await session.execute(
             select(ExecutionAttemptORM)
             .where(ExecutionAttemptORM.task_id == task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
+            .order_by(ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -211,7 +226,7 @@ class ExecutionAttemptRepository:
         latest_created_subquery = (
             select(
                 ExecutionAttemptORM.task_id.label("task_id"),
-                func.max(ExecutionAttemptORM.created_at).label("latest_created_at"),
+                func.max(ExecutionAttemptORM.retry_index).label("latest_retry_index"),
             )
             .group_by(ExecutionAttemptORM.task_id)
             .subquery()
@@ -222,9 +237,9 @@ class ExecutionAttemptRepository:
             .join(
                 latest_created_subquery,
                 (ExecutionAttemptORM.task_id == latest_created_subquery.c.task_id)
-                & (ExecutionAttemptORM.created_at == latest_created_subquery.c.latest_created_at),
+                & (ExecutionAttemptORM.retry_index == latest_created_subquery.c.latest_retry_index),
             )
-            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
+            .order_by(ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -250,7 +265,7 @@ class ExecutionAttemptRepository:
         latest_subq = (
             select(
                 ExecutionAttemptORM.task_id.label("task_id"),
-                func.max(ExecutionAttemptORM.created_at).label("latest_created_at"),
+                func.max(ExecutionAttemptORM.retry_index).label("latest_retry_index"),
             )
             .group_by(ExecutionAttemptORM.task_id)
             .subquery()
@@ -261,10 +276,10 @@ class ExecutionAttemptRepository:
             .join(
                 latest_subq,
                 (ExecutionAttemptORM.task_id == latest_subq.c.task_id)
-                & (ExecutionAttemptORM.created_at == latest_subq.c.latest_created_at),
+                & (ExecutionAttemptORM.retry_index == latest_subq.c.latest_retry_index),
             )
             .outerjoin(TaskORM, TaskORM.id == ExecutionAttemptORM.task_id)
-            .order_by(ExecutionAttemptORM.created_at.desc(), ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
+            .order_by(ExecutionAttemptORM.retry_index.desc(), ExecutionAttemptORM.id.desc())
             .limit(limit)
             .offset(offset)
         )

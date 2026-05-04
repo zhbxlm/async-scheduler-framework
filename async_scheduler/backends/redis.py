@@ -293,12 +293,14 @@ DELAYED_PROMOTE_CAP_SCRIPT = dedent(
     -- ARGV[1] = now_ts (unix seconds float as string)
     -- ARGV[2] = ts_ms (current timestamp in ms)
     -- ARGV[3] = capability filter ("*" = all, else exact match)
+    -- ARGV[4] = namespace prefix (e.g. "async-scheduler")
     local delayed_key      = KEYS[1]
     local cap_registry_key = KEYS[2]
     local scheduled_set    = KEYS[3]
     local now_ts           = tonumber(ARGV[1])
     local ts_ms            = tonumber(ARGV[2])
     local cap_filter       = ARGV[3]
+    local ns               = ARGV[4] or 'async-scheduler'
 
     -- Get all tasks with scheduled_at <= now
     local due = redis.call('ZRANGEBYSCORE', delayed_key, '-inf', now_ts, 'WITHSCORES')
@@ -307,47 +309,31 @@ DELAYED_PROMOTE_CAP_SCRIPT = dedent(
     local i = 1
     while i <= #due do
         local payload = due[i]
-        -- expected format: JSON with {"capability": "...", "task": {...}}
-        -- extract capability via simple string search (no cjson on all Redis versions)
-        local cap_start = payload:find('"capability":') 
+        -- Payload format: {"capability": "...", "task": {...}}
+        -- Fields use JSON encoding with spaces: "key": "value"
+        -- Use Lua pattern matching that tolerates optional spaces around colon.
+
+        -- Extract capability
         local cap = 'default'
-        if cap_start then
-            local val_start = payload:find('"', cap_start + 13) + 1
-            local val_end   = payload:find('"', val_start) - 1
-            if val_start and val_end then
-                cap = payload:sub(val_start, val_end)
-            end
-        end
+        local cap_val = payload:match('"capability"%s*:%s*"([^"]+)"')
+        if cap_val then cap = cap_val end
 
         -- Apply capability filter
         if cap_filter == '*' or cap_filter == cap then
-            -- Extract task_id: find "id":"..."
-            local id_start = payload:find('"id":"')
-            local task_id  = ''
-            if id_start then
-                local vs = payload:find('"', id_start + 6) + 1
-                local ve = payload:find('"', vs) - 1
-                if vs and ve then
-                    task_id = payload:sub(vs, ve)
-                end
-            end
+            -- Extract task_id from nested task object: "id": "<uuid>"
+            -- The id field appears inside the inner task JSON.
+            local task_id = payload:match('"id"%s*:%s*"([^"]+)"')
+            if task_id == nil then task_id = '' end
 
             if task_id ~= '' then
-                -- Build capability-specific keys (namespace prefix from task data)
-                -- We pass pending_key and task_data_key as dynamic from ARGV to keep script generic.
-                -- Instead, the caller passes namespace prefix in ARGV[4] so we can build keys.
-                local ns = ARGV[4] or 'async-scheduler'
                 local pending_key   = ns .. ':' .. cap .. ':pending'
                 local task_data_key = ns .. ':' .. cap .. ':task_data'
                 local stats_key     = ns .. ':' .. cap .. ':stats'
 
                 -- Decode priority_rank from task JSON (default 3 = NORMAL)
                 local pri_rank = 3
-                local pr_start = payload:find('"priority":')
-                if pr_start then
-                    local pr_num = payload:match('"priority": *([0-9]+)', pr_start)
-                    if pr_num then pri_rank = tonumber(pr_num) end
-                end
+                local pr_num = payload:match('"priority"%s*:%s*([0-9]+)')
+                if pr_num then pri_rank = tonumber(pr_num) end
 
                 -- score = priority_rank * 10^13 + ts_ms
                 local score = pri_rank * 10000000000000 + ts_ms
@@ -607,7 +593,7 @@ class RedisQueueBackend(QueueBackend):
 
             # Capability-aware: use ZSET with priority score
             ts_ms = int(time.time() * 1000)
-            priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+            priority_rank = task.priority
             score = priority_rank * (10 ** 13) + ts_ms
             pending_key = self._cap_pending_key(cap)
             task_data_key = self._cap_task_data_key(cap)
@@ -621,10 +607,10 @@ class RedisQueueBackend(QueueBackend):
         # In-process fallback
         async with self._lock:
             if scheduled_at and scheduled_at > datetime.utcnow():
-                await self._push_ready(serialized, task.priority.value, scheduled_at)
+                await self._push_ready(serialized, task.priority, scheduled_at)
             else:
                 ts_ms = int(time.time() * 1000)
-                priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                priority_rank = task.priority
                 score = priority_rank * (10 ** 13) + ts_ms
                 import heapq
                 heapq.heappush(self._cap_pending[cap], (score, serialized))
@@ -686,6 +672,14 @@ class RedisQueueBackend(QueueBackend):
                         return None
                     await asyncio.sleep(0.01)
                     continue
+                # Payload may be a wrapped format {"capability":..., "task":{...}}
+                # produced by the delayed promotion path; unwrap if needed.
+                try:
+                    raw = json.loads(payload)
+                    if isinstance(raw, dict) and "task" in raw and "capability" in raw:
+                        payload = json.dumps(raw["task"], sort_keys=True)
+                except (json.JSONDecodeError, ValueError):
+                    pass
                 return self._deserialize_task(payload)
             else:
                 # In-process fallback with capability awareness
@@ -703,7 +697,7 @@ class RedisQueueBackend(QueueBackend):
                         self._cancelled_ids.discard(task.id)
                         self._task_index.pop(task.id, None)
                         continue
-                    self._queue_counts[task.priority.value] = max(0, self._queue_counts.get(task.priority.value, 0) - 1)
+                    self._queue_counts[task.priority] = max(0, self._queue_counts.get(task.priority, 0) - 1)
                     self._task_index.pop(task.id, None)
                     ts = time.time()
                     self._cap_running[cap][task.id] = ts
@@ -733,6 +727,22 @@ class RedisQueueBackend(QueueBackend):
         await self._promote_due_tasks()
         if self._client_supports_queue_ops:
             tasks: list[Task] = []
+            # Try capability-based ZSET first (primary path)
+            caps = await self._client.smembers(self._cap_registry_key())
+            if caps:
+                for cap in sorted(caps):
+                    pending_key = self._cap_pending_key(cap)
+                    task_data_key = self._cap_task_data_key(cap)
+                    task_ids = await self._client.zrange(pending_key, 0, limit - len(tasks) - 1)
+                    for task_id in task_ids:
+                        payload = await self._client.hget(task_data_key, task_id)
+                        if payload:
+                            tasks.append(self._deserialize_task(payload))
+                            if len(tasks) >= limit:
+                                return tasks
+                if tasks:
+                    return tasks
+            # Fallback: legacy List-based ready queue
             for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=False):
                 task_ids = await self._client.lrange(self._ready_key(priority.value), 0, limit - len(tasks) - 1)
                 for task_id in task_ids:
@@ -967,7 +977,7 @@ class RedisQueueBackend(QueueBackend):
                     if payload:
                         try:
                             task = self._deserialize_task(payload)
-                            p_val = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                            p_val = task.priority
                             counts[p_val] = counts.get(p_val, 0) + 1
                         except Exception:
                             pass
@@ -1016,7 +1026,7 @@ class RedisQueueBackend(QueueBackend):
 
     async def is_scheduled(self, task_id: str) -> bool:
         if self._client_supports_queue_ops:
-            return await self._client.sismember(self._scheduled_set_key, task_id)
+            return bool(await self._client.sismember(self._scheduled_set_key, task_id))
         return task_id in self._scheduled_ids
 
     async def get_scheduled_count(self) -> int:
@@ -1084,7 +1094,7 @@ class RedisQueueBackend(QueueBackend):
                             task = self._deserialize_task(task_payload)
                             if cap_filter != "*" and cap != cap_filter:
                                 continue
-                            priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                            priority_rank = task.priority
                             score = priority_rank * (10 ** 13) + ts_ms
                             pending_key = self._cap_pending_key(cap)
                             task_data_key = self._cap_task_data_key(cap)
@@ -1110,7 +1120,7 @@ class RedisQueueBackend(QueueBackend):
                     # Promote to capability pending heap
                     cap = capability
                     ts_ms = int(now * 1000)
-                    priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                    priority_rank = task.priority
                     score = priority_rank * (10 ** 13) + ts_ms
                     import heapq
                     heapq.heappush(self._cap_pending[cap], (score, payload))
@@ -1169,7 +1179,15 @@ class RedisQueueBackend(QueueBackend):
     async def _remove_delayed_atomic(self, payload: str) -> int:
         delayed_key = self._delayed_key()
         scheduled_key = self._scheduled_set_key
-        task = self._deserialize_task(payload)
+        # payload may be wrapped: {"capability": ..., "task": {...}}
+        try:
+            raw = json.loads(payload)
+            if isinstance(raw, dict) and "task" in raw:
+                task = Task.model_validate(raw["task"])
+            else:
+                task = self._deserialize_task(payload)
+        except Exception:
+            return 0
         if hasattr(self._client, "eval"):
             return int(await self._client.eval(QUEUE_REMOVE_DELAYED_SCRIPT, 2, delayed_key, scheduled_key, payload, task.id))
         removed = await self._client.zrem(delayed_key, payload)

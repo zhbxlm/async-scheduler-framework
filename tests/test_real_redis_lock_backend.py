@@ -13,7 +13,7 @@ class FakeAsyncRedis:
     def __init__(self) -> None:
         self.values: dict[str, tuple[str, int | None]] = {}
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None, nx: bool = False):
         if nx and key in self.values:
             return None
         self.values[key] = (value, ex)
@@ -36,7 +36,12 @@ class FakeAsyncRedis:
         return True
 
 
+
+    async def pexpire(self, key: str, milliseconds: int) -> int:
+        """Millisecond expire - store as seconds for simplicity."""
+        return await self.expire(key, max(1, milliseconds // 1000))
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_lock_backend_uses_set_nx_for_acquire() -> None:
     client = FakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -49,6 +54,7 @@ async def test_real_redis_lock_backend_uses_set_nx_for_acquire() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_lock_backend_release_requires_matching_token() -> None:
     client = FakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -65,6 +71,7 @@ async def test_real_redis_lock_backend_release_requires_matching_token() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_lock_backend_extend_requires_matching_token() -> None:
     client = FakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)

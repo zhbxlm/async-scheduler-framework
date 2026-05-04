@@ -45,6 +45,7 @@ class InMemoryQueueBackend(QueueBackend):
             lambda: asyncio.PriorityQueue()
         )
         self._scheduled_tasks: dict[str, asyncio.TimerHandle] = {}
+        self._delayed_items: dict[str, tuple[datetime, "Task", str]] = {}  # {task_id: (scheduled_at, task, capability)}
         self._task_lookup: dict[str, QueueItem] = {}
         self._lock = asyncio.Lock()
         # Capability-aware state
@@ -66,11 +67,12 @@ class InMemoryQueueBackend(QueueBackend):
         async with self._lock:
             if scheduled_at and scheduled_at > datetime.utcnow():
                 # Schedule for later execution
+                self._delayed_items[task.id] = (scheduled_at, task, capability)
                 self._schedule_task(task, scheduled_at, capability=capability)
             else:
                 # Capability-aware: use score-based heap
                 ts_ms = int(_time.time() * 1000)
-                priority_rank = task.priority.value if hasattr(task.priority, 'value') else int(task.priority)
+                priority_rank = task.priority
                 score = priority_rank * (10 ** 13) + ts_ms
                 import json
                 payload = json.dumps(task.model_dump(mode="json"), sort_keys=True)
@@ -78,18 +80,46 @@ class InMemoryQueueBackend(QueueBackend):
                 self._cap_stats[capability]["enqueue_count"] += 1
                 # Keep task_lookup for cancel() support
                 item = QueueItem(
-                    priority=task.priority.value,
+                    priority=task.priority,
                     created_at=task.created_at,
                     task=task,
                 )
                 self._task_lookup[task.id] = item
                 # NOTE: do NOT push to self._queues to avoid double-counting in get_queue_count
 
+    async def _promote_due_delayed(self) -> None:
+        """Eagerly promote any delayed items whose scheduled_at is now past.
+
+        This is called at the start of every dequeue so that tests (and other
+        callers that do not rely on the event-loop call_later callback) can
+        still observe delayed → ready promotion without needing to yield to
+        the scheduler between enqueue and dequeue.
+        """
+        import heapq, json as _json, time as _time
+        now = datetime.utcnow()
+        due = [tid for tid, (sat, _, _cap) in self._delayed_items.items() if sat <= now]
+        for tid in due:
+            sat, task, cap = self._delayed_items.pop(tid)
+            # Cancel the pending call_later handle to avoid double-enqueue
+            handle = self._scheduled_tasks.pop(tid, None)
+            if handle is not None:
+                handle.cancel()
+            ts_ms = int(_time.time() * 1000)
+            priority_rank = task.priority
+            score = priority_rank * (10 ** 13) + ts_ms
+            payload = _json.dumps(task.model_dump(mode="json"), sort_keys=True)
+            heapq.heappush(self._cap_pending[cap], (score, payload))
+            self._capabilities.add(cap)
+            self._cap_stats[cap]["enqueue_count"] += 1
+            item = QueueItem(priority=task.priority, created_at=task.created_at, task=task)
+            self._task_lookup[task.id] = item
+
     def _schedule_task(self, task: Task, scheduled_at: datetime, capability: str = "default") -> None:
         """Schedule a task for future execution."""
 
         async def _execute_scheduled() -> None:
             try:
+                self._delayed_items.pop(task.id, None)
                 # Update scheduled_at and enqueue
                 await self.enqueue(task, None, capability=capability)
             except Exception:
@@ -105,6 +135,8 @@ class InMemoryQueueBackend(QueueBackend):
     async def dequeue(self, timeout: float | None = None, capability: str = "default") -> Task | None:  # type: ignore[override]
         """Get the next highest priority task."""
         import heapq, json as _json
+        # Promote any delayed tasks that are now due (avoids relying solely on call_later)
+        await self._promote_due_delayed()
         # Check capability-aware heap first
         max_concurrent = self._cap_max_concurrent.get(capability)
         if max_concurrent is not None and len(self._cap_running[capability]) >= max_concurrent:
@@ -180,7 +212,7 @@ class InMemoryQueueBackend(QueueBackend):
 
             return False
 
-    async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
+    async def update_priority(self, task_id: str, new_priority: int) -> bool:
         """Update a task's priority in the queue."""
         async with self._lock:
             if task_id not in self._task_lookup:
@@ -190,12 +222,12 @@ class InMemoryQueueBackend(QueueBackend):
             old_item.task.priority = new_priority
 
             new_item = QueueItem(
-                priority=new_priority.value,
+                priority=new_priority,
                 created_at=old_item.created_at,
                 task=old_item.task,
             )
 
-            await self._queues[new_priority.value].put(new_item)
+            await self._queues[new_priority].put(new_item)
             self._task_lookup[task_id] = new_item
 
             return True
@@ -441,14 +473,14 @@ class InMemoryRegistryBackend(RegistryBackend):
         schedules = await self.list_active(limit=1000)
         ready: list[Schedule] = []
         for schedule in schedules:
-            if schedule.next_run_at is None:
-                # Initialize next_run_at for new schedules
+            if schedule.next_fire_at is None:
+                # Initialize next_fire_at for new schedules
                 next_fire = croniter(schedule.cron_expression, now).get_next(datetime)
                 await self.advance_next_fire(
-                    schedule.id, next_fire, last_triggered_at=schedule.last_run_at
+                    schedule.id, next_fire, last_triggered_at=schedule.last_fired_at
                 )
                 continue
-            if schedule.next_run_at <= now:
+            if schedule.next_fire_at <= now:
                 ready.append(schedule)
         return ready
 
@@ -464,8 +496,8 @@ class InMemoryRegistryBackend(RegistryBackend):
             return await ScheduleRepository.update(
                 session,
                 schedule_id,
-                next_run_at=next_fire_at,
-                last_run_at=last_triggered_at,
+                next_fire_at=next_fire_at,
+                last_fired_at=last_triggered_at,
             )
 
     async def pause(self, schedule_id: str) -> Schedule | None:
@@ -488,5 +520,5 @@ class InMemoryRegistryBackend(RegistryBackend):
                 session,
                 schedule_id,
                 status=ScheduleStatus.ACTIVE,
-                next_run_at=next_fire,
+                next_fire_at=next_fire,
             )

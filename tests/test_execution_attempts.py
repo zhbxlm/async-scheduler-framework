@@ -46,7 +46,7 @@ class TestExecutionAttempts:
         assert attempt.id is not None
         assert attempt.task_id == task.id
         assert attempt.worker_id == "worker-a"
-        assert attempt.status == ExecutionAttemptStatus.CLAIMED
+        assert attempt.status == ExecutionAttemptStatus.RUNNING  # (was CLAIMED, removed per doc)
         assert attempt.retry_index == 0
         assert attempt.lease_token == "lease-1"
         assert attempt.started_at is None
@@ -105,14 +105,13 @@ class TestExecutionAttempts:
             attempt.id,
             status=ExecutionAttemptStatus.SUCCEEDED,
             completed_at=completed_at,
-            result_payload={"ok": True},
         )
 
         assert finalized is not None
         assert finalized.status == ExecutionAttemptStatus.SUCCEEDED
         assert finalized.completed_at is not None
         assert finalized.completed_at.replace(microsecond=0) == completed_at.replace(microsecond=0)
-        assert finalized.result_payload == {"ok": True}
+        # result_payload removed per doc spec
         assert finalized.error_message is None
 
     async def test_finalize_failure(self, db_session) -> None:

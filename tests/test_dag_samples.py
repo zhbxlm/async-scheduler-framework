@@ -182,7 +182,7 @@ class TestRetryWithFallback:
                         on_failure="fallback",
                         fallback_payload={"api_result": "fallback", "source": "cache"})
         process = DAGNode(id="process", name="Process", task_type="process_result",
-                          payload={}, dependencies=["flaky"])
+                          payload={}, depends_on=["flaky"])
         dag = DAG(name="fallback-dag", nodes=[flaky, process])
 
         from examples.dag_samples import _flaky_call_count

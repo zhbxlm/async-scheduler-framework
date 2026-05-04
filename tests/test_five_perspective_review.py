@@ -54,7 +54,7 @@ class TestArchitectFixes:
         engine = DAGEngine(queue_manager=qm)
 
         node = DAGNode(id="n1", name="gpu-step", task_type="gpu",
-                       payload={"capability": "gpu"}, dependencies=[])
+                       payload={"capability": "gpu"}, depends_on=[])
         dag = DAG(id="d1", name="test", nodes=[node])
 
         handler = AsyncMock(return_value={"ok": True})
@@ -168,6 +168,7 @@ class TestOpsFixes:
 # U7: /tasks/batch endpoint
 # ---------------------------------------------------------------------------
 
+@pytest.mark.mysql_required
 class TestUserAPIFixes:
 
     @pytest.mark.asyncio
@@ -233,6 +234,7 @@ class TestUserAPIFixes:
 # PM10: /tasks/{id}/history
 # ---------------------------------------------------------------------------
 
+@pytest.mark.mysql_required
 class TestProductManagerFixes:
 
     @pytest.mark.asyncio

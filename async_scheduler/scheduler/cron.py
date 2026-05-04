@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable
 
 from croniter import croniter
 
-from async_scheduler.core.models import Schedule, ScheduleStatus, TaskCreate, TaskPriority
+from async_scheduler.core.models import Schedule, ScheduleStatus, TaskCreate
 from async_scheduler.persistence import get_session_no_context, ScheduleRepository, TaskRepository
 from async_scheduler.queue import QueueManager
 from async_scheduler.scheduler.registry import ScheduleRegistry
@@ -224,12 +224,12 @@ class CronScheduler:
         """Process a single schedule."""
         now = datetime.utcnow()
 
-        if schedule.next_run_at is None or schedule.next_run_at > now:
+        if schedule.next_fire_at is None or schedule.next_fire_at > now:
             return
 
         # Check if we haven't run recently (prevent duplicate runs)
-        if schedule.last_run_at:
-            time_since_last_run = (now - schedule.last_run_at).total_seconds()
+        if schedule.last_fired_at:
+            time_since_last_run = (now - schedule.last_fired_at).total_seconds()
             if time_since_last_run < schedule.dedup_window_seconds:
                 return
 
@@ -260,7 +260,7 @@ class CronScheduler:
             task_create = TaskCreate(
                 name=schedule.name,
                 payload=schedule.task_template,
-                priority=TaskPriority.NORMAL,
+                priority=0,
                 tenant_id=schedule.tenant_id,
                 scheduled_at=now,
                 idempotency_key=f"schedule:{schedule.id}:{bucket}",
@@ -286,7 +286,7 @@ class CronScheduler:
             await ScheduleRepository.update(
                 session,
                 schedule.id,
-                last_run_at=datetime.utcnow(),
+                last_fired_at=datetime.utcnow(),
             )
 
             logger.info(f"Manually triggered schedule {schedule_id}, created task {task.id}")

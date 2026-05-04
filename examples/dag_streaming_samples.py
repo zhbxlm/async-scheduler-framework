@@ -123,12 +123,12 @@ def make_llm_streaming_dag() -> "DAG":
     prepare = DAGNode(id="prepare", name="Prepare Prompt", task_type="prepare_prompt",
                       payload={"question": "How does Python asyncio work?"})
     retrieve = DAGNode(id="retrieve", name="Retrieve Context", task_type="retrieve_context",
-                       payload={}, dependencies=["prepare"])
+                       payload={}, depends_on=["prepare"])
     generate = DAGNode(id="generate", name="LLM Generate", task_type="llm_generate",
                        payload={"execution_mode": "streaming"},
-                       dependencies=["prepare", "retrieve"])
+                       depends_on=["prepare", "retrieve"])
     postprocess = DAGNode(id="postprocess", name="Post-process", task_type="postprocess",
-                          payload={}, dependencies=["generate"])
+                          payload={}, depends_on=["generate"])
     return DAG(name="LLM Token Streaming", nodes=[prepare, retrieve, generate, postprocess])
 
 
@@ -189,13 +189,13 @@ def make_progress_streaming_dag() -> "DAG":
     chunks = [
         DAGNode(id=f"chunk-{i}", name=f"Chunk {i}", task_type="process_chunk",
                 payload={"chunk_id": i, "execution_mode": "streaming"},
-                dependencies=["init"])
+                depends_on=["init"])
         for i in range(3)
     ]
     agg = DAGNode(id="agg", name="Aggregate", task_type="aggregate",
-                  payload={}, dependencies=[f"chunk-{i}" for i in range(3)])
+                  payload={}, depends_on=[f"chunk-{i}" for i in range(3)])
     report = DAGNode(id="report", name="Report", task_type="final_report",
-                     payload={}, dependencies=["agg"])
+                     payload={}, depends_on=["agg"])
     return DAG(name="Progress Streaming Pipeline",
                nodes=[init, *chunks, agg, report], max_parallelism=3)
 
@@ -248,9 +248,9 @@ def make_realtime_etl_dag() -> "DAG":
     scan = DAGNode(id="scan", name="Source Scan", task_type="source_scan",
                    payload={"rows": 8, "execution_mode": "streaming"})
     validate = DAGNode(id="validate", name="Validate Stream", task_type="validate_stream",
-                       payload={"execution_mode": "streaming"}, dependencies=["scan"])
+                       payload={"execution_mode": "streaming"}, depends_on=["scan"])
     sink = DAGNode(id="sink", name="Sink Write", task_type="sink_write",
-                   payload={}, dependencies=["validate"])
+                   payload={}, depends_on=["validate"])
     return DAG(name="Real-time ETL Streaming", nodes=[scan, validate, sink])
 
 

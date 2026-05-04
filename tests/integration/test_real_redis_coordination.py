@@ -9,7 +9,7 @@ from async_scheduler.backends.redis import (
     RedisLockBackend,
     RedisQueueBackend,
 )
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry
 
 
@@ -20,7 +20,7 @@ class SharedFakeAsyncRedis:
         self.lists: dict[str, list[str]] = {}
         self.zsets: dict[str, dict[str, float]] = {}
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None, nx: bool = False):
         if nx and key in self.values:
             return None
         self.values[key] = (value, ex)
@@ -56,6 +56,10 @@ class SharedFakeAsyncRedis:
             return True
         return False
 
+
+    async def pexpire(self, key: str, milliseconds: int) -> int:
+        """Millisecond expire - store as seconds for simplicity."""
+        return await self.expire(key, max(1, milliseconds // 1000))
     async def rpush(self, key: str, value: str) -> int:
         self.lists.setdefault(key, []).append(value)
         return len(self.lists[key])
@@ -123,13 +127,14 @@ def make_task(task_id: str) -> Task:
         id=task_id,
         name=f"task-{task_id}",
         payload={"task_id": task_id},
-        priority=TaskPriority.NORMAL,
+        priority=0,
         status=TaskStatus.PENDING,
         created_at=datetime.utcnow(),
     )
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_coordination_chain_converges_on_shared_client() -> None:
     client = SharedFakeAsyncRedis()
     queue = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -137,7 +142,7 @@ async def test_real_redis_coordination_chain_converges_on_shared_client() -> Non
     dedup = RedisCompletionDedupBackend(redis_url="redis://localhost:6379/0", client=client)
     workers = WorkerRegistry(redis_url="redis://localhost:6379/0", client=client)
 
-    await workers.register(WorkerInfo(worker_id="worker-1", name="primary", capabilities=["demo"]))
+    await workers.register(WorkerInfo(worker_id="worker-1", name="primary"))
     assert await workers.is_live("worker-1") is True
 
     task = make_task("coord-1")
@@ -162,6 +167,7 @@ async def test_real_redis_coordination_chain_converges_on_shared_client() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_coordination_allows_reacquire_after_release() -> None:
     client = SharedFakeAsyncRedis()
     lock_a = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)

@@ -9,12 +9,12 @@ import pytest
 
 from async_scheduler.backends.memory import InMemoryQueueBackend
 from async_scheduler.core.consumer import TaskConsumer
-from async_scheduler.core.models import Task, TaskCreate, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskCreate, TaskStatus
 from async_scheduler.executor.executor import ExecutionResult, TaskExecutor
 from async_scheduler.queue.manager import QueueManager
 
 
-def _make_task(task_type: str = "default", priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def _make_task(task_type: str = "default", priority: int = 0) -> Task:
     return Task(
         id=f"task-{task_type}-{id(object())}",
         name=f"test-{task_type}",
@@ -129,9 +129,9 @@ async def test_priority_ordering_within_capability():
     """Higher priority tasks (lower rank) are dequeued first."""
     backend = InMemoryQueueBackend()
     t_low = _make_task("default")
-    t_low.priority = TaskPriority.LOW
+    t_low.priority = 4
     t_high = _make_task("default")
-    t_high.priority = TaskPriority.VERY_HIGH
+    t_high.priority = -2
 
     await backend.enqueue(t_low, capability="default")
     await backend.enqueue(t_high, capability="default")
@@ -283,6 +283,7 @@ async def test_executor_lease_lost_after_completion_has_no_effect():
 
 
 @pytest.mark.asyncio
+@pytest.mark.mysql_required
 async def test_consumer_lease_lost_events_dict_managed():
     """lease_lost_events are cleaned up after task completes."""
     backend = InMemoryQueueBackend()

@@ -8,7 +8,7 @@ pytestmark = pytest.mark.redis_required
 
 
 from async_scheduler.backends.redis import RedisQueueBackend
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from tests.fake_redis import FullFakeAsyncRedis
 
 
@@ -38,7 +38,7 @@ class RacingFakeAsyncRedis(FullFakeAsyncRedis):
         return await super().zrem(key, member)
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -72,7 +72,7 @@ async def test_cancel_returns_false_if_ready_entry_disappears_before_remove() ->
 async def test_dequeue_skips_cancelled_task_without_returning_duplicate() -> None:
     client = RacingFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
-    task = make_task("dequeue-cancel-race", TaskPriority.HIGH)
+    task = make_task("dequeue-cancel-race", -1)
     await backend.enqueue(task)
 
     # Cancel before dequeue runs
@@ -88,9 +88,9 @@ async def test_clear_removes_ready_entries_even_after_multiple_enqueues() -> Non
     client = RacingFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    await backend.enqueue(make_task("c1", TaskPriority.HIGH))
-    await backend.enqueue(make_task("c2", TaskPriority.HIGH))
-    await backend.enqueue(make_task("c3", TaskPriority.NORMAL))
+    await backend.enqueue(make_task("c1", -1))
+    await backend.enqueue(make_task("c2", -1))
+    await backend.enqueue(make_task("c3", 0))
     await backend.clear()
 
     assert await backend.dequeue() is None

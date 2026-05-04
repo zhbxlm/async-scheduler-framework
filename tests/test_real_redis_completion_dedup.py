@@ -12,7 +12,7 @@ class FakeAsyncRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None, nx: bool = False):
         if nx and key in self.values:
             return None
         self.values[key] = value
@@ -23,6 +23,7 @@ class FakeAsyncRedis:
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_completion_dedup_backend_uses_redis_set_nx_semantics() -> None:
     client = FakeAsyncRedis()
     backend = RedisCompletionDedupBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -35,6 +36,7 @@ async def test_completion_dedup_backend_uses_redis_set_nx_semantics() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_completion_dedup_backend_clear_flushes_client() -> None:
     client = FakeAsyncRedis()
     backend = RedisCompletionDedupBackend(redis_url="redis://localhost:6379/0", client=client)

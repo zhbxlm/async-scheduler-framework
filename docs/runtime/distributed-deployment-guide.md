@@ -237,6 +237,26 @@ Known limitations include:
 
 ## 10. Concrete startup examples
 
+### Local split script with config validation
+
+```bash
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+REDIS_URL=redis://127.0.0.1:6379/0 \
+bash scripts/run_local_split.sh validate
+
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+REDIS_URL=redis://127.0.0.1:6379/0 \
+bash scripts/run_local_split.sh dry-run
+
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+REDIS_URL=redis://127.0.0.1:6379/0 \
+bash scripts/run_local_split.sh start
+```
+
+The script now injects `DEPLOYMENT_ROLE`, `SERVICE_NAME`, and stable local `NODE_ID`s
+for each service, and validates runtime settings before startup.
+
+
 ### Example A — single host, multiple processes
 
 Recommended when:

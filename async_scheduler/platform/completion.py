@@ -11,6 +11,7 @@ from typing import Any, Callable
 from async_scheduler.backends.base import CompletionDedupBackend
 from async_scheduler.core.models import ExecutionAttemptStatus, Task, TaskStatus
 from async_scheduler.persistence import ExecutionAttemptRepository, TaskRepository, get_session, get_session_no_context
+from async_scheduler.platform.async_proxy import AsyncProxySidecar, TaskEvent
 from async_scheduler.platform.callback import CallbackDispatcher
 
 logger = logging.getLogger(__name__)
@@ -65,8 +66,10 @@ class TaskCompletionNode:
         enable_metrics: bool = True,
         dedup_backend: CompletionDedupBackend | None = None,
         dedup_ttl_seconds: float = 86400.0,
+        async_proxy_sidecar: AsyncProxySidecar | None = None,
     ) -> None:
         self.callback_dispatcher = callback_dispatcher or CallbackDispatcher()
+        self.async_proxy_sidecar = async_proxy_sidecar
         self._metrics = CompletionMetrics() if enable_metrics else None
         self._enable_metrics = enable_metrics
         self._completion_handlers: dict[TaskStatus, list[Callable[[Task], None]]] = defaultdict(list)
@@ -121,26 +124,28 @@ class TaskCompletionNode:
                 updated_at=datetime.utcnow(),
                 started_at=started_at,
                 completed_at=completed_at,
-                error_message=error_message,
+                error=error_message,
                 result=result,
             )
             if updated is not None and finalize_latest_attempt:
                 latest_attempt = await ExecutionAttemptRepository.get_latest_for_task(session, task.id)
                 attempt_status = self._map_attempt_status(status)
                 if latest_attempt is not None and attempt_status is not None:
-                    terminal_attempt_statuses = {
+                    # Completion wins over reconciler's ABANDONED (reconciler is a best-effort
+                    # repair; actual completion has higher authority).  However, we must not
+                    # override a SUCCEEDED/FAILED/CANCELLED that was already written by a
+                    # concurrent completion path.
+                    non_overridable = {
                         ExecutionAttemptStatus.SUCCEEDED,
                         ExecutionAttemptStatus.FAILED,
                         ExecutionAttemptStatus.CANCELLED,
-                        ExecutionAttemptStatus.ABANDONED,
                     }
-                    if latest_attempt.status not in terminal_attempt_statuses:
+                    if latest_attempt.status not in non_overridable:
                         await ExecutionAttemptRepository.finalize(
                             session,
                             latest_attempt.id,
                             status=attempt_status,
                             error_message=error_message,
-                            result_payload=result,
                         )
 
         if not updated:
@@ -158,8 +163,15 @@ class TaskCompletionNode:
             elif status == TaskStatus.TIMEOUT:
                 self._metrics.timeout_completions += 1
 
-        if status in (TaskStatus.SUCCESS, TaskStatus.FAILED) and updated.callback_url:
-            await self._dispatch_callback(updated, status, result, error_message)
+        callback_delivery: str | None = None
+        # source callback_url from Task field
+        _callback_url: str | None = getattr(updated, "callback_url", None)
+        if status in (TaskStatus.SUCCESS, TaskStatus.FAILED) and _callback_url:
+            callback_ok = await self._dispatch_callback(updated, status, result, error_message, callback_url=_callback_url)
+            callback_delivery = "ok" if callback_ok else "failed"
+            callback_delivery = "delivered" if callback_ok else "failed"
+
+        await self._publish_async_proxy_event(updated, status, result, error_message, callback_delivery=callback_delivery)
 
         for handler in self._completion_handlers[status]:
             try:
@@ -184,25 +196,74 @@ class TaskCompletionNode:
         status: TaskStatus,
         result: dict[str, Any] | None,
         error_message: str | None,
-    ) -> None:
+        callback_url: str | None = None,
+    ) -> bool:
+        _url = callback_url or getattr(task, "callback_url", None)
         try:
             if self._enable_metrics:
                 self._metrics.callback_dispatches += 1
-            await self.callback_dispatcher.dispatch(
-                task.callback_url,
+            ok = await self.callback_dispatcher.dispatch(
+                _url,
                 {
                     "task_id": task.id,
                     "name": task.name,
                     "status": status.value,
                     "result": result,
-                    "error_message": error_message,
+                    "error": error_message,
                     "completed_at": task.completed_at.isoformat() if task.completed_at else None,
                 },
             )
+            return bool(ok)
         except Exception as e:
             logger.error("Failed to dispatch callback for task %s: %s", task.id, e, exc_info=True)
             if self._enable_metrics:
                 self._metrics.callback_failures += 1
+            return False
+
+    async def _publish_async_proxy_event(
+        self,
+        task: Task,
+        status: TaskStatus,
+        result: dict[str, Any] | None,
+        error_message: str | None,
+        *,
+        callback_delivery: str | None = None,
+    ) -> None:
+        if self.async_proxy_sidecar is None:
+            return
+        try:
+            completion_kind = status.value
+            if error_message == "lease lost during execution":
+                completion_kind = "lease_lost"
+
+            # 尝试获取 callback retry/dead-letter 统计（如果有 dispatcher）
+            retry_queue_size = 0
+            dead_letter_size = 0
+            if self.callback_dispatcher is not None:
+                try:
+                    stats = await self.callback_dispatcher.get_stats()
+                    retry_queue_size = stats.get("retry_queue_size", 0)
+                    dead_letter_size = stats.get("dead_letter_size", 0)
+                except Exception:
+                    pass
+            await self.async_proxy_sidecar.publish(
+                TaskEvent(
+                    task_id=task.id,
+                    status=status.value,
+                    result=result,
+                    error=error_message,
+                    task_name=task.name,
+                    tenant_id=task.tenant_id,
+                    callback_url=task.callback_url,
+                    completed_at=task.completed_at.timestamp() if task.completed_at else None,
+                    completion_kind=completion_kind,
+                    callback_delivery=callback_delivery,
+                    callback_retry_queue_size=retry_queue_size,
+                    callback_dead_letter_size=dead_letter_size,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish async proxy event for task %s", task.id)
 
     def register_completion_handler(self, status: TaskStatus, handler: Callable[[Task], None]) -> None:
         self._completion_handlers[status].append(handler)

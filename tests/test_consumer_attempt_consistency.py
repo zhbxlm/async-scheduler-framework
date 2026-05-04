@@ -78,7 +78,7 @@ class TestConsumerAttemptConsistency:
         assert stored_task.result == {"ok": 7}
         assert latest_attempt is not None
         assert latest_attempt.status == ExecutionAttemptStatus.SUCCEEDED
-        assert latest_attempt.result_payload == {"ok": 7}
+        # result_payload removed from ExecutionAttempt per doc spec
 
     async def test_consumer_failure_converges_task_and_attempt(self) -> None:
         factory = BackendFactory(
@@ -124,7 +124,7 @@ class TestConsumerAttemptConsistency:
 
         assert stored_task is not None
         assert stored_task.status == TaskStatus.FAILED
-        assert stored_task.error_message == "boom-9"
+        assert stored_task.error == "boom-9"
         assert latest_attempt is not None
         assert latest_attempt.status == ExecutionAttemptStatus.FAILED
         assert latest_attempt.error_message == "boom-9"
@@ -176,7 +176,7 @@ class TestConsumerAttemptConsistency:
 
         assert stored_task is not None
         assert stored_task.status == TaskStatus.FAILED
-        assert stored_task.error_message == "boom-11"
+        assert stored_task.error == "boom-11"
         assert latest_attempt is not None
         assert latest_attempt.status == ExecutionAttemptStatus.FAILED
         assert latest_attempt.error_message == "boom-11"
@@ -227,7 +227,7 @@ class TestConsumerAttemptConsistency:
 
         assert stored_task is not None
         assert stored_task.status == TaskStatus.FAILED
-        assert stored_task.error_message == "lease lost during execution"
+        assert stored_task.error == "lease lost during execution"
         assert latest_attempt is not None
         assert latest_attempt.status == ExecutionAttemptStatus.ABANDONED
         assert latest_attempt.error_message == "lease lost during execution"

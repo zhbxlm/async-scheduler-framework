@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from async_scheduler.core.models import Schedule, ScheduleCreate, Task, TaskPriority
+from async_scheduler.core.models import Schedule, ScheduleCreate, Task
 
 
 @dataclass(order=True)
@@ -42,7 +42,7 @@ class QueueBackend(ABC):
         pass
 
     @abstractmethod
-    async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
+    async def update_priority(self, task_id: str, new_priority: int) -> bool:
         pass
 
     @abstractmethod

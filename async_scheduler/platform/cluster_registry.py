@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -128,6 +129,7 @@ class ClusterRegistry:
         self._redis = redis_client
         self._local: dict[str, ClusterInfo] = {}
         self._lock = asyncio.Lock()
+        self._routing_decisions: deque[dict[str, Any]] = deque(maxlen=50)
 
     # ------------------------------------------------------------------
     # Registration
@@ -244,7 +246,15 @@ class ClusterRegistry:
                 s -= 10
             return s
 
-        return min(candidates, key=score)
+        selected = min(candidates, key=score)
+        self._routing_decisions.append({
+            "timestamp": time.time(),
+            "selected_cluster_id": selected.cluster_id,
+            "required_capabilities": list(policy.required_capabilities),
+            "preferred_region": policy.preferred_region,
+            "candidate_count": len(candidates),
+        })
+        return selected
 
     async def list_clusters(self) -> list[ClusterInfo]:
         """Return all registered clusters."""
@@ -299,8 +309,63 @@ class ClusterRegistry:
                 data[k] = v
         return ClusterInfo.from_dict(data)
 
+    async def get_stats_async(self) -> dict[str, Any]:
+        clusters = await self._get_all_clusters()
+        return self._build_stats(clusters)
+
     def get_stats(self) -> dict[str, Any]:
+        return self._build_stats(list(self._local.values()))
+
+    def _build_stats(self, clusters: list[ClusterInfo]) -> dict[str, Any]:
+        health_counts = {
+            ClusterHealth.HEALTHY.value: 0,
+            ClusterHealth.DEGRADED.value: 0,
+            ClusterHealth.UNAVAILABLE.value: 0,
+        }
+        capability_counts: dict[str, int] = {}
+        region_counts: dict[str, int] = {}
+        total_pending = 0
+        capacity_total = 0
+        capacity_used_estimate = 0
+        capability_workload: dict[str, dict[str, Any]] = {}
+
+        for cluster in clusters:
+            health_counts[cluster.health.value] = health_counts.get(cluster.health.value, 0) + 1
+            region_counts[cluster.region] = region_counts.get(cluster.region, 0) + 1
+            total_pending += cluster.pending_tasks
+            capacity_total += cluster.max_tasks
+            used_estimate = min(cluster.pending_tasks, cluster.max_tasks)
+            capacity_used_estimate += used_estimate
+
+            for capability in cluster.capabilities:
+                capability_counts[capability] = capability_counts.get(capability, 0) + 1
+                bucket = capability_workload.setdefault(capability, {
+                    "cluster_count": 0,
+                    "pending": 0,
+                    "capacity_total": 0,
+                    "capacity_used_estimate": 0,
+                    "regions": {},
+                })
+                bucket["cluster_count"] += 1
+                bucket["pending"] += cluster.pending_tasks
+                bucket["capacity_total"] += cluster.max_tasks
+                bucket["capacity_used_estimate"] += used_estimate
+                bucket["regions"][cluster.region] = bucket["regions"].get(cluster.region, 0) + 1
+
         return {
             "redis_backed": self._redis is not None,
+            "cluster_count": len(clusters),
             "local_cluster_count": len(self._local),
+            "health_counts": health_counts,
+            "capability_counts": capability_counts,
+            "region_counts": region_counts,
+            "total_pending_tasks": total_pending,
+            "workload_summary": {
+                "pending": total_pending,
+                "cluster_count": len(clusters),
+                "capacity_total": capacity_total,
+                "capacity_used_estimate": capacity_used_estimate,
+                "capabilities": capability_workload,
+            },
+            "recent_routing_decisions": list(self._routing_decisions),
         }

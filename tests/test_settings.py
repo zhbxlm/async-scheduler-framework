@@ -13,6 +13,8 @@ def test_load_settings_defaults() -> None:
     assert settings.backends.queue_type == "memory"
     assert settings.backends.lock_type == "memory"
     assert settings.backends.registry_type == "memory"
+    assert settings.runtime.environment == "local"
+    assert settings.runtime.distributed_enabled is False
 
 
 def test_load_settings_custom_env() -> None:
@@ -55,6 +57,8 @@ def test_load_settings_custom_env() -> None:
     assert settings.logging.service_name == "scheduler-api"
     assert settings.logging.service_version == "1.2.3"
     assert settings.logging.node_id == "node-a"
+    assert settings.runtime.service_name == "scheduler-api"
+    assert settings.runtime.node_id == "node-a"
 
     assert settings.backends.queue_type == "redis"
     assert settings.backends.lock_type == "redis"
@@ -62,6 +66,7 @@ def test_load_settings_custom_env() -> None:
     assert settings.backends.redis_url == "redis://localhost:6379/0"
     assert settings.backends.lease_ttl_seconds == 12.0
     assert settings.backends.heartbeat_interval_seconds == 3.0
+    assert settings.runtime.distributed_enabled is True
 
 
 def test_load_settings_backend_prefers_backend_prefix() -> None:

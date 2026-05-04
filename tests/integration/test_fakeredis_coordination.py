@@ -11,7 +11,7 @@ from async_scheduler.backends.redis import (
     RedisLockBackend,
     RedisQueueBackend,
 )
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry
 
 
@@ -27,7 +27,7 @@ async def test_fakeredis_coordination_chain() -> None:
         id="fakeredis-task-1",
         name="fakeredis-task-1",
         payload={"hello": "world"},
-        priority=TaskPriority.NORMAL,
+        priority=0,
         status=TaskStatus.PENDING,
         created_at=datetime.utcnow(),
     )

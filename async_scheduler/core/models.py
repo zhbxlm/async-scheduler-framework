@@ -14,11 +14,9 @@ class TaskStatus(str, Enum):
     """Task execution status.
 
     Aligned with deepwiki ray-amu task state machine.
-    SCHEDULED is added to represent tasks awaiting their scheduled_at time.
     """
 
     PENDING = "pending"
-    SCHEDULED = "scheduled"  # has future scheduled_at; waiting in delayed queue
     QUEUED = "queued"
     RUNNING = "running"
     SUCCESS = "success"
@@ -35,7 +33,6 @@ class TaskStatus(str, Enum):
 class ExecutionAttemptStatus(str, Enum):
     """Distributed execution-attempt status."""
 
-    CLAIMED = "claimed"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -97,14 +94,13 @@ class TaskBase(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     payload: dict[str, Any] = Field(default_factory=dict)
-    priority: TaskPriority = TaskPriority.NORMAL
+    priority: int = Field(default=0, description="Priority (lower = higher priority)")
     max_retries: int = Field(default=3, ge=0)
     timeout_seconds: int = Field(default=300, ge=1)
     callback_url: str | None = None
     scheduled_at: datetime | None = None
     tenant_id: str | None = None
     idempotency_key: str | None = None
-    tags: list[str] = Field(default_factory=list)
 
 
 class Task(TaskBase):
@@ -117,7 +113,7 @@ class Task(TaskBase):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     retry_count: int = 0
-    error_message: str | None = None
+    error: str | None = None
     result: dict[str, Any] | None = None
 
 
@@ -132,9 +128,9 @@ class TaskUpdate(BaseModel):
 
     name: str | None = None
     payload: dict[str, Any] | None = None
-    priority: TaskPriority | None = None
+    priority: int | None = None
     status: TaskStatus | None = None
-    error_message: str | None = None
+    error: str | None = None
     result: dict[str, Any] | None = None
 
 
@@ -153,20 +149,17 @@ class ExecutionAttempt(ExecutionAttemptBase):
     """Full execution-attempt model."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    status: ExecutionAttemptStatus = ExecutionAttemptStatus.CLAIMED
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    status: ExecutionAttemptStatus = ExecutionAttemptStatus.RUNNING
     started_at: datetime | None = None
     completed_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     error_message: str | None = None
-    result_payload: dict[str, Any] | None = None
 
 
 class ExecutionAttemptCreate(ExecutionAttemptBase):
     """Execution-attempt creation request."""
 
-    status: ExecutionAttemptStatus = ExecutionAttemptStatus.CLAIMED
+    status: ExecutionAttemptStatus = ExecutionAttemptStatus.RUNNING
     started_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
 
@@ -180,7 +173,6 @@ class ScheduleBase(BaseModel):
     cron_expression: str = Field(..., pattern=r"^[\d*/\-,\s]+$")
     task_template: dict[str, Any] = Field(default_factory=dict)
     tenant_id: str | None = None
-    timezone: str = "UTC"
     dedup_window_seconds: int = Field(default=60, ge=0)
 
 
@@ -190,9 +182,8 @@ class Schedule(ScheduleBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: ScheduleStatus = ScheduleStatus.ACTIVE
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    last_run_at: datetime | None = None
-    next_run_at: datetime | None = None
+    last_fired_at: datetime | None = None
+    next_fire_at: datetime | None = None
 
 
 class ScheduleCreate(ScheduleBase):
@@ -210,7 +201,7 @@ class DAGNode(BaseModel):
     name: str
     task_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    dependencies: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
     condition: str | None = None
     retry_count: int = 0
     max_retries: int = 3
@@ -273,7 +264,6 @@ class Tenant(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     config: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    is_active: bool = True
 
 
 class TenantCreate(BaseModel):

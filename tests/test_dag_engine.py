@@ -36,14 +36,14 @@ class TestDAGEngine:
                     name="task2",
                     task_type="fast",
                     payload={"step": 2},
-                    dependencies=["1"],
+                    depends_on=["1"],
                 ),
                 DAGNode(
                     id="3",
                     name="task3",
                     task_type="fast",
                     payload={"step": 3},
-                    dependencies=["2"],
+                    depends_on=["2"],
                 ),
             ],
             max_parallelism=2,
@@ -62,7 +62,7 @@ class TestDAGEngine:
                     name="task3",
                     task_type="fast",
                     payload={"step": 3},
-                    dependencies=["1", "2"],
+                    depends_on=["1", "2"],
                 ),
             ],
             max_parallelism=2,
@@ -85,7 +85,7 @@ class TestDAGEngine:
                     name="task2",
                     task_type="fast",
                     payload={"step": 2},
-                    dependencies=["1"],
+                    depends_on=["1"],
                     condition="context['value'] > 50",  # Should not execute
                 ),
                 DAGNode(
@@ -93,7 +93,7 @@ class TestDAGEngine:
                     name="task3",
                     task_type="fast",
                     payload={"step": 3},
-                    dependencies=["1"],
+                    depends_on=["1"],
                     condition="context['value'] < 50",  # Should execute
                 ),
             ],
@@ -112,7 +112,7 @@ class TestDAGEngine:
                     name="task2",
                     task_type="slow",
                     payload={"step": 2, "sleep_seconds": 5},  # Will timeout
-                    dependencies=["1"],
+                    depends_on=["1"],
                     timeout_seconds=1,
                     on_failure="skip",
                 ),
@@ -121,7 +121,7 @@ class TestDAGEngine:
                     name="task3",
                     task_type="fast",
                     payload={"step": 3},
-                    dependencies=["2"],
+                    depends_on=["2"],
                 ),
             ],
             max_parallelism=2,
@@ -229,7 +229,7 @@ class TestDAGEngine:
                     name="after_slow",
                     task_type="after_slow",
                     payload={"kind": "after_slow"},
-                    dependencies=["slow"],
+                    depends_on=["slow"],
                 ),
             ],
         )
@@ -267,7 +267,7 @@ class TestDAGEngine:
                     name="after_slow",
                     task_type="after_slow",
                     payload={"kind": "after_slow"},
-                    dependencies=["slow"],
+                    depends_on=["slow"],
                 ),
             ],
         )
@@ -303,7 +303,7 @@ class TestDAGEngine:
                     name="after_slow",
                     task_type="after_slow",
                     payload={"kind": "after_slow"},
-                    dependencies=["slow"],
+                    depends_on=["slow"],
                 ),
             ],
         )
@@ -342,7 +342,7 @@ class TestDAGEngine:
                     name="D",
                     task_type="downstream",
                     payload={"kind": "downstream"},
-                    dependencies=["B", "C"],
+                    depends_on=["B", "C"],
                 ),
             ],
         )
@@ -400,27 +400,27 @@ class TestDAGEngine:
                     name="task2",
                     task_type="fast",
                     payload={"step": 2},
-                    dependencies=["1"],
+                    depends_on=["1"],
                 ),
                 DAGNode(
                     id="3",
                     name="task3",
                     task_type="fast",
                     payload={"step": 3},
-                    dependencies=["2"],
+                    depends_on=["2"],
                 ),
                 DAGNode(
                     id="4",
                     name="task4",
                     task_type="fast",
                     payload={"step": 4},
-                    dependencies=["3"],  # Would create cycle if we add dependency from 1 to 4
+                    depends_on=["3"],  # Would create cycle if we add dependency from 1 to 4
                 ),
             ],
         )
 
         # Create a cycle by modifying dependencies
-        dag_with_cycle.nodes[0].dependencies = ["3"]
+        dag_with_cycle.nodes[0].depends_on = ["3"]
 
         with pytest.raises(ValueError, match="cycle"):
             engine._topological_sort(dag_with_cycle)

@@ -48,7 +48,7 @@ class ReconciliationMetrics:
     tasks_repaired: int = 0
     tasks_ignored: int = 0
     tasks_requeued: int = 0
-    last_run_at: datetime | None = None
+    last_run_at: datetime | None = None  # reconciler last run timestamp
     last_repaired_count: int = 0
 
     def get_repair_rate(self) -> float:
@@ -162,16 +162,17 @@ class TaskReconciler:
             return True
 
         worker_live = False
+        worker_liveness_known = True  # False when is_live raised an exception
         if self.worker_registry is not None:
             try:
                 worker_live = await self.worker_registry.is_live(latest_attempt.worker_id)
             except Exception as exc:
                 logger.warning(
-                    "Worker liveness lookup failed for %s during reconcile; continuing with lease/heartbeat signals only: %s",
+                    "Worker liveness lookup failed for %s during reconcile; skipping repair for safety: %s",
                     latest_attempt.worker_id,
                     exc,
                 )
-                worker_live = False
+                worker_liveness_known = False
 
         lease_live = False
         if self.lock_backend is not None:
@@ -182,8 +183,11 @@ class TaskReconciler:
 
         # Aggressive repair policy for distributed recovery:
         # - if lease is gone and heartbeat is stale, repair
-        # - if worker is not live and lease is gone, repair
+        # - if worker is confirmed dead (known) and lease is gone, repair
+        # - if worker liveness is unknown (lookup failed), skip repair for safety
         # - if no attempt exists we already repair above
+        if not worker_liveness_known:
+            return False
         if not lease_live and heartbeat_stale:
             return True
         if not worker_live and not lease_live:
@@ -205,7 +209,7 @@ class TaskReconciler:
                     session,
                     task.id,
                     status=TaskStatus.FAILED,
-                    error_message=error_message,
+                    error=error_message,
                     completed_at=datetime.utcnow(),
                 )
                 if latest_attempt is not None:
@@ -214,6 +218,7 @@ class TaskReconciler:
                         latest_attempt.id,
                         status=ExecutionAttemptStatus.ABANDONED,
                         error_message=error_message,
+                        only_if_status=ExecutionAttemptStatus.RUNNING,
                     )
                 self._record_repair(
                     task_id=task.id,
@@ -248,7 +253,7 @@ class TaskReconciler:
                     session,
                     task.id,
                     status=TaskStatus.QUEUED,
-                    error_message=error_message,
+                    error=error_message,
                     started_at=None,
                     retry_count=task.retry_count + 1,
                 )
@@ -258,6 +263,7 @@ class TaskReconciler:
                         latest_attempt.id,
                         status=ExecutionAttemptStatus.ABANDONED,
                         error_message=error_message,
+                        only_if_status=ExecutionAttemptStatus.RUNNING,
                     )
                 self._record_repair(
                     task_id=task.id,
@@ -486,7 +492,7 @@ class TaskReconciler:
                             session,
                             task.id,
                             status=TaskStatus.QUEUED,
-                            error_message="reconciler-phase2: requeued after lease expiry",
+                            error="reconciler-phase2: requeued after lease expiry",
                             started_at=None,
                             retry_count=(task.retry_count or 0) + 1,
                         )
@@ -517,7 +523,7 @@ class TaskReconciler:
                             session,
                             task.id,
                             status=TaskStatus.FAILED,
-                            error_message=error_msg,
+                            error=error_msg,
                             completed_at=datetime.utcnow(),
                         )
                         if latest is not None:
@@ -526,6 +532,7 @@ class TaskReconciler:
                                 latest.id,
                                 status=ExecutionAttemptStatus.ABANDONED,
                                 error_message=error_msg,
+                                only_if_status=ExecutionAttemptStatus.RUNNING,
                             )
                     mark_failed += 1
                     self._record_repair(
@@ -569,7 +576,7 @@ class TaskReconciler:
                                 "task_id": task.id,
                                 "status": task.status.value,
                                 "result": getattr(task, "result", None),
-                                "error_message": getattr(task, "error_message", None),
+                                "error_message": getattr(task, "error", None),
                             },
                             task_id=task.id,
                         )

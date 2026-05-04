@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -65,6 +66,7 @@ def main() -> None:
             "lease_ttl_seconds": config.backends.lease_ttl_seconds,
             "heartbeat_interval_seconds": config.backends.heartbeat_interval_seconds,
         },
+        "runtime": config.inner.summary(),
     }
 
     if json_output:

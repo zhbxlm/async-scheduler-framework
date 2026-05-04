@@ -160,7 +160,7 @@ class TaskWorker(Worker):
                 update_data["completed_at"] = task.completed_at
 
             if error:
-                update_data["error_message"] = error
+                update_data["error"] = error
 
             if result:
                 update_data["result"] = result

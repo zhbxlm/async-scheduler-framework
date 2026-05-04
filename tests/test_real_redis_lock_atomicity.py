@@ -14,7 +14,7 @@ class RacingFakeAsyncRedis:
         self.values: dict[str, tuple[str, int | None]] = {}
         self.on_get = None
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None, nx: bool = False):
         if nx and key in self.values:
             return None
         self.values[key] = (value, ex)
@@ -64,7 +64,12 @@ class RacingFakeAsyncRedis:
         return True
 
 
+
+    async def pexpire(self, key: str, milliseconds: int) -> int:
+        """Millisecond expire - store as seconds for simplicity."""
+        return await self.expire(key, max(1, milliseconds // 1000))
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_release_does_not_delete_replaced_lock_after_get_delete_race() -> None:
     client = RacingFakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -85,6 +90,7 @@ async def test_release_does_not_delete_replaced_lock_after_get_delete_race() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_extend_does_not_refresh_replaced_lock_after_get_expire_race() -> None:
     client = RacingFakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -105,6 +111,7 @@ async def test_extend_does_not_refresh_replaced_lock_after_get_expire_race() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_compare_and_release_still_allows_legit_owner_cleanup() -> None:
     client = RacingFakeAsyncRedis()
     backend = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)

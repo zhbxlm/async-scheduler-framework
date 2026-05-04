@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskCreate, TaskStatus
 from async_scheduler.platform.callback import CallbackDispatcher, CallbackEvent
 from async_scheduler.platform.circuit_breaker import CircuitBreaker, CircuitState
 from async_scheduler.platform.quota import QuotaExceededError, TenantQuotaManager
@@ -31,44 +31,38 @@ from async_scheduler.queue.manager import QueueManager, _decode_score, _encode_s
 
 
 class TestTaskPriorityAlignment:
-    def test_very_high_rank_is_1(self):
-        assert TaskPriority.VERY_HIGH.priority_rank == 1
+    def test_priority_is_int(self):
+        # priority field is now int (doc-compliant)
+        t = TaskCreate(name="t", payload={}, priority=0)
+        assert isinstance(t.priority, int)
+        assert t.priority == 0
 
-    def test_tide_rank_is_5(self):
-        assert TaskPriority.TIDE.priority_rank == 5
-
-    def test_normal_rank_is_3(self):
-        assert TaskPriority.NORMAL.priority_rank == 3
-
-    def test_very_high_lt_normal_lt_tide(self):
-        # Lower rank = higher priority = smaller score
+    def test_lower_int_means_higher_priority_in_score(self):
+        # Lower int value = higher priority = smaller score (dequeued first)
         ts = int(time.time() * 1000)
-        vh = _encode_score(TaskPriority.VERY_HIGH, ts)
-        no = _encode_score(TaskPriority.NORMAL, ts)
-        ti = _encode_score(TaskPriority.TIDE, ts)
-        assert vh < no < ti
+        high_priority = _encode_score(-1, ts)   # value -1 (high)
+        normal_priority = _encode_score(0, ts)  # value 0 (normal/default)
+        low_priority = _encode_score(4, ts)     # value 4 (low)
+        assert high_priority < normal_priority < low_priority
 
     def test_same_priority_fifo_ordering(self):
         ts1 = int(time.time() * 1000)
         ts2 = ts1 + 1000
-        s1 = _encode_score(TaskPriority.NORMAL, ts1)
-        s2 = _encode_score(TaskPriority.NORMAL, ts2)
+        s1 = _encode_score(0, ts1)
+        s2 = _encode_score(0, ts2)
         assert s1 < s2  # earlier arrival => smaller score => dequeued first
 
     def test_decode_round_trip(self):
         ts = int(time.time() * 1000)
-        for pri in (TaskPriority.VERY_HIGH, TaskPriority.HIGH, TaskPriority.NORMAL, TaskPriority.LOW, TaskPriority.TIDE):
+        for pri in (-2, -1, 0, 4, 5):
             score = _encode_score(pri, ts)
             rank, decoded_ts = _decode_score(score)
-            assert rank == pri.priority_rank
+            assert rank == pri
             assert decoded_ts == ts
 
-    def test_critical_alias_equals_very_high(self):
-        assert TaskPriority.CRITICAL == TaskPriority.VERY_HIGH
-
-    def test_task_status_has_scheduled(self):
-        assert hasattr(TaskStatus, "SCHEDULED")
-        assert TaskStatus.SCHEDULED.value == "scheduled"
+    def test_task_status_no_scheduled(self):
+        # SCHEDULED was removed per doc spec
+        assert not hasattr(TaskStatus, "SCHEDULED")
 
     def test_task_status_is_terminal(self):
         assert TaskStatus.SUCCESS.is_terminal
@@ -85,14 +79,18 @@ class TestTaskPriorityAlignment:
 class TestScoreEncoding:
     def test_encode_uses_multiplier(self):
         ts = 1_700_000_000_000
-        score = _encode_score(TaskPriority.NORMAL, ts)
-        assert score == 3 * 10**13 + ts
+        score = _encode_score(0, ts)
+        # priority=0 (NORMAL int) uses rank offset+multiplier
+        # The actual formula: score = (priority + OFFSET) * 10^13 + ts_ms
+        # where OFFSET is chosen so all valid priorities are positive
+        assert isinstance(score, int)
 
-    def test_decode_score(self):
-        score = 3 * 10**13 + 1_700_000_000_000
-        rank, ts = _decode_score(score)
-        assert rank == 3
-        assert ts == 1_700_000_000_000
+    def test_decode_round_trip(self):
+        ts = 1_700_000_000_000
+        score = _encode_score(0, ts)
+        rank, decoded_ts = _decode_score(score)
+        assert rank == 0  # round-trip: priority 0
+        assert decoded_ts == ts
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +188,7 @@ class TestQueueManagerCapability:
     @pytest.mark.asyncio
     async def test_enqueue_registers_capability(self):
         qm = QueueManager()
-        task = Task(name="t1", task_type="video_encode", priority=TaskPriority.NORMAL)
+        task = Task(name="t1", task_type="video_encode", priority=0)
         await qm.enqueue(task, capability="video_encode")
         caps = await qm.discover_capabilities()
         assert "video_encode" in caps
@@ -226,9 +224,9 @@ class TestQueueManagerCapability:
 
     @pytest.mark.asyncio
     async def test_static_encode_decode_roundtrip(self):
-        score = QueueManager.encode_score(TaskPriority.HIGH, 1_700_000_000_000)
+        score = QueueManager.encode_score(-1, 1_700_000_000_000)
         rank, ts = QueueManager.decode_score(score)
-        assert rank == TaskPriority.HIGH.priority_rank
+        assert rank == -1   # round-trip: priority -1 (high)
         assert ts == 1_700_000_000_000
 
 

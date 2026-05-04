@@ -10,7 +10,6 @@ from async_scheduler.core.models import (
     DAGExecutionStatus,
     ExecutionAttemptStatus,
     ScheduleStatus,
-    TaskPriority,
     TaskStatus,
 )
 
@@ -30,7 +29,7 @@ class TenantORM(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # retained for DB compat
 
 
 class TaskORM(Base):
@@ -42,20 +41,19 @@ class TaskORM(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[TaskStatus] = mapped_column(SQLEnum(TaskStatus), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    priority: Mapped[TaskPriority] = mapped_column(SQLEnum(TaskPriority), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     callback_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
@@ -70,13 +68,10 @@ class ExecutionAttemptORM(Base):
     status: Mapped[ExecutionAttemptStatus] = mapped_column(SQLEnum(ExecutionAttemptStatus), nullable=False)
     retry_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lease_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ScheduleORM(Base):
@@ -89,13 +84,11 @@ class ScheduleORM(Base):
     cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
     task_template: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
     dedup_window_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     status: Mapped[ScheduleStatus] = mapped_column(SQLEnum(ScheduleStatus), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DAGNodeORM(Base):
@@ -108,7 +101,7 @@ class DAGNodeORM(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     task_type: Mapped[str] = mapped_column(String(100), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    dependencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    depends_on: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)

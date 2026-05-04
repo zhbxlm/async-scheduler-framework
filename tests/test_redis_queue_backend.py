@@ -5,10 +5,11 @@ from datetime import datetime, timedelta
 import pytest
 
 from async_scheduler.backends.factory import BackendConfig, BackendFactory
-from async_scheduler.core.models import Task, TaskPriority
+from async_scheduler.core.models import Task
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 class TestRedisQueueBackend:
     async def test_factory_can_create_redis_queue_backend(self) -> None:
         config = BackendConfig(
@@ -33,7 +34,7 @@ class TestRedisQueueBackend:
         backend = BackendFactory(config).create_queue_backend()
         await backend.clear()
 
-        task = Task(name="immediate", payload={"x": 1}, priority=TaskPriority.HIGH)
+        task = Task(name="immediate", payload={"x": 1}, priority=-1)
         await backend.enqueue(task)
 
         dequeued = await backend.dequeue(timeout=0.1)
@@ -72,7 +73,7 @@ class TestRedisQueueBackend:
         backend = BackendFactory(config).create_queue_backend()
         await backend.clear()
 
-        task = Task(name="due-delayed", payload={}, priority=TaskPriority.CRITICAL)
+        task = Task(name="due-delayed", payload={}, priority=-2)
         scheduled_at = datetime.utcnow() - timedelta(seconds=1)
         await backend.enqueue(task, scheduled_at=scheduled_at)
 
@@ -92,16 +93,16 @@ class TestRedisQueueBackend:
         backend = BackendFactory(config).create_queue_backend()
         await backend.clear()
 
-        task = Task(name="reprioritize", payload={}, priority=TaskPriority.LOW)
+        task = Task(name="reprioritize", payload={}, priority=4)
         await backend.enqueue(task)
 
-        updated = await backend.update_priority(task.id, TaskPriority.CRITICAL)
+        updated = await backend.update_priority(task.id, -2)
         peeked = await backend.peek(limit=1)
 
         assert updated is True
         assert len(peeked) == 1
         assert peeked[0].id == task.id
-        assert peeked[0].priority == TaskPriority.CRITICAL
+        assert peeked[0].priority == -2
 
     async def test_cancel_removes_queued_or_delayed_task(self) -> None:
         config = BackendConfig(
@@ -138,16 +139,16 @@ class TestRedisQueueBackend:
         backend = BackendFactory(config).create_queue_backend()
         await backend.clear()
 
-        high = Task(name="high", payload={}, priority=TaskPriority.HIGH)
-        normal = Task(name="normal", payload={}, priority=TaskPriority.NORMAL)
-        delayed = Task(name="delayed", payload={}, priority=TaskPriority.LOW)
+        high = Task(name="high", payload={}, priority=-1)
+        normal = Task(name="normal", payload={}, priority=0)
+        delayed = Task(name="delayed", payload={}, priority=4)
         await backend.enqueue(high)
         await backend.enqueue(normal)
         await backend.enqueue(delayed, scheduled_at=datetime.utcnow() + timedelta(seconds=60))
 
         sizes = await backend.size()
 
-        assert sizes[TaskPriority.HIGH.value] == 1
-        assert sizes[TaskPriority.NORMAL.value] == 1
+        assert sizes[-1] == 1
+        assert sizes[0] == 1
         assert await backend.get_queue_count() == 2
         assert await backend.get_scheduled_count() == 1

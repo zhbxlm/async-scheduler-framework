@@ -10,7 +10,7 @@ from uvicorn import Config, Server
 
 from async_scheduler.api import app
 from async_scheduler.core.consumer import TaskConsumer
-from async_scheduler.core.models import TaskCreate, TaskPriority
+from async_scheduler.core.models import TaskCreate
 from async_scheduler.dag import DAGEngine
 from async_scheduler.executor import TaskExecutor, default_task_handler
 from async_scheduler.persistence import init_db
@@ -31,6 +31,20 @@ configure_logging(
     fmt=_settings.logging.fmt,
 )
 logger = logging.getLogger(__name__)
+
+
+def _build_backend_config():
+    from async_scheduler.backends import BackendConfig
+
+    b = get_settings().backends
+    return BackendConfig(
+        queue_type=b.queue_type,
+        lock_type=b.lock_type,
+        registry_type=b.registry_type,
+        redis_url=b.redis_url,
+        lease_ttl_seconds=b.lease_ttl_seconds,
+        heartbeat_interval_seconds=b.heartbeat_interval_seconds,
+    )
 
 
 @click.group()
@@ -211,7 +225,7 @@ def task(name, priority, payload):
         task_create = TaskCreate(
             name=name,
             payload=payload_dict,
-            priority=TaskPriority[priority.upper()],
+            priority={"low": 4, "normal": 0, "high": -1, "critical": -2}.get(priority.lower(), 0),
         )
 
         async with get_session() as session:
@@ -221,7 +235,7 @@ def task(name, priority, payload):
 
         click.echo(f"Task created: {task.id}")
         click.echo(f"Name: {task.name}")
-        click.echo(f"Priority: {task.priority.value}")
+        click.echo(f"Priority: {task.priority}")
         click.echo(f"Status: {task.status.value}")
 
     try:
@@ -359,21 +373,9 @@ def scheduler_service_cmd(poll_interval, init_db):
         asyncio.run(_init_database())
 
     async def _run():
-        from async_scheduler.backends import BackendConfig
         from async_scheduler.platform.services import build_service_container
-        from async_scheduler.settings import get_settings
 
-        b = get_settings().backends
-        services = await build_service_container(
-            BackendConfig(
-                queue_type=b.queue_type,
-                lock_type=b.lock_type,
-                registry_type=b.registry_type,
-                redis_url=b.redis_url,
-                lease_ttl_seconds=b.lease_ttl_seconds,
-                heartbeat_interval_seconds=b.heartbeat_interval_seconds,
-            )
-        )
+        services = await build_service_container(_build_backend_config())
         services.cron_scheduler._poll_interval = poll_interval
         await services.cron_scheduler.start()
         logger.info("Scheduler service started successfully")
@@ -398,21 +400,9 @@ def reconciler_service_cmd(interval, init_db):
         asyncio.run(_init_database())
 
     async def _run():
-        from async_scheduler.backends import BackendConfig
         from async_scheduler.platform.services import build_service_container
-        from async_scheduler.settings import get_settings
 
-        b = get_settings().backends
-        services = await build_service_container(
-            BackendConfig(
-                queue_type=b.queue_type,
-                lock_type=b.lock_type,
-                registry_type=b.registry_type,
-                redis_url=b.redis_url,
-                lease_ttl_seconds=b.lease_ttl_seconds,
-                heartbeat_interval_seconds=b.heartbeat_interval_seconds,
-            )
-        )
+        services = await build_service_container(_build_backend_config())
         logger.info("Reconciler service started successfully")
         try:
             while True:

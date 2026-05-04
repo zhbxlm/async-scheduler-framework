@@ -8,7 +8,7 @@ pytestmark = pytest.mark.redis_required
 
 
 from async_scheduler.backends.redis import RedisQueueBackend
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from tests.fake_redis import FullFakeAsyncRedis
 
 
@@ -76,7 +76,7 @@ class EvalQueueFakeAsyncRedis(FullFakeAsyncRedis):
         return 0
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -92,7 +92,7 @@ async def test_promote_due_task_is_dequeued_after_scheduled_time() -> None:
     """Tasks enqueued with a past scheduled_at should be dequeued."""
     client = EvalQueueFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
-    task = make_task("lua-promo", TaskPriority.HIGH)
+    task = make_task("lua-promo", -1)
     # Enqueue with a past scheduled_at so it is immediately "due"
     past = datetime.utcnow() - timedelta(seconds=10)
     await backend.enqueue(task, scheduled_at=past)
@@ -110,16 +110,16 @@ async def test_update_priority_changes_dequeue_order() -> None:
     """After update_priority, task should be dequeued with new priority reflected."""
     client = EvalQueueFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
-    task = make_task("lua-reprio", TaskPriority.LOW)
+    task = make_task("lua-reprio", 4)
     await backend.enqueue(task)
 
-    updated = await backend.update_priority(task.id, TaskPriority.HIGH)
+    updated = await backend.update_priority(task.id, -1)
 
     assert updated is True
     popped = await backend.dequeue()
     assert popped is not None
     assert popped.id == task.id
-    assert popped.priority == TaskPriority.HIGH
+    assert popped.priority == -1
 
 
 @pytest.mark.asyncio

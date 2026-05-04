@@ -9,7 +9,7 @@ from async_scheduler.backends.redis import (
     RedisLockBackend,
     RedisQueueBackend,
 )
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 
 
 class SharedFakeAsyncRedis:
@@ -18,7 +18,7 @@ class SharedFakeAsyncRedis:
         self.lists: dict[str, list[str]] = {}
         self.zsets: dict[str, dict[str, float]] = {}
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None, nx: bool = False):
         if nx and key in self.values:
             return None
         self.values[key] = (value, ex)
@@ -49,6 +49,10 @@ class SharedFakeAsyncRedis:
         self.values[key] = (value, ttl)
         return True
 
+
+    async def pexpire(self, key: str, milliseconds: int) -> int:
+        """Millisecond expire - store as seconds for simplicity."""
+        return await self.expire(key, max(1, milliseconds // 1000))
     async def rpush(self, key: str, value: str) -> int:
         self.lists.setdefault(key, []).append(value)
         return len(self.lists[key])
@@ -91,7 +95,7 @@ class SharedFakeAsyncRedis:
         return 1 if existed else 0
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -103,6 +107,7 @@ def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Tas
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_recovery_duplicate_completion_converges_after_requeue() -> None:
     client = SharedFakeAsyncRedis()
     queue = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -129,6 +134,7 @@ async def test_real_redis_recovery_duplicate_completion_converges_after_requeue(
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_recovery_wrong_owner_cannot_release_or_extend() -> None:
     client = SharedFakeAsyncRedis()
     lock_a = RedisLockBackend(redis_url="redis://localhost:6379/0", client=client)
@@ -147,11 +153,12 @@ async def test_real_redis_recovery_wrong_owner_cannot_release_or_extend() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.redis_required
 async def test_real_redis_recovery_queue_clear_resets_requeued_candidates() -> None:
     client = SharedFakeAsyncRedis()
     queue = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    task = make_task("recover-2", TaskPriority.HIGH)
+    task = make_task("recover-2", -1)
     await queue.enqueue(task)
     await queue.enqueue(task)
     await queue.clear()

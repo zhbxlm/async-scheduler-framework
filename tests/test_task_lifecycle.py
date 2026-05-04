@@ -12,7 +12,6 @@ import pytest_asyncio
 from async_scheduler.core.models import (
     Task,
     TaskCreate,
-    TaskPriority,
     TaskStatus,
 )
 from async_scheduler.executor import TaskExecutor, default_task_handler
@@ -41,7 +40,7 @@ class TestTaskLifecycle:
         return TaskCreate(
             name="test_task",
             payload={"test": "data"},
-            priority=TaskPriority.NORMAL,
+            priority=0,
             max_retries=2,
             timeout_seconds=30,
         )
@@ -63,7 +62,7 @@ class TestTaskLifecycle:
         assert task.id is not None
         assert task.name == "test_task"
         assert task.status == TaskStatus.PENDING
-        assert task.priority == TaskPriority.NORMAL
+        assert task.priority == 0
         assert task.max_retries == 2
         assert task.timeout_seconds == 30
         assert task.retry_count == 0
@@ -135,12 +134,12 @@ class TestTaskLifecycle:
         """Test that higher priority tasks are dequeued first."""
         low_task = Task(
             name="low",
-            priority=TaskPriority.LOW,
+            priority=4,
             created_at=datetime.utcnow(),
         )
         high_task = Task(
             name="high",
-            priority=TaskPriority.HIGH,
+            priority=-1,
             created_at=datetime.utcnow(),
         )
 
@@ -284,7 +283,7 @@ class TestTaskLifecycle:
         task_create = TaskCreate(
             name="lifecycle_task",
             payload={"value": 42},
-            priority=TaskPriority.HIGH,
+            priority=-1,
         )
         task = await TaskRepository.create(db_session, task_create)
 

@@ -3,7 +3,7 @@
 Aligned with the deepwiki ray-amu queue-management spec:
 
 * Per-capability queues  (``queue:{capability}:pending`` / ``:running``)
-* Priority + timestamp score encoding: ``priority_rank * 10**13 + ts_ms``
+* Priority + timestamp score encoding: ``(priority+offset) * 10**13 + ts_ms``
   (VERY_HIGH=1 … TIDE=5; lower rank = higher priority, FIFO within rank)
 * Time-gated dequeue: delayed tasks become visible only after scheduled_at
 * CircuitBreaker integration (three-state: CLOSED→OPEN→HALF_OPEN→CLOSED)
@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from async_scheduler.backends import InMemoryQueueBackend, QueueBackend
-from async_scheduler.core.models import Task, TaskPriority
+from async_scheduler.core.models import Task
 
 if TYPE_CHECKING:
     from async_scheduler.backends.base import QueueItem
@@ -37,24 +37,25 @@ from async_scheduler.backends.base import QueueItem  # noqa: E402
 _SCORE_PRIORITY_MULTIPLIER = 10**13
 
 
-def _encode_score(priority: TaskPriority, ts_ms: int | None = None) -> int:
+def _encode_score(priority: int, ts_ms: int | None = None) -> int:
     """Encode a composite sort score.
 
-    score = priority_rank * 10**13 + timestamp_ms
+    score = (priority + OFFSET) * 10**13 + timestamp_ms
 
-    Lower score → dequeued first (higher priority + earlier arrival).
+    Lower score → dequeued first. priority is a plain int where lower = higher priority.
+    An offset of 100 ensures all typical negative priorities map to positive ranks.
     """
-    rank = priority.priority_rank if hasattr(priority, "priority_rank") else int(priority)
+    rank = priority + 100  # offset so even negative int priorities give positive rank
     if ts_ms is None:
         ts_ms = int(time.time() * 1000)
     return rank * _SCORE_PRIORITY_MULTIPLIER + ts_ms
 
 
 def _decode_score(score: int) -> tuple[int, int]:
-    """Decode (priority_rank, timestamp_ms) from a composite score."""
+    """Decode (priority, timestamp_ms) from a composite score."""
     rank = score // _SCORE_PRIORITY_MULTIPLIER
     ts_ms = score % _SCORE_PRIORITY_MULTIPLIER
-    return rank, ts_ms
+    return rank - 100, ts_ms  # subtract offset to recover original priority int
 
 
 class CapabilityQueueStats:
@@ -223,7 +224,7 @@ class QueueManager:
         in the future the task enters the delayed set; otherwise it enters the
         ready set immediately.
 
-        The composite sort score is: ``priority_rank * 10**13 + ts_ms``
+        The composite sort score is: ``(priority+100) * 10**13 + ts_ms``
         where ``ts_ms`` is the ready-at timestamp in milliseconds.
         """
         cap = capability or getattr(task, "capability", None) or getattr(task, "task_type", "default")
@@ -277,7 +278,7 @@ class QueueManager:
         """Atomically cancel a queued or scheduled task."""
         return await self._backend.cancel(task_id)
 
-    async def update_priority(self, task_id: str, new_priority: TaskPriority) -> bool:
+    async def update_priority(self, task_id: str, new_priority: int) -> bool:
         """Atomically re-prioritize a pending task."""
         return await self._backend.update_priority(task_id, new_priority)
 
@@ -404,11 +405,11 @@ class QueueManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def encode_score(priority: TaskPriority, ts_ms: int | None = None) -> int:
+    def encode_score(priority: int, ts_ms: int | None = None) -> int:
         """Compute Redis sort score for *priority* and optional timestamp."""
         return _encode_score(priority, ts_ms)
 
     @staticmethod
     def decode_score(score: int) -> tuple[int, int]:
-        """Decode (priority_rank, timestamp_ms) from a score."""
+        """Decode (priority, timestamp_ms) from a score."""
         return _decode_score(score)

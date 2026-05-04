@@ -9,7 +9,7 @@ import pytest
 redis_asyncio = pytest.importorskip("redis.asyncio")
 
 from async_scheduler.backends.redis import RedisCompletionDedupBackend, RedisLockBackend, RedisQueueBackend  # noqa: E402
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus  # noqa: E402
+from async_scheduler.core.models import Task, TaskStatus  # noqa: E402
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry  # noqa: E402
 from async_scheduler.platform.completion import TaskCompletionNode  # noqa: E402
 from async_scheduler.queue import QueueManager  # noqa: E402
@@ -29,7 +29,7 @@ async def _build_live_client(url: str):
     return client
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL, delay_seconds: int = 0) -> Task:
+def make_task(task_id: str, priority: int = 0, delay_seconds: int = 0) -> Task:
     scheduled_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
     return Task(
         id=task_id,
@@ -60,7 +60,7 @@ async def test_live_redis_delayed_promotion_multi_worker_race() -> None:
         await workers.register(WorkerInfo(worker_id="worker-a", name="a"))
         await workers.register(WorkerInfo(worker_id="worker-b", name="b"))
 
-        task = make_task("delayed-race", TaskPriority.NORMAL, delay_seconds=1)
+        task = make_task("delayed-race", 0, delay_seconds=1)
         await queue_manager.enqueue(task)
 
         first_attempt = await queue_manager.dequeue()

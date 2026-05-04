@@ -76,7 +76,7 @@ async def test_live_redis_consumer_failure_after_retry_budget_exhaustion_converg
 
     assert stored_task is not None
     assert stored_task.status == TaskStatus.FAILED
-    assert stored_task.error_message == "boom-3"
+    assert stored_task.error == "boom-3"
     assert stored_task.retry_count == 1
 
     assert latest_attempt is not None

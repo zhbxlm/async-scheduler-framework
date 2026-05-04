@@ -710,7 +710,41 @@ async def debug_summary(svc: ServiceContainer = Depends(_get_services)):
 
 @app.get("/quota/stats")
 async def quota_stats(svc: ServiceContainer = Depends(_get_services)):
-    return svc.quota_manager.stats()
+    raw = await svc.quota_manager.stats()
+
+    tenants = {}
+    total_queued = 0
+    total_running = 0
+    total_gpu = 0
+    total_actors = 0
+
+    for tenant_id, item in raw.items():
+        normalized = {
+            "queued": int(item.get("task_count", item.get("queued", 0))),
+            "running": int(item.get("running_count", item.get("running", 0))),
+            "gpu": int(item.get("gpu_count", item.get("gpu", 0))),
+            "actors": int(item.get("actor_count", item.get("actors", 0))),
+            "max_queued": item.get("max_queued", 0),
+            "max_running": item.get("max_running", 0),
+            "max_gpu": item.get("max_gpu", 0),
+            "max_actor": item.get("max_actor", 0),
+        }
+        tenants[tenant_id] = normalized
+        total_queued += normalized["queued"]
+        total_running += normalized["running"]
+        total_gpu += normalized["gpu"]
+        total_actors += normalized["actors"]
+
+    return {
+        "tenants": tenants,
+        "summary": {
+            "tenant_count": len(tenants),
+            "total_queued": total_queued,
+            "total_running": total_running,
+            "total_gpu": total_gpu,
+            "total_actors": total_actors,
+        },
+    }
 
 
 @app.get("/queues/capabilities")
@@ -1047,7 +1081,58 @@ async def get_async_proxy_stats(svc: ServiceContainer = Depends(_get_services)):
     """Get async proxy sidecar stats."""
     if svc.async_proxy_sidecar is None:
         raise HTTPException(status_code=404, detail="Async proxy not available")
-    return svc.async_proxy_sidecar.get_stats()
+    stats = dict(svc.async_proxy_sidecar.get_stats())
+    callback_control_plane = None
+    if getattr(svc, "callback_dispatcher", None) is not None:
+        try:
+            callback_control_plane = await svc.callback_dispatcher.get_stats()
+            stats["callback_control_plane"] = callback_control_plane
+        except Exception:
+            callback_control_plane = {"error": "unavailable"}
+            stats["callback_control_plane"] = callback_control_plane
+    if "event_summary" not in stats:
+        status_counts = stats.get("status_counts", {}) or {}
+        terminal_statuses = {"success", "failed", "cancelled", "timeout"}
+        callback_statuses = {"callback_requeued", "callback_dead_letter"}
+        stats["event_summary"] = {
+            "published_total": stats.get("published_total", 0),
+            "running_total": status_counts.get("running", 0),
+            "terminal_total": sum(status_counts.get(s, 0) for s in terminal_statuses),
+            "callback_event_total": sum(status_counts.get(s, 0) for s in callback_statuses),
+            "wait_requests_total": stats.get("wait_requests_total", 0),
+            "wait_timeouts_total": stats.get("wait_timeouts_total", 0),
+            "subscriber_errors_total": stats.get("subscriber_errors_total", 0),
+            "redis_publish_failures_total": stats.get("redis_publish_failures_total", 0),
+        }
+    else:
+        stats["event_summary"] = dict(stats["event_summary"])
+    if callback_control_plane is not None:
+        stats["event_summary"]["callback_control_plane"] = callback_control_plane
+    return stats
+
+
+def _augment_callback_control_plane_summary(stats: dict) -> dict:
+    stats = dict(stats)
+    recent_retry_events = stats.get("recent_retry_events", []) or []
+    recent_dead_letters = stats.get("recent_dead_letters", []) or []
+    stats["control_plane_summary"] = {
+        "retry_queue_size": stats.get("retry_queue_size", 0),
+        "dead_letter_size": stats.get("dead_letter_size", 0),
+        "queue_depth_total": stats.get("retry_queue_size", 0) + stats.get("dead_letter_size", 0),
+        "recent_retry_count": len(recent_retry_events),
+        "recent_dead_letter_count": len(recent_dead_letters),
+        "redis_backed": stats.get("redis_backed", False),
+    }
+    return stats
+
+
+@app.get("/callbacks/stats")
+async def get_callback_stats(svc: ServiceContainer = Depends(_get_services)):
+    """Get callback dispatcher retry/dead-letter stats."""
+    if svc.callback_dispatcher is None:
+        raise HTTPException(status_code=404, detail="Callback dispatcher not available")
+    stats = await svc.callback_dispatcher.get_stats()
+    return _augment_callback_control_plane_summary(stats)
 
 
 # ---------------------------------------------------------------------------
@@ -1061,6 +1146,14 @@ async def list_clusters(svc: ServiceContainer = Depends(_get_services)):
         raise HTTPException(status_code=404, detail="Cluster registry not available")
     clusters = await svc.cluster_registry.list_clusters()
     return {"clusters": [c.to_dict() for c in clusters]}
+
+
+@app.get("/clusters/stats")
+async def cluster_registry_stats(svc: ServiceContainer = Depends(_get_services)):
+    """Get cluster registry summary and recent routing decisions."""
+    if svc.cluster_registry is None:
+        raise HTTPException(status_code=404, detail="Cluster registry not available")
+    return await svc.cluster_registry.get_stats_async()
 
 
 @app.get("/clusters/{cluster_id}")

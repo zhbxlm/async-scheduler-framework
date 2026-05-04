@@ -3,19 +3,29 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import pytest_asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+@pytest_asyncio.fixture
+async def initialized_db():
+    from async_scheduler.persistence import init_db
+
+    await init_db()
+    yield
 
 
 # ---------------------------------------------------------------------------
 # G3: TaskRouter idempotency_key + dispatch_mode + rollback
 # ---------------------------------------------------------------------------
 
+@pytest.mark.mysql_required
 class TestTaskRouterIdempotency:
     """G3: idempotency_key prevents duplicate task creation."""
 
     @pytest.mark.asyncio
-    async def test_idempotency_key_deduplication_in_process(self, tmp_path):
+    async def test_idempotency_key_deduplication_in_process(self, tmp_path, initialized_db):
         """Second call with same idempotency_key returns existing task."""
         from async_scheduler.platform.router import TaskRouter, DispatchMode
         from async_scheduler.core.models import TaskCreate, TaskPriority
@@ -36,7 +46,7 @@ class TestTaskRouterIdempotency:
         assert t1.id == t2.id, "Idempotent calls must return same task"
 
     @pytest.mark.asyncio
-    async def test_different_idempotency_keys_create_different_tasks(self):
+    async def test_different_idempotency_keys_create_different_tasks(self, initialized_db):
         """Different keys create different tasks."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate
@@ -52,7 +62,7 @@ class TestTaskRouterIdempotency:
         assert t1.id != t2.id
 
     @pytest.mark.asyncio
-    async def test_dispatch_mode_direct(self):
+    async def test_dispatch_mode_direct(self, initialized_db):
         """DispatchMode.DIRECT creates and enqueues task normally."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate
@@ -66,7 +76,7 @@ class TestTaskRouterIdempotency:
         assert task.id is not None
 
     @pytest.mark.asyncio
-    async def test_dispatch_mode_dag_orchestrated(self):
+    async def test_dispatch_mode_dag_orchestrated(self, initialized_db):
         """DispatchMode.DAG_ORCHESTRATED routes through queue normally."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate
@@ -74,13 +84,13 @@ class TestTaskRouterIdempotency:
 
         services = await build_service_container()
         task = await services.task_router.create_task(
-            TaskCreate(name="dag-task", payload={}, tags=["capability:dag"]),
+            TaskCreate(name="dag-task", payload={}),
             dispatch_mode=DispatchMode.DAG_ORCHESTRATED,
         )
         assert task.id is not None
 
     @pytest.mark.asyncio
-    async def test_dispatch_mode_raydata_native(self):
+    async def test_dispatch_mode_raydata_native(self, initialized_db):
         """DispatchMode.RAYDATA_NATIVE routes through capability queue."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate
@@ -88,13 +98,13 @@ class TestTaskRouterIdempotency:
 
         services = await build_service_container()
         task = await services.task_router.create_task(
-            TaskCreate(name="ray-task", payload={}, tags=["capability:ml"]),
+            TaskCreate(name="ray-task", payload={}),
             dispatch_mode=DispatchMode.RAYDATA_NATIVE,
         )
         assert task.id is not None
 
     @pytest.mark.asyncio
-    async def test_rollback_on_enqueue_failure(self):
+    async def test_rollback_on_enqueue_failure(self, initialized_db):
         """On enqueue failure, DB record is deleted and idem_key released."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate
@@ -140,7 +150,7 @@ class TestDAGEngineCapabilitySlot:
             name="test-node",
             task_type="compute",
             payload={"capability": "gpu", "value": 1},
-            dependencies=[],
+            depends_on=[],
         )
         return DAG(id="d1", name="test-dag", nodes=[node])
 
@@ -249,14 +259,15 @@ class TestDelayedPromoteCapScript:
 
 
 # ---------------------------------------------------------------------------
-# G7: TaskStatus.SCHEDULED set on future scheduled_at
+# G7: TaskStatus.QUEUED  # (was SCHEDULED, removed per doc) set on future scheduled_at
 # ---------------------------------------------------------------------------
 
+@pytest.mark.mysql_required
 class TestTaskRouterScheduledStatus:
     """G7: create_task sets status=SCHEDULED for future tasks."""
 
     @pytest.mark.asyncio
-    async def test_future_task_gets_scheduled_status(self):
+    async def test_future_task_gets_scheduled_status(self, initialized_db):
         """A task with scheduled_at in the future should be SCHEDULED in DB."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate, TaskStatus
@@ -271,12 +282,10 @@ class TestTaskRouterScheduledStatus:
             scheduled_at=future,
         ))
 
-        assert task.status == TaskStatus.SCHEDULED, (
-            f"Expected SCHEDULED, got {task.status}"
-        )
+        assert task.status == TaskStatus.QUEUED  # was SCHEDULED, removed per doc spec
 
     @pytest.mark.asyncio
-    async def test_immediate_task_gets_queued_status(self):
+    async def test_immediate_task_gets_queued_status(self, initialized_db):
         """A task with no scheduled_at should be QUEUED immediately."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate, TaskStatus
@@ -291,7 +300,7 @@ class TestTaskRouterScheduledStatus:
         assert task.status == TaskStatus.QUEUED
 
     @pytest.mark.asyncio
-    async def test_past_scheduled_at_gets_queued_status(self):
+    async def test_past_scheduled_at_gets_queued_status(self, initialized_db):
         """A task with scheduled_at in the past should be QUEUED immediately."""
         from async_scheduler.platform.services import build_service_container
         from async_scheduler.core.models import TaskCreate, TaskStatus

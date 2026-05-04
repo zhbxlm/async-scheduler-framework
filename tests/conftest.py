@@ -11,11 +11,12 @@ import pytest_asyncio
 
 
 def _candidate_db_url() -> str:
+    db_port = os.environ.get("TEST_DB_PORT", os.environ.get("DB_PORT", "3307"))
     return os.environ.get(
         "TEST_DATABASE_URL",
         os.environ.get(
             "DATABASE_URL",
-            "mysql+asyncmy://async_scheduler:async_scheduler@127.0.0.1:3306/async_scheduler",
+            f"mysql+asyncmy://async_scheduler:async_scheduler@127.0.0.1:{db_port}/async_scheduler",
         ),
     )
 
@@ -102,18 +103,32 @@ async def _reset_db_engine_between_tests(request):
     os.environ['TEST_DATABASE_URL'] = _derive_test_db_url(request.node.nodeid)
     get_settings.cache_clear()
     await _ensure_database_exists(os.environ['TEST_DATABASE_URL'])
-    try:
-        from redis.asyncio import Redis
-        redis = Redis.from_url(f"redis://{os.environ.get('TEST_REDIS_HOST', '127.0.0.1')}:{os.environ.get('TEST_REDIS_PORT', '6379')}/0", decode_responses=True)
-        await redis.flushdb()
-        await redis.aclose()
-    except Exception:
-        pass
+    # Reset engine references so the new DB URL is picked up
     try:
         import async_scheduler.persistence.database as db
         db._engine = None
         db._session_factory = None
         db._bound_url = None
+    except Exception:
+        pass
+    # Ensure tables are created and data is clean
+    try:
+        from async_scheduler.persistence.database import init_db, get_session
+        await init_db()
+        # Truncate all tables to ensure isolation between tests in the same file
+        from async_scheduler.persistence.models import Base
+        from sqlalchemy import text
+        async with await get_session() as session:
+            for table in reversed(Base.metadata.sorted_tables):
+                await session.execute(text(f"DELETE FROM `{table.name}`"))
+            await session.commit()
+    except Exception:
+        pass
+    try:
+        from redis.asyncio import Redis
+        redis = Redis.from_url(f"redis://{os.environ.get('TEST_REDIS_HOST', '127.0.0.1')}:{os.environ.get('TEST_REDIS_PORT', '6379')}/0", decode_responses=True)
+        await redis.flushdb()
+        await redis.aclose()
     except Exception:
         pass
     yield
@@ -133,7 +148,7 @@ def pytest_collection_modifyitems(config, items):
     db_url = _candidate_db_url()
     mysql_ok = db_url.startswith("mysql") and _mysql_reachable(db_url)
     redis_ok = _redis_reachable()
-    skip_mysql = pytest.mark.skip(reason="MySQL not reachable; set TEST_DATABASE_URL or start local MySQL")
+    skip_mysql = pytest.mark.skip(reason="MySQL not reachable; set TEST_DATABASE_URL / TEST_DB_PORT or start local MySQL")
     skip_redis = pytest.mark.skip(reason="Redis not reachable; set TEST_REDIS_HOST/PORT or start local Redis")
 
     for item in items:

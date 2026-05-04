@@ -144,7 +144,14 @@ async def build_service_container(
 
     step_executors = StepExecutors(enable_metrics=True)
     callback_dispatcher = CallbackDispatcher()
-    completion_node = TaskCompletionNode(callback_dispatcher, enable_metrics=True)
+    async_proxy_sidecar = AsyncProxySidecar(
+        redis_client=_try_redis_client(distributed_settings),
+    )
+    completion_node = TaskCompletionNode(
+        callback_dispatcher,
+        enable_metrics=True,
+        async_proxy_sidecar=async_proxy_sidecar,
+    )
     registry = await _build_default_registry()
 
     queue_manager = QueueManager(backend=queue_backend)
@@ -167,6 +174,7 @@ async def build_service_container(
         quota_manager=quota_manager,
         completion_node=completion_node,
         lock_backend=lock_backend,
+        async_proxy_sidecar=async_proxy_sidecar,
     )
 
     cron_scheduler = CronScheduler(
@@ -204,9 +212,7 @@ async def build_service_container(
             queue_manager=queue_manager,
         ),
         # G11: AsyncProxySidecar (Redis pub/sub or in-process fallback)
-        async_proxy_sidecar=AsyncProxySidecar(
-            redis_client=_try_redis_client(distributed_settings),
-        ),
+        async_proxy_sidecar=async_proxy_sidecar,
         # G12: ClusterRegistry (multi-cluster routing)
         cluster_registry=ClusterRegistry(
             redis_client=_try_redis_client(distributed_settings),

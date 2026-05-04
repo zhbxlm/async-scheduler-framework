@@ -13,7 +13,7 @@ from async_scheduler.backends.redis import (  # noqa: E402
     RedisLockBackend,
     RedisQueueBackend,
 )
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus  # noqa: E402
+from async_scheduler.core.models import Task, TaskStatus  # noqa: E402
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry  # noqa: E402
 
 
@@ -36,7 +36,7 @@ def make_task(task_id: str) -> Task:
         id=task_id,
         name=f"task-{task_id}",
         payload={"task_id": task_id},
-        priority=TaskPriority.HIGH,
+        priority=-1,
         status=TaskStatus.PENDING,
         created_at=datetime.utcnow(),
     )
@@ -92,15 +92,15 @@ async def test_live_redis_queue_atomic_paths_smoke() -> None:
         assert promoted is not None
         assert promoted.id == delayed.id
 
-        reprio = make_task("live-reprio", TaskPriority.LOW)
+        reprio = make_task("live-reprio", 4)
         await queue.enqueue(reprio)
-        assert await queue.update_priority(reprio.id, TaskPriority.HIGH) is True
+        assert await queue.update_priority(reprio.id, -1) is True
         reprio_popped = await queue.dequeue()
         assert reprio_popped is not None
         assert reprio_popped.id == reprio.id
-        assert reprio_popped.priority == TaskPriority.HIGH
+        assert reprio_popped.priority == -1
 
-        cancelled = make_task("live-cancel", TaskPriority.NORMAL)
+        cancelled = make_task("live-cancel", 0)
         await queue.enqueue(cancelled)
         assert await queue.cancel(cancelled.id) is True
         assert await queue.dequeue() is None

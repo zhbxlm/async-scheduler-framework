@@ -6,7 +6,7 @@ pytestmark = pytest.mark.redis_required
 
 
 from async_scheduler.backends.redis import RedisQueueBackend
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from tests.fake_redis import FullFakeAsyncRedis
 
 
@@ -14,7 +14,7 @@ class FakeAsyncRedis(FullFakeAsyncRedis):
     """Simple full-featured fake (no race injection)."""
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -42,16 +42,16 @@ async def test_real_redis_queue_backend_cancel_removes_ready_task() -> None:
 async def test_real_redis_queue_backend_update_priority_requeues_task() -> None:
     client = FakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
-    task = make_task("reprioritize", TaskPriority.LOW)
+    task = make_task("reprioritize", 4)
 
     await backend.enqueue(task)
-    updated = await backend.update_priority(task.id, TaskPriority.HIGH)
+    updated = await backend.update_priority(task.id, -1)
     popped = await backend.dequeue()
 
     assert updated is True
     assert popped is not None
     assert popped.id == task.id
-    assert popped.priority == TaskPriority.HIGH
+    assert popped.priority == -1
 
 
 @pytest.mark.asyncio
@@ -59,13 +59,13 @@ async def test_real_redis_queue_backend_size_reflects_ready_and_delayed() -> Non
     client = FakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    await backend.enqueue(make_task("high", TaskPriority.HIGH))
-    await backend.enqueue(make_task("normal", TaskPriority.NORMAL))
+    await backend.enqueue(make_task("high", -1))
+    await backend.enqueue(make_task("normal", 0))
 
     sizes = await backend.size()
 
-    assert sizes[TaskPriority.HIGH.value] == 1
-    assert sizes[TaskPriority.NORMAL.value] == 1
+    assert sizes[-1] == 1
+    assert sizes[0] == 1
 
 
 @pytest.mark.asyncio
@@ -73,8 +73,8 @@ async def test_real_redis_queue_backend_clear_resets_all_keys() -> None:
     client = FakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    await backend.enqueue(make_task("t1", TaskPriority.HIGH))
-    await backend.enqueue(make_task("t2", TaskPriority.LOW))
+    await backend.enqueue(make_task("t1", -1))
+    await backend.enqueue(make_task("t2", 4))
     await backend.clear()
 
     assert await backend.dequeue() is None

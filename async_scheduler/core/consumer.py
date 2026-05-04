@@ -10,6 +10,7 @@ from async_scheduler.core.models import ExecutionAttemptCreate, ExecutionAttempt
 from async_scheduler.executor import TaskExecutor
 from async_scheduler.observability import task_context
 from async_scheduler.persistence import ExecutionAttemptRepository, TaskRepository, get_session, get_session_no_context
+from async_scheduler.platform.async_proxy import AsyncProxySidecar, TaskEvent
 from async_scheduler.platform.completion import TaskCompletionNode
 from async_scheduler.platform.quota import TenantQuotaManager
 from async_scheduler.queue import QueueManager
@@ -30,6 +31,7 @@ class TaskConsumer:
         quota_manager: TenantQuotaManager | None = None,
         completion_node: TaskCompletionNode | None = None,
         lock_backend: LockBackend | None = None,
+        async_proxy_sidecar: AsyncProxySidecar | None = None,
         worker_id: str | None = None,
         lease_ttl_seconds: float = 30.0,
         heartbeat_interval_seconds: float = 10.0,
@@ -44,6 +46,7 @@ class TaskConsumer:
         self._quota_manager = quota_manager
         self._completion_node = completion_node or TaskCompletionNode()
         self._lock_backend = lock_backend
+        self._async_proxy_sidecar = async_proxy_sidecar
         self._worker_id = worker_id or "local-worker"
         self._lease_ttl_seconds = lease_ttl_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
@@ -150,12 +153,6 @@ class TaskConsumer:
             await self._update_task_status(task, TaskStatus.CANCELLED)
             return None
 
-        # G7: if task was in SCHEDULED state (just promoted from delayed queue),
-        # update DB status to QUEUED now that it is actually being consumed.
-        if task.status == TaskStatus.SCHEDULED:
-            async with await get_session_no_context() as _session:
-                task = await TaskRepository.update(_session, task.id, status=TaskStatus.QUEUED) or task
-
         if self._quota_manager is not None:
             try:
                 self._quota_manager.release_queue(task.tenant_id)
@@ -207,6 +204,7 @@ class TaskConsumer:
 
         task.status = TaskStatus.RUNNING
         await self._update_task_status(task, TaskStatus.RUNNING)
+        await self._publish_running_event(task, attempt_id=attempt_id)
 
         return task, handle, attempt_id
 
@@ -289,7 +287,6 @@ class TaskConsumer:
                         attempt_id,
                         status=attempt_status,
                         error_message=error_message,
-                        result_payload=result_data,
                     )
 
 
@@ -335,6 +332,24 @@ class TaskConsumer:
             async with get_session() as session:
                 await ExecutionAttemptRepository.update(session, attempt_id, last_heartbeat_at=datetime.utcnow())
 
+    async def _publish_running_event(self, task: Task, attempt_id: str | None = None) -> None:
+        if self._async_proxy_sidecar is None:
+            return
+        try:
+            await self._async_proxy_sidecar.publish(
+                TaskEvent(
+                    task_id=task.id,
+                    status=TaskStatus.RUNNING.value,
+                    completion_kind="running",
+                    task_name=task.name,
+                    tenant_id=task.tenant_id,
+                    attempt_id=attempt_id,
+                    callback_url=task.callback_url,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish running async proxy event for task %s", task.id)
+
     async def _update_task_status(
         self,
         task: Task,
@@ -350,7 +365,7 @@ class TaskConsumer:
             if status in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.TIMEOUT):
                 update_data["completed_at"] = now
             if error_message:
-                update_data["error_message"] = error_message
+                update_data["error"] = error_message
             if result:
                 update_data["result"] = result
             await TaskRepository.update(session, task.id, **update_data)

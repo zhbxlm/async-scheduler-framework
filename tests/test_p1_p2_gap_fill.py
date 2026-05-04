@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from async_scheduler.backends.memory import InMemoryQueueBackend
-from async_scheduler.core.models import Task, TaskStatus, TaskPriority
+from async_scheduler.core.models import Task, TaskStatus
 from async_scheduler.platform.reconciler import ReconciliationConfig, TaskReconciler
 from async_scheduler.queue.manager import QueueManager
 from async_scheduler.scheduler.cron import CronScheduler
@@ -19,7 +19,7 @@ def _make_task(task_type: str = "default") -> Task:
         id=f"task-{task_type}-{id(object())}",
         name=f"test-{task_type}",
         task_type=task_type,
-        priority=TaskPriority.NORMAL,
+        priority=0,
         payload={},
         status=TaskStatus.QUEUED,
         tenant_id="tenant-1",
@@ -100,15 +100,14 @@ async def test_task_router_infers_capability():
 
         task_create = TaskCreate(
             name="ml-job",
-            payload={},
+            payload={"capability": "ml-inference"},
             tenant_id="t1",
-            tags=["capability:ml-inference"],  # capability tag format
         )
         created_task = Task(
             id="task-ml-1",
             name="ml-job",
-            priority=TaskPriority.NORMAL,
-            payload={},
+            priority=0,
+            payload={"capability": "ml-inference"},
             status=TaskStatus.QUEUED,
             tenant_id="t1",
             retry_count=0,
@@ -116,7 +115,6 @@ async def test_task_router_infers_capability():
             timeout_seconds=30,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
-            tags=["capability:ml-inference"],
         )
         mock_repo.create = AsyncMock(return_value=created_task)
         mock_repo.update = AsyncMock(return_value=created_task)

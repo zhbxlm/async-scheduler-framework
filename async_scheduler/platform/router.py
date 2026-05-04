@@ -43,7 +43,7 @@ class TaskRouter:
     """Creates tasks, applies scheduling rules, and enqueues them.
 
     Supports:
-    - Capability inference from task.tags
+    - Capability inference from task payload/tags
     - idempotency_key: atomic Redis NX claim prevents duplicate task creation
     - dispatch_mode: routes task to the appropriate execution path
     - rollback: cleans up DB + Redis on enqueue failure
@@ -97,8 +97,7 @@ class TaskRouter:
 
             try:
                 if scheduled_at and scheduled_at > datetime.utcnow():
-                    # G7: future scheduled_at → status = SCHEDULED
-                    task = await TaskRepository.update(session, task.id, status=TaskStatus.SCHEDULED) or task
+                    task = await TaskRepository.update(session, task.id, status=TaskStatus.QUEUED) or task
                     await self._dispatch(task, dispatch_mode, scheduled_at=scheduled_at, capability=capability)
                 else:
                     task = await TaskRepository.update(session, task.id, status=TaskStatus.QUEUED) or task
@@ -208,8 +207,13 @@ class TaskRouter:
 
 
 def _infer_capability(task: Task) -> str:
-    """Infer capability from task.tags list (tag format: 'capability:<name>')."""
-    for tag in (task.tags or []):
+    """Infer capability from task payload or tags."""
+    # Primary: payload["capability"] (doc-spec approach)
+    cap = (task.payload or {}).get("capability")
+    if cap:
+        return str(cap)
+    # Fallback: tags list with "capability:<name>" format (legacy)
+    for tag in (getattr(task, 'tags', None) or []):
         if isinstance(tag, str) and tag.startswith("capability:"):
             return tag.split(":", 1)[1].strip()
     return "default"

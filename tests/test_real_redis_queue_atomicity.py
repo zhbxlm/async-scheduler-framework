@@ -8,7 +8,7 @@ pytestmark = pytest.mark.redis_required
 
 
 from async_scheduler.backends.redis import RedisQueueBackend
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus
+from async_scheduler.core.models import Task, TaskStatus
 from tests.fake_redis import FullFakeAsyncRedis
 
 
@@ -31,7 +31,7 @@ class RacingFakeAsyncRedis(FullFakeAsyncRedis):
         return await super().zrem(key, member)
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> Task:
+def make_task(task_id: str, priority: int = 0) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -64,7 +64,7 @@ async def test_reprioritize_does_not_duplicate_when_old_entry_removed_by_race() 
     client = RacingFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    task = make_task("race-reprio", TaskPriority.LOW)
+    task = make_task("race-reprio", 4)
     await backend.enqueue(task)
 
     # Simulate another worker dequeuing the task between hset and zrem
@@ -74,7 +74,7 @@ async def test_reprioritize_does_not_duplicate_when_old_entry_removed_by_race() 
             client.zsets[k].pop(member, None)
 
     client.on_zrem = steal_before_zrem
-    updated = await backend.update_priority(task.id, TaskPriority.HIGH)
+    updated = await backend.update_priority(task.id, -1)
 
     assert updated is False
     assert await backend.dequeue() is None
@@ -85,10 +85,10 @@ async def test_normal_reprioritize_still_moves_task_once() -> None:
     client = RacingFakeAsyncRedis()
     backend = RedisQueueBackend(redis_url="redis://localhost:6379/0", client=client)
 
-    task = make_task("normal-reprio", TaskPriority.LOW)
+    task = make_task("normal-reprio", 4)
     await backend.enqueue(task)
 
-    assert await backend.update_priority(task.id, TaskPriority.HIGH) is True
+    assert await backend.update_priority(task.id, -1) is True
     popped = await backend.dequeue()
     assert popped is not None
     assert popped.id == task.id

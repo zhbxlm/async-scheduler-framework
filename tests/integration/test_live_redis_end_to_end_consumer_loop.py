@@ -10,7 +10,7 @@ import pytest
 redis_asyncio = pytest.importorskip("redis.asyncio")
 
 from async_scheduler.backends.redis import RedisCompletionDedupBackend, RedisLockBackend, RedisQueueBackend  # noqa: E402
-from async_scheduler.core.models import Task, TaskPriority, TaskStatus  # noqa: E402
+from async_scheduler.core.models import Task, TaskStatus  # noqa: E402
 from async_scheduler.distributed.worker_registry import WorkerInfo, WorkerRegistry  # noqa: E402
 from async_scheduler.platform.completion import TaskCompletionNode  # noqa: E402
 from async_scheduler.platform.reconciler import ReconciliationConfig, RepairStrategy, TaskReconciler  # noqa: E402
@@ -31,7 +31,7 @@ async def _build_live_client(url: str):
     return client
 
 
-def make_task(task_id: str, priority: TaskPriority = TaskPriority.NORMAL, payload: dict[str, Any] | None = None) -> Task:
+def make_task(task_id: str, priority: int = 0, payload: dict[str, Any] | None = None) -> Task:
     return Task(
         id=task_id,
         name=f"task-{task_id}",
@@ -64,8 +64,8 @@ async def test_live_redis_end_to_end_consumer_loop() -> None:
 
         await workers.register(WorkerInfo(worker_id="worker-e2e", name="e2e"))
 
-        task1 = make_task("e2e-task-1", TaskPriority.HIGH, {"value": 1})
-        task2 = make_task("e2e-task-2", TaskPriority.NORMAL, {"value": 2})
+        task1 = make_task("e2e-task-1", -1, {"value": 1})
+        task2 = make_task("e2e-task-2", 0, {"value": 2})
         await queue_manager.enqueue(task1)
         await queue_manager.enqueue(task2)
 
@@ -134,7 +134,7 @@ async def test_live_redis_end_to_end_consumer_loop_with_duplicate_completion() -
         await workers.register(WorkerInfo(worker_id="worker-a-e2e", name="a"))
         await workers.register(WorkerInfo(worker_id="worker-b-e2e", name="b"))
 
-        task = make_task("e2e-duplicate", TaskPriority.HIGH, {"duplicate": True})
+        task = make_task("e2e-duplicate", -1, {"duplicate": True})
         await queue_manager.enqueue(task)
 
         candidate = await queue_manager.dequeue()
