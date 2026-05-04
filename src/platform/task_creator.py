@@ -16,6 +16,8 @@ import time
 import uuid
 from typing import Any
 
+from src.common.error_handling import log_errors, BusinessError
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +35,7 @@ class TaskCreator:
         self._qm = queue_manager
         self._db = db_session_factory
 
+    @log_errors(log_level="ERROR", raise_exception=True)
     async def create_task(
         self,
         *,

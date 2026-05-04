@@ -3,7 +3,21 @@ from __future__ import annotations
 import asyncio
 from fastapi import FastAPI
 
+from src.common.error_handling import (
+    SystemError,
+    BusinessError,
+    ExternalServiceError,
+    handle_system_error,
+    handle_business_error,
+    handle_external_service_error,
+)
+
 app = FastAPI(title="Ray Async API", version="0.1.0")
+
+# Register exception handlers
+app.add_exception_handler(SystemError, handle_system_error)
+app.add_exception_handler(BusinessError, handle_business_error)
+app.add_exception_handler(ExternalServiceError, handle_external_service_error)
 
 # ── Register ops/task routes ───────────────────────────────────────────────
 from src.api.routes.tasks import router as tasks_router
@@ -14,6 +28,7 @@ from src.api.routes.nodes import router as nodes_router
 from src.api.routes.ops import router as ops_router
 from src.api.routes.schedules import router as schedules_router
 from src.api.routes.tenants import router as tenants_router
+from src.api.routes.health import router as health_router
 
 for _r in (
     tasks_router,
@@ -24,6 +39,7 @@ for _r in (
     ops_router,
     schedules_router,
     tenants_router,
+    health_router,
 ):
     app.include_router(_r)
 
@@ -138,10 +154,10 @@ async def _call(obj, method: str):
     return result
 
 
-# ── Health ─────────────────────────────────────────────────────────────────
+# ── Legacy health endpoint (redirects to new health API) ──────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "note": "Use /health/ for detailed health checks"}
 
 
 # ── /callbacks/stats ───────────────────────────────────────────────────────

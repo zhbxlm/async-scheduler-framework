@@ -59,7 +59,7 @@ def log_errors(
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     return await func(*args, **kwargs)
-                except (BusinessError, HTTPException):
+                except (BusinessError, HTTPException, ValueError):
                     raise  # Don't log business errors at ERROR level
                 except Exception as exc:
                     logger.log(
@@ -81,7 +81,7 @@ def log_errors(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     return func(*args, **kwargs)
-                except (BusinessError, HTTPException):
+                except (BusinessError, HTTPException, ValueError):
                     raise
                 except Exception as exc:
                     logger.log(

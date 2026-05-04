@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from croniter import croniter
+from src.common.error_handling import log_errors, ExternalServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class CronScheduler:
     async def stop(self) -> None:
         self._running = False
 
+    @log_errors(log_level="WARNING", raise_exception=False)
     async def _run_loop(self) -> None:
         while self._running:
             if await self._try_become_leader():

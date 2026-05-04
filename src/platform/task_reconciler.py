@@ -16,6 +16,8 @@ import time
 import uuid
 from typing import Any
 
+from src.common.error_handling import log_errors, ExternalServiceError
+
 logger = logging.getLogger(__name__)
 
 _TASK_KEY_PATTERN = "task:*"
@@ -58,6 +60,7 @@ class TaskReconciler:
         self._running = False
         self._scan_cursor: int = 0
 
+    @log_errors(log_level="INFO", raise_exception=False)
     async def start(self) -> None:
         self._running = True
         logger.info("TaskReconciler started interval=%.1fs", self._interval)
@@ -84,22 +87,20 @@ class TaskReconciler:
             return True
         return False
 
+    @log_errors(log_level="WARNING", raise_exception=False)
     async def _loop(self) -> None:
         while self._running:
             await asyncio.sleep(self._interval)
             if not await self._try_become_leader():
                 continue  # not leader, skip tick
-            try:
-                task_batch = await self._scan_task_batch()
-                if task_batch:
-                    await asyncio.gather(
-                        self._phase1_double_write(task_batch),
-                        self._phase2_stuck_recovery(task_batch),
-                        self._phase3_lost_callback(task_batch),
-                        return_exceptions=True,
-                    )
-            except Exception as exc:
-                logger.error("TaskReconciler: tick error: %s", exc)
+            task_batch = await self._scan_task_batch()
+            if task_batch:
+                await asyncio.gather(
+                    self._phase1_double_write(task_batch),
+                    self._phase2_stuck_recovery(task_batch),
+                    self._phase3_lost_callback(task_batch),
+                    return_exceptions=True,
+                )
 
     async def _scan_task_batch(self) -> list[dict]:
         """SCAN Redis for task:* keys and return parsed task dicts."""
