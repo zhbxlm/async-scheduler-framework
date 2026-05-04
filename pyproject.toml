@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "async-scheduler"
+name = "ray-amu"
 version = "0.1.0"
-description = "Async scheduling framework with DAG execution, task queue, and cron scheduling"
+description = "Ray AMU — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Ducc", email = "ducc@baidu.com"},
+    {name = "Ray AMU Team"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -26,34 +26,39 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "sqlalchemy>=2.0.0",
-    "aiosqlite>=0.20.0",
-    "asyncmy>=0.2.9",
-    "pydantic>=2.0.0",
-    "alembic>=1.12.0",
-    "apscheduler>=3.10.0",
-    "croniter>=1.4.0",
-    "click>=8.1.0",
-    "python-dotenv>=1.0.0",
-    "PyYAML>=6.0.0",
+    "pymysql>=1.1.0",
+    "pydantic>=2.5.0",
     "redis>=5.0.0",
+    "httpx>=0.25.0",
+    "click>=8.1.0",
+    "PyYAML>=6.0.0",
+    "croniter>=2.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
+ray = [
+    "ray[default]>=2.9.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
-    "httpx>=0.25.0",
+    "fakeredis>=2.23.0",
     "ruff>=0.1.0",
     "mypy>=1.6.0",
-    "fakeredis>=2.23.0",
 ]
 
 [project.scripts]
-async-scheduler = "async_scheduler.cli.main:cli"
+ray-amu = "src.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["async_scheduler*"]
+include = ["src*", "config*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
+timeout = 60
 
 [tool.ruff]
 line-length = 100
@@ -67,4 +72,3 @@ ignore = ["E501"]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true

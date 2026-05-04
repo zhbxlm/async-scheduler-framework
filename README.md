@@ -1,580 +1,281 @@
-# Async Scheduler Framework
+# Ray AMU — Async Management Unit
 
-一个本地可运行、并已经演进到 **可验证的分布式调度内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
+> 基于 Ray 的企业级异步任务调度框架，提供 DAG 编排、多租户隔离、潮汐资源管理和长耗时服务代理能力。
 
-> 当前仓库已经具备一条可工作的 **real Redis-backed distributed kernel path**：包括 queue、lease / heartbeat、worker registry、execution attempts、completion idempotency、distributed reconciler，以及 executor / consumer / worker 之间收敛后的 retry exhaustion 语义。关键共享状态路径（queue / lock / completion dedupe / worker registry）已经支持真实 async Redis client；queue promotion 与 lock compare-and-act 等关键操作已补入 Lua/CAS 风格原子语义；同时保留无真实 Redis client 时的进程内 fallback 模式。仓库还提供 live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证套件，以及一组面向 finalize / callback / reconciler overlap 的高价值 fault-injection 测试。它仍然不是最终形态的生产级 deepwiki 等价实现，但已经具备真正多进程 / 多节点部署所需的核心语义与验证基础。
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-- FastAPI 任务 API
-- SQLite 持久化
-- 优先级队列与延时任务
-- 任务消费循环
-- 带超时 / 重试 / 取消的执行器
-- DAG 编排引擎（依赖、并行、条件、skip/fallback 基础能力）
-- Cron 定时调度
-- Worker 抽象和示例 worker
-- CLI 启动入口
-- Capability Registry
-- Tenant / Quota 基础治理
-- Reconciler 后台修复
+---
+
+## 项目介绍
+
+Ray AMU（Asynchronous Management Unit）构建在 Ray 分布式计算框架之上，结合 FastAPI、Redis 和 MySQL，提供完整的异步任务调度解决方案：
+
+- **DAG 编排引擎** — 拓扑排序、并行扇出、条件分支、MAP scatter-gather、STREAMING 流式处理
+- **任务执行引擎** — 分布式执行锁、后台锁续约、取消信号检测
+- **调度 Actor** — Ray Detached Named Actor，多 capability ActorPool，支持灰度发布
+- **队列管理器** — Redis Sorted Set 优先级队列、三态熔断器（CLOSED/OPEN/HALF_OPEN）、Lua 原子操作
+- **资源管理器** — 4 阶段节点分配（SELECT → RESERVE → INVITE → CONFIRM）、自动扩缩容
+- **Cron 调度器** — Redis Leader 选举、幂等触发、分布式防重
+- **配额执行器** — 多租户配额管理、Redis Lua atomic check-increment
+- **异步代理** — 长耗时 Flask 服务 Sidecar，Redis Pub/Sub 异步通知
+- **节点代理** — 资源探测、心跳所有权协议、Ray 集群加入/退出
+- **CLI 工具** — kubectl 风格命令行，管理集群/能力/任务/节点/调度/租户
+
+---
 
 ## 项目结构
 
-```text
-async_scheduler/
-  api/           # FastAPI 应用
-  cli/           # CLI 入口
-  backends/      # Backend 抽象层（支持内存/Redis 等可插拔存储）🆕
-  core/          # 核心模型与 consumer
-  dag/           # DAG 引擎 / loader / step executors
-  executor/      # 任务执行器
-  persistence/   # SQLAlchemy + repository
-  platform/      # router / quota / completion / reconciler / handlers
-  queue/         # 优先级队列（Backend 抽象）
-  registry/      # capability registry
-  scheduler/     # cron scheduler + schedule registry（Backend 抽象）
-  worker/        # worker 抽象与示例
-tests/           # pytest 测试
-examples/        # demo 文档
 ```
+ray-amu/
+├── config/                  # 分层配置
+│   ├── settings.py          # 全局单例 settings
+│   ├── _infra.py            # Redis + MySQL + 服务器配置
+│   ├── _task.py             # 任务执行配置
+│   ├── _dag.py              # DAG 编排配置
+│   ├── _scaling.py          # 扩缩容 + 熔断器配置
+│   ├── _background.py       # 后台守护任务配置
+│   └── _tenant.py           # 多租户配置
+├── src/
+│   ├── main.py              # API 服务入口
+│   ├── main_task_api.py     # Task API 独立部署入口
+│   ├── api/                 # RESTful API (FastAPI)
+│   │   ├── auth.py          # API Key 认证
+│   │   ├── dependencies.py  # FastAPI 依赖注入
+│   │   └── routes/          # tasks / dags / clusters / capabilities / nodes /
+│   │                        # schedules / tenants / ops
+│   ├── cli/                 # CLI 工具 (Click)
+│   │   ├── main.py          # ray-amu 主命令
+│   │   ├── client.py        # HTTP 客户端
+│   │   └── commands/        # cluster / capability / node / task / schedule /
+│   │                        # queue / deploy / tenant / worker / dag
+│   ├── agent/               # 节点代理
+│   │   ├── server.py        # FastAPI HTTP 服务
+│   │   ├── config.py        # 代理配置
+│   │   ├── heartbeat.py     # 所有权协议 + 心跳 (Lua CAS)
+│   │   ├── resource_detector.py  # CPU/GPU/内存探测 (60s 缓存)
+│   │   ├── ray_manager.py   # ray start/stop 幂等管理
+│   │   └── deploy_manager.py     # 部署包下载/校验/解压
+│   ├── common/
+│   │   ├── db.py            # SQLAlchemy Base + get_db()
+│   │   └── redis_client.py  # Redis 客户端工厂
+│   ├── models/              # Pydantic/ORM 数据模型
+│   │   ├── task.py          # TaskRecord / TaskStatus / TaskPriority / TaskDispatchMode
+│   │   ├── dag.py           # DagStep / DagDefinition / DagContext / StepKind
+│   │   ├── capability.py    # CapabilityInfo / ActorConfig
+│   │   ├── cluster.py       # ClusterInfo / ClusterResources
+│   │   ├── node.py          # NodeInfo / NodeState / NodeResources / NodeLease
+│   │   ├── schedule.py      # ScheduleRecord / ScheduleInfo
+│   │   ├── tenant.py        # TenantInfo / TenantQuota
+│   │   ├── deploy.py        # DeployedPackageInfo / DeployRequest
+│   │   └── tenant_context.py     # TenantContext (per-request)
+│   ├── platform/            # 平台核心
+│   │   ├── dag_engine.py    # DAG 执行引擎（含 STREAMING）
+│   │   ├── dag_loader.py    # YAML + Redis DAG 加载
+│   │   ├── step_executors.py     # Sync/Async/Map 步骤执行器
+│   │   ├── task_executor.py      # 任务执行服务层
+│   │   ├── task_consumer.py      # 任务消费循环
+│   │   ├── task_router.py        # 任务路由
+│   │   ├── task_completion_node.py  # 任务完成节点（持久化+回调）
+│   │   ├── task_reconciler.py    # 三阶段对账修复
+│   │   ├── cron_scheduler.py     # Cron 调度器（Leader 选举）
+│   │   ├── schedule_registry.py  # 调度表 CRUD
+│   │   ├── queue_manager.py      # 优先级队列 + 熔断器
+│   │   ├── queue_keys.py         # Redis 键命名工具
+│   │   ├── circuit_breaker.py    # 三态熔断器
+│   │   ├── resource_manager.py   # 节点分配 + 自动扩缩容
+│   │   ├── node_registry.py      # 节点注册表
+│   │   ├── capability_registry.py  # 能力注册表
+│   │   ├── cluster_registry.py   # 集群注册表
+│   │   ├── quota_enforcer.py     # 配额执行器
+│   │   ├── tenant_registry.py    # 租户注册表
+│   │   ├── base_registry.py      # Redis 注册表基类
+│   │   ├── raydata_client.py     # RayData HTTP 客户端
+│   │   └── remote_code_fetcher.py  # 远程代码获取
+│   ├── proxy/
+│   │   ├── async_service_proxy.py  # 长耗时服务 Sidecar
+│   │   └── async_command_proxy.py  # 命令代理
+│   └── workload/
+│       ├── scheduler_actor.py    # Ray Detached Actor 入口
+│       ├── actor_pool_manager.py # ActorPool 管理
+│       ├── base_worker_actor.py  # Worker 基类
+│       ├── async_proxy_worker.py # 异步代理 Worker
+│       ├── worker_dev_kit.py     # 开发调试工具
+│       ├── node_registry.py      # 工作负载节点注册
+│       └── resource_manager.py   # 工作负载资源管理
+├── tests/                   # pytest 测试套件 (474+ 测试)
+├── examples/                # 使用示例
+├── scripts/                 # 验证脚本
+│   ├── dag_deploy_verify.py # 4 类 DAG 部署验证
+│   └── dag_streaming_verify.py  # STREAMING DAG 验证
+├── Dockerfile               # 多阶段镜像 (api / task-api / agent)
+├── docker-compose.yml       # 完整部署编排
+├── pyproject.toml           # 包配置 (src/ 布局)
+└── setup.py                 # 兼容 setuptools
+```
+
+---
 
 ## 快速开始
 
-### 1. 安装依赖
+### 本地开发
 
 ```bash
-cd /home/gem/.openclaw/workspace/projects/async-scheduler-framework
-python3 -m pip install -e .[dev] --no-build-isolation
-```
+# 1. 安装依赖
+pip install -e ".[dev]"
 
-### 2. 初始化数据库
+# 2. 启动 Redis + MySQL (Docker)
+docker-compose up -d redis mysql
 
-```bash
-async-scheduler init-db-cmd --force
-```
+# 3. 启动 API 服务
+MYSQL_PORT=3307 MYSQL_DATABASE=async_scheduler_test uvicorn src.main:app --reload
 
-### 3. 启动 API
-
-```bash
-async-scheduler api --init-db
-```
-
-打开：
-- http://127.0.0.1:8000/docs
-- http://127.0.0.1:8000/health
-
-### 4. 启动开发模式
-
-```bash
-async-scheduler dev --init-db
-```
-
-### 5. 运行测试
-
-```bash
+# 4. 运行测试
 pytest -q
 ```
 
-### 6. 运行烟雾测试
-
-烟雾测试用于验证框架的核心功能是否正常工作：
+### Docker 一键部署
 
 ```bash
-python -m scripts.smoke_test
+# 构建并启动全部服务
+docker-compose up -d
+
+# 服务端口
+# API:       http://localhost:8000
+# Task API:  http://localhost:8001
+# Agent:     http://localhost:9100
+# MySQL:     localhost:3307
+# Redis:     localhost:6379
 ```
 
-> 当前 `scripts/smoke_test.py` 主要覆盖内存模式和基础框架可用性；涉及真实 Redis 共享状态语义的验证请使用下面的 integration tests。
-
-### 7. 运行 Redis 集成测试
-
-当前仓库支持两类 Redis 相关验证：
-
-#### 7.1 shared-client / fallback 集成测试
+### CLI 使用
 
 ```bash
-pytest -q tests/integration/test_real_redis_coordination.py
-pytest -q tests/integration/test_real_redis_coordination_more.py
-pytest -q tests/integration/test_real_redis_recovery_invariants.py
+# 查看集群状态
+ray-amu cluster list
+
+# 注册能力
+ray-amu capability register --name cap_preprocess --endpoint http://worker:8080
+
+# 提交任务
+ray-amu task submit --capability cap_preprocess --payload '{"data": "..."}'
+
+# 查看队列
+ray-amu queue stats --capability cap_preprocess
+
+# 创建 Cron 调度
+ray-amu schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
 ```
 
-如果环境里安装了 `fakeredis` 且其 `fakeredis.aioredis` 可用，还可以运行：
+---
 
-```bash
-pytest -q tests/integration/test_fakeredis_coordination.py
-```
+## DAG 示例
 
-若 `fakeredis.aioredis` 不可用，该测试会自动 skip，这是预期行为。
-
-#### 7.2 live Redis 验证套件（推荐）
-
-当你有真实 Redis / Redis-compatible 环境时，优先跑下面这组：
-
-```bash
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_smoke_test.py
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py                 # all
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py smoke           # smoke only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py recovery        # recovery only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap         # overlap/race only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap --fail-fast
-```
-
-也可以按文件单跑：
-
-```bash
-pytest -q tests/integration/test_live_redis_smoke.py
-pytest -q tests/integration/test_live_redis_recovery.py
-pytest -q tests/integration/test_live_redis_completion_overlap.py
-pytest -q tests/integration/test_live_redis_duplicate_completion_overlap.py
-pytest -q tests/integration/test_live_redis_lease_loss_completion_race.py
-pytest -q tests/integration/test_live_redis_attempt_consistency_overlap.py
-pytest -q tests/integration/test_live_redis_multi_worker_overlap.py
-pytest -q tests/integration/test_live_redis_multi_worker_delayed_promotion.py
-pytest -q tests/integration/test_live_redis_multi_worker_dead_owner_recovery.py
-pytest -q tests/integration/test_live_redis_end_to_end_consumer_loop.py
-pytest -q tests/integration/test_live_redis_consumer_recovery.py
-pytest -q tests/integration/test_live_redis_retry_exhaustion.py
-```
-
-说明：
-- 上述 `test_live_redis_*` 用例仅在设置 `TEST_REDIS_URL` 时运行
-- 未设置环境变量时会自动 skip，不影响默认本地回归
-
-### 8. 运行 distributed smoke test
-
-仓库还提供了一个 dedicated distributed smoke variant：
-
-```bash
-python3 scripts/distributed_smoke_test.py
-```
-
-它会：
-- 默认跑 shared fake async Redis client 的协调链 smoke
-- 如果环境中可用 `fakeredis.aioredis`，再追加跑一层 fakeredis compatibility smoke
-- 在缺少 fakeredis 模块时以 skip 方式降级，而不是报错失败
-
-如果你已经准备了可访问的真实 Redis / Redis-compatible 环境，还可以执行：
-
-```bash
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_smoke_test.py
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py                 # all
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py smoke           # smoke only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py recovery        # recovery only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap         # overlap/race only
-TEST_REDIS_URL=redis://localhost:6379/0 python3 scripts/live_redis_suite.py overlap --fail-fast
-
-# or run individual live Redis segments
-pytest -q tests/integration/test_live_redis_smoke.py
-pytest -q tests/integration/test_live_redis_recovery.py
-pytest -q tests/integration/test_live_redis_completion_overlap.py
-pytest -q tests/integration/test_live_redis_duplicate_completion_overlap.py
-pytest -q tests/integration/test_live_redis_lease_loss_completion_race.py
-pytest -q tests/integration/test_live_redis_attempt_consistency_overlap.py
-pytest -q tests/integration/test_live_redis_multi_worker_overlap.py
-pytest -q tests/integration/test_live_redis_multi_worker_delayed_promotion.py
-pytest -q tests/integration/test_live_redis_multi_worker_dead_owner_recovery.py
-pytest -q tests/integration/test_live_redis_end_to_end_consumer_loop.py
-pytest -q tests/integration/test_live_redis_consumer_recovery.py
-```
-
-说明：
-- `tests/integration/test_live_redis_smoke.py` 仅在设置 `TEST_REDIS_URL` 时运行
-- 未设置环境变量时会自动 skip，不影响默认本地回归
-
-## 常用 CLI
-
-### 创建任务
-
-```bash
-async-scheduler task demo --payload '{"capability":"echo","message":"hello"}'
-```
-
-### 创建调度
-
-```bash
-async-scheduler schedule heartbeat '*/5 * * * *' --payload '{"capability":"echo","message":"tick"}'
-```
-
-### 查看状态
-
-```bash
-async-scheduler status
-```
-
-### 手动跑一次 reconciler
-
-```bash
-async-scheduler reconcile
-```
-
-## 常用 API
-
-### 健康检查
-
-```bash
-curl http://127.0.0.1:8000/health
-# → {"status":"healthy","issues":[],"version":"1.0.0","uptime_seconds":12.3}
-
-# 完整内部指标（供 operator / dashboard 使用）
-curl http://127.0.0.1:8000/health/detail
-curl http://127.0.0.1:8000/queue/stats
-```
-
-说明：
-- `/health` 返回简洁信号：`status`（healthy/degraded/starting）+ `issues` 列表，适合负载均衡器和监控告警
-- `/health/detail` 返回完整内部指标（uptime、queue_size、worker_count 等）
-- `/queue/stats` 提供队列大小、调度数量与执行中任务统计
-- 更完整的恢复 / lease / worker 诊断请看下面的 observability 端点
-
-### 错误响应
-
-所有 4xx/5xx 错误均返回结构化 detail：
-
-```json
-{
-  "detail": {
-    "error_code": "TASK_NOT_FOUND",
-    "message": "Task not found"
-  }
-}
-```
-
-常用 error_code：`TASK_NOT_FOUND` / `SCHEDULE_NOT_FOUND` / `DAG_NOT_FOUND` / `QUOTA_EXCEEDED` / `SERVICE_UNAVAILABLE` 等。
-
-### 创建任务
-
-```bash
-curl -X POST http://127.0.0.1:8000/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name":"compute-task",
-    "tenant_id":"tenant-a",
-    "idempotency_key":"demo-task-1",
-    "payload":{"capability":"compute","operation":"add","a":1,"b":2}
-  }'
-```
-
-### 查看能力列表
-
-```bash
-curl http://127.0.0.1:8000/capabilities
-```
-
-### 创建 Schedule
-
-```bash
-curl -X POST http://127.0.0.1:8000/schedules \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name":"heartbeat",
-    "cron_expression":"*/5 * * * *",
-    "dedup_window_seconds":60,
-    "task_template":{"capability":"echo","message":"tick"}
-  }'
-```
-
-### Pause / Resume Schedule
-
-```bash
-curl -X POST http://127.0.0.1:8000/schedules/<schedule_id>/pause
-curl -X POST http://127.0.0.1:8000/schedules/<schedule_id>/resume
-```
-
-### 手动运行 Reconciler
-
-```bash
-curl -X POST http://127.0.0.1:8000/reconciler/run
-```
-
-### 创建租户
-
-```bash
-curl -X POST http://127.0.0.1:8000/tenants \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"team-a","config":{"max_queued":20,"max_running":5}}'
-```
-
-### 排障 API
-
-```bash
-# 系统快照（排障推荐入口）
-curl http://127.0.0.1:8000/debug/summary
-
-# 异常 lease 列表（anomaly_types 标注原因）
-curl http://127.0.0.1:8000/debug/leases/anomalies
-curl http://127.0.0.1:8000/debug/leases/anomalies/summary
-
-# 按条件过滤 lease
-curl 'http://127.0.0.1:8000/debug/leases?task_status=running&locked_only=true'
-curl http://127.0.0.1:8000/debug/leases/<task_id>
-
-# 任务执行历史
-curl http://127.0.0.1:8000/tasks/<task_id>/history
-curl http://127.0.0.1:8000/workers/<worker_id>/leases
-curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
-```
-
-## 端到端 Demo
-
-见：
-
-- `examples/end_to_end_demo.md`
-
-## 与 deepwiki 的对齐边界
-
-这个仓库当前应被视为：
-
-- **ray-amu / deepwiki 设计启发下的单机版 MVP**
-- **本地可运行、可测试、可演进的结构原型**
-- **不是 deepwiki 分布式平台的等价实现**
-
-### 已对齐的方向
-
-- TaskRouter / Queue / Consumer / Executor / DAGEngine 主链
-- 多租户 / quota 的基础治理语义
-- task idempotency 与 schedule dedup 的平台语义
-- capability registry 与 DAG loader 的基本分层
-- completion node / schedule registry / reconciler / step executors 的结构存在
-- CLI + API + persistence 的工程骨架
-
-### 尚未完全对齐的部分
-
-- 还没有 Ray / SchedulerActor / ActorPoolManager
-- 还没有 ResourceManager / NodeAgent / Cluster 管理
-- 还没有 Async Proxy sidecar 的真实实现
-- DAG 模型仍是简化版，尚未完整覆盖 step_kind / map / streaming / flask_wrapped 全语义
-- quota 仍是本地内存实现，不是 deepwiki 的 Redis 原子配额执行器
-- callback / side-effect delivery 仍是轻量实现，尚未扩展到真实外部交付保证链路
-- 仍缺更完整的生产级 live Redis 矩阵、压测、告警与运行时硬化
-
-## 当前状态
-
-这是一个 **已经具备真实 Redis 关键共享状态路径、恢复语义收敛、以及故障注入验证的分布式调度内核骨架仓库**，适合继续做二次开发，并进一步向 deepwiki 风格的生产级分布式平台收敛。
-
-### 当前已完成的关键能力
-
-- `RedisQueueBackend`：任务数据 / ready queue / delayed queue 使用真实 Redis 结构
-- `RedisLockBackend`：支持真实 lease 获取、释放、续期与锁存活判断
-- `RedisCompletionDedupBackend`：完成态幂等 claim-once
-- `WorkerRegistry`：worker heartbeat / TTL 存活判断
-- `TaskConsumer`：lease heartbeat
-- `TaskReconciler`：orphan recovery / distributed repair gating
-- `TaskCompletionNode`：终态持久化优先、回调失败不回滚终态
-- executor / consumer / worker：retry exhaustion 语义已经对齐收敛
-- observability：已有 `/debug/summary`（含 `anomaly_summary`）、`/debug/leases`、`/debug/leases/anomalies`、`/workers/<worker_id>/leases` 等排障端点
-
-### 当前验证覆盖
-
-- 单元测试与普通集成测试
-- shared-client / fallback Redis integration tests
-- live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证
-- control-point transient failure hardening (lock/queue/registry/completion/worker)
-- DAG 分支语义（fan-out/fan-in / partial success / cancellation-failure interplay）
-- delayed promotion under concurrent load
-- multi-control-point partition-like simulation
-- multi-worker overlap / dead-owner recovery / delayed promotion 验证
-- finalize / callback / reconciler overlap fault-injection tests
-- control-point failure hardening for heartbeat / completion dedupe / reconciler liveness lookup / requeue enqueue paths
-
-这意味着当前仓库已经不再是“只有 Redis-shaped 接口”的过渡原型，而是已经具备真正多进程 / 多节点部署所需的关键语义与一组比较扎实的验证护栏。
-
-## Backend 抽象层（Batch 1 - 已完成）
-
-框架现在引入了 **Backend 抽象层**，为分布式 deepwiki 架构的对齐做准备。当前实现支持：
-
-### 抽象接口
-
-- **QueueBackend** - 任务队列后端抽象
-  - `enqueue()` / `dequeue()` / `peek()` / `cancel()` / `update_priority()`
-  - 支持优先级队列和延时任务
-  - 当前实现：`InMemoryQueueBackend`（使用 `asyncio.PriorityQueue`）与 `RedisQueueBackend`（真实 Redis 数据结构）
-
-- **LockBackend** - 分布式锁后端抽象
-  - `acquire()` / `release()` / `extend()` / `is_locked()`
-  - 当前实现：`InMemoryLockBackend`（使用 `asyncio.Lock`）与 `RedisLockBackend`（真实 lease / TTL / compare-and-act）
-
-- **RegistryBackend** - 调度注册表后端抽象
-  - `create()` / `get()` / `list_active()` / `list_ready()`
-  - `advance_next_fire()` / `pause()` / `resume()`
-  - 当前实现：`InMemoryRegistryBackend`（使用 SQLite 持久化）
-  - 注：schedule registry 仍以本地持久化为主，分布式关键共享状态当前主要集中在 queue / lock / completion dedupe / worker registry
-
-### 使用方式
+### 线性 Pipeline
 
 ```python
-from async_scheduler.backends import BackendConfig, BackendFactory
+from src.models.dag import DagDefinition, DagStep, RetryPolicy, ExecutionMode, StepKind
+from src.platform.dag_engine import DagEngine
 
-# 使用默认内存后端（当前行为）
-from async_scheduler.platform import build_service_container
-services = await build_service_container()
-
-# 配置自定义后端（未来支持 Redis 等）
-config = BackendConfig(
-    queue_type="redis",
-    lock_type="redis",
-    registry_type="memory",
-    redis_url="redis://localhost:6379/0",
-    lease_ttl_seconds=30,
-    heartbeat_interval_seconds=10,
+dag = DagDefinition(
+    dag_id="pipeline_001",
+    tenant_id="tenant_a",
+    steps=[
+        DagStep(step_name="A", capability="cap_preprocess", step_kind=StepKind.TASK,
+                execution_mode=ExecutionMode.SYNC, depends_on=[], ...),
+        DagStep(step_name="B", capability="cap_transform", step_kind=StepKind.TASK,
+                execution_mode=ExecutionMode.SYNC, depends_on=["A"], ...),
+    ],
 )
-services = await build_service_container(backend_config=config)
 
-# 当前阶段说明：
-# - 这会启用 distributed_settings 配置通路
-# - 当前 queue / lock / completion dedupe / worker registry 已支持真实 async Redis client 路径
-# - queue promotion 与 lock compare-and-act 等关键路径已具备 Lua/CAS 风格原子语义
-# - 若环境未提供 redis client / live backend，仍可退回测试友好的 fallback 语义
-# - 更完整的生产级运行时硬化、压测与外部 side-effect 交付保证仍在后续阶段
+engine = DagEngine()
+ctx = await engine.execute(dag, my_dispatcher, initial_context={"task_id": "t1"})
 ```
 
-## StepExecutors 增强（Batch 2 - 已完成）
-
-Batch 2 加强了 StepExecutors 组件，使其成为 DAG 执行的核心：
-
-### 新增功能
-
-- **ExecutionStatus** - 步骤执行状态枚举（pending, running, completed, failed, timeout, cancelled）
-- **StepExecutionResult** - 包含状态、值、错误、执行时间等详细信息的执行结果
-- **ExecutionMetrics** - 跟踪成功率和平均执行时间
-- **异步执行支持** - `get_async_result()` 和 `cancel_execution()` 用于管理异步执行
-- **指标收集** - 可选的执行指标跟踪
-
-### 使用示例
+### STREAMING 流式处理
 
 ```python
-from async_scheduler.dag import StepExecutors, ExecutionMode, StepExecutionContext
-
-executors = StepExecutors(enable_metrics=True)
-
-# 执行步骤
-ctx = StepExecutionContext(
-    task_type="my_task",
-    payload={"data": "value"},
-    timeout_seconds=30,
-)
-
-result = await executors.execute(ExecutionMode.SYNC, ctx, handler)
-print(f"Status: {result.status}, Value: {result.value}, Duration: {result.duration_ms}ms")
-
-# 获取指标
-metrics = executors.get_metrics()
-print(f"Success rate: {metrics.get_success_rate()}%")
-```
-
-## ScheduleRegistry 生命周期扩展（Batch 2 - 已完成）
-
-Batch 2 扩展了 ScheduleRegistry 的生命周期控制能力：
-
-### 新增操作
-
-- `delete(schedule_id)` - 删除调度
-- `update(schedule_id, **updates)` - 更新调度属性
-- `pause_all(tenant_id=None)` - 批量暂停（可选租户范围）
-- `resume_all(tenant_id=None)` - 批量恢复（可选租户范围）
-- `delete_all(tenant_id=None, status=None)` - 批量删除
-- `get_count(status=None)` - 按状态计数
-- `exists(schedule_id)` - 检查调度是否存在
-- `get_by_name(name, tenant_id=None)` - 按名称查找
-
-## 平台组件集成（Batch 3 - 已完成）
-
-Batch 3 加强了 TaskCompletionNode 和 TaskReconciler 作为平台组件的集成：
-
-### TaskCompletionNode
-
-- **CompletionMetrics** - 跟踪完成统计和回调成功率
-- **Completion Handlers** - 注册自定义完成处理逻辑
-- **改进的错误处理** - 更好的日志记录和错误跟踪
-
-### TaskReconciler
-
-- **ReconciliationConfig** - 可配置的修复行为
-- **ReconciliationMetrics** - 详细的修复统计
-- **RepairStrategy** - 支持多种修复策略（mark_failed, requeue, ignore）
-- **Reconciliation Handlers** - 注册自定义修复处理逻辑
-- **孤立任务检测** - 检测长时间处于 queued 状态的任务
-
-### CapabilityRegistry
-
-- **增强的元数据** - 版本、作者、schema、时间戳
-- **启用/禁用** - 在不注销的情况下禁用能力
-- **使用跟踪** - 执行次数和最后执行时间
-- **标签搜索** - 按标签发现能力
-- **指标** - 注册表级别统计信息
-
-### 使用示例
-
-```python
-from async_scheduler.platform import (
-    TaskCompletionNode, TaskReconciler,
-    ReconciliationConfig, RepairStrategy,
-    CapabilityRegistry
-)
-
-# 创建增强的组件
-completion_node = TaskCompletionNode(enable_metrics=True)
-
-# 配置 reconciler
-reconciler = TaskReconciler(
-    config=ReconciliationConfig(
-        stuck_after_seconds=3600,
-        repair_strategy=RepairStrategy.MARK_FAILED,
+DagStep(
+    step_name="stream_producer",
+    step_kind=StepKind.STREAMING,
+    streaming_trigger=StreamingTrigger(
+        buffer_key="streaming:{task_id}:stream_producer",
+        trigger_condition="chunk_ready",
+        downstream_steps=["chunk_handler"],
+        flush_on_complete=True,
     ),
-    completion_node=completion_node,
-)
-
-# 注册处理程序
-def on_task_completed(task):
-    print(f"Task {task.id} completed with status {task.status}")
-
-completion_node.register_completion_handler(TaskStatus.SUCCESS, on_task_completed)
-
-# 增强的 capability registry
-registry = CapabilityRegistry()
-registry.register(
-    "my_capability",
-    handler,
-    description="My custom capability",
-    version="1.0.0",
-    tags=["custom", "v1"],
-    enabled=True,
+    ...
 )
 ```
 
-## 运行与架构参考文档
+Worker 通过 `rpush(buffer_key, json)` 推送 chunk，引擎消费并并发触发下游步骤，最后 `{"__done__": true, "summary": {...}}` 结束流。
 
-- `docs/runtime/distributed-deployment-guide.md`：如何以 true distributed mode 运行当前仓库（含单机多进程 / 小规模多节点示例）
-- `docs/reference/non-critical-shared-state-boundary.md`：哪些路径必须共享状态，哪些路径可以继续保持本地/聚合视图
-- `docs/reference/deepwiki-distributed-architecture-reference.md`：deepwiki 对齐状态、剩余 gap 与下一步建议
+---
 
-## DeepWiki 分布式对齐路线图
+## 配置
 
-| 阶段 | 状态 | 内容 |
-|------|------|------|
-| **Batch 1** | ✅ 已完成 | Backend 抽象层 + 内存实现，保持现有 API/CLI 行为不变 |
-| **Batch 2** | ✅ 已完成 | StepExecutors 增强 + ScheduleRegistry 生命周期扩展 |
-| **Batch 3** | ✅ 已完成 | TaskCompletionNode / TaskReconciler 集成 + CapabilityRegistry 增强 |
-| **Batch 4** | ✅ 已完成 | 可用性硬化：文档、API、验证套件、observability 补齐 |
-| **当前增量** | ✅ 已完成 | real Redis 关键路径、retry 语义收敛、lease observability、fault injection recovery tests |
-| **未来** | 🔜 待规划 | 更完整压测矩阵、生产级 side-effect 交付链路、更多运行时硬化 |
-
-## Docker 部署
-
-当前仓库已提供分服务 Docker 部署骨架，默认依赖：
-
-- MySQL 8（任务元数据）
-- Redis（队列/锁/协调）
-- api / worker / scheduler / reconciler 四个应用服务
-
-快速启动：
+所有配置通过环境变量控制，优先级：**环境变量 > YAML 文件 > 代码默认值**
 
 ```bash
-docker compose up -d --build
+# Redis
+REDIS_HOST=localhost  REDIS_PORT=6379  REDIS_DB=0
+
+# MySQL
+MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=ray_amu
+
+# API
+API_HOST=0.0.0.0  API_PORT=8000  RAY_AMU_API_KEY=your-key
+
+# DAG
+DAG_MAX_PARALLELISM=8  DAG_HTTP_TIMEOUT_SECONDS=300
+
+# Scaling
+SCALE_UP_THRESHOLD=0.8  SCALE_DOWN_THRESHOLD=0.2  SCALE_COOLDOWN_SECONDS=300
+
+# Agent
+AGENT_NODE_ID=node-01  AGENT_PORT=9100
 ```
 
-无 Docker 场景下，也可使用：
+---
+
+## 测试
 
 ```bash
-cp .env.example .env
-./scripts/run_local_split.sh start
+# 全量测试 (474 个)
+pytest -q
+
+# 单模块
+pytest tests/test_dag_engine.py -v
+
+# 部署验证 (需要 MariaDB 3307)
+python scripts/dag_deploy_verify.py      # 4 类 DAG
+python scripts/dag_streaming_verify.py   # STREAMING DAG
 ```
 
-详见：`docs/deployment/docker.md`
+---
+
+## 架构参考
+
+详细架构文档见 [`docs/deepwiki-reference/`](docs/deepwiki-reference/)：
+
+| 文档 | 说明 |
+|---|---|
+| [项目概述](docs/deepwiki-reference/项目概述.md) | 系统架构总览 |
+| [DAG 编排](docs/deepwiki-reference/DAG%20编排.md) | DAG 引擎设计 |
+| [任务执行](docs/deepwiki-reference/任务执行.md) | 执行引擎与对账 |
+| [队列管理](docs/deepwiki-reference/队列管理.md) | Redis 队列 + 熔断器 |
+| [调度与资源管理](docs/deepwiki-reference/调度与资源管理.md) | 节点分配 + 扩缩容 |
+| [节点代理](docs/deepwiki-reference/节点代理.md) | 所有权协议 + 资源探测 |
+| [Cron 调度](docs/deepwiki-reference/Cron%20调度.md) | 分布式 Cron |
+| [配额与多租户](docs/deepwiki-reference/配额与多租户.md) | 多租户隔离 |
+| [配置说明](docs/deepwiki-reference/配置说明.md) | 完整配置参数 |
+| [API 参考](docs/deepwiki-reference/API%20参考.md) | RESTful API |
+| [命令行工具](docs/deepwiki-reference/命令行工具.md) | CLI 命令参考 |
+| [Worker 开发](docs/deepwiki-reference/Worker%20开发.md) | 自定义 Worker |
+| [异步代理](docs/deepwiki-reference/异步代理.md) | Sidecar 代理 |
+
+---
+
+## License
+
+MIT

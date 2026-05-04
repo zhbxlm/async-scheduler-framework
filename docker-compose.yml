@@ -1,91 +1,130 @@
 version: '3.9'
 
-x-common-env: &common-env
-  DATABASE_URL: mysql+asyncmy://async_scheduler:async_scheduler@mysql:3306/async_scheduler
-  REDIS_URL: redis://redis:6379/0
-  QUEUE_TYPE: redis
-  LOCK_TYPE: redis
-  REGISTRY_TYPE: memory
-  LOG_FORMAT: json
-  LOG_LEVEL: INFO
-  INIT_DB_ON_START: "true"
+# ── 公共环境变量 ──────────────────────────────────────────────────────────
+x-env: &env
+  # MySQL (port 3307 on host, 3306 inside container)
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: ray_amu
+  MYSQL_PASSWORD: ray_amu
+  MYSQL_DATABASE: ray_amu
 
-x-app-base: &app-base
+  # Redis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+
+  # API
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  RAY_AMU_API_KEY: dev-secret-key
+
+  # Misc
+  LOG_LEVEL: INFO
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: /app
+
+x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
-  image: async-scheduler-framework:latest
+    target: api
+  image: ray-amu:latest
   restart: unless-stopped
   environment:
-    <<: *common-env
+    <<: *env
   depends_on:
-    redis:
-      condition: service_started
     mysql:
       condition: service_healthy
+    redis:
+      condition: service_started
 
+# ── Services ──────────────────────────────────────────────────────────────
 services:
+
+  # ── Infrastructure ──
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   mysql:
     image: mysql:8.0
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: async_scheduler
-      MYSQL_USER: async_scheduler
-      MYSQL_PASSWORD: async_scheduler
-    command: ["mysqld", "--default-authentication-plugin=mysql_native_password"]
+      MYSQL_DATABASE: ray_amu
+      MYSQL_USER: ray_amu
+      MYSQL_PASSWORD: ray_amu
+    command:
+      - mysqld
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     ports:
-      - "3306:3306"
+      - "3307:3306"      # expose as 3307 on host (matches dev MySQL port)
+    volumes:
+      - mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
       interval: 10s
       timeout: 5s
       retries: 20
-      start_period: 20s
-    volumes:
-      - mysql_data:/var/lib/mysql
+      start_period: 30s
 
+  # ── Application services ──
   api:
-    <<: *app-base
-    command: ["async-scheduler", "api", "--host", "0.0.0.0", "--port", "8000", "--init-db"]
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
     environment:
-      <<: *common-env
-      SERVICE_NAME: scheduler-api
+      <<: *env
+      SERVICE_NAME: ray-amu-api
     ports:
       - "8000:8000"
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 
-  worker:
-    <<: *app-base
-    command: ["async-scheduler", "worker", "--workers", "2", "--max-concurrent", "16", "--init-db"]
+  task-api:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: task-api
     environment:
-      <<: *common-env
-      SERVICE_NAME: scheduler-worker
-    deploy:
-      replicas: 1
+      <<: *env
+      SERVICE_NAME: ray-amu-task-api
+      API_PORT: "8001"
+    ports:
+      - "8001:8001"
+    command: ["uvicorn", "src.main_task_api:app", "--host", "0.0.0.0", "--port", "8001"]
 
-  scheduler:
-    <<: *app-base
-    command: ["async-scheduler", "scheduler-service", "--poll-interval", "15", "--init-db"]
+  agent:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: agent
     environment:
-      <<: *common-env
-      SERVICE_NAME: scheduler-cron
+      <<: *env
+      SERVICE_NAME: ray-amu-agent
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "9100"
+      AGENT_NODE_ID: "local-node-01"
+    ports:
+      - "9100:9100"
 
-  reconciler:
-    <<: *app-base
-    command: ["async-scheduler", "reconciler-service", "--interval", "20", "--init-db"]
-    environment:
-      <<: *common-env
-      SERVICE_NAME: scheduler-reconciler
-
+# ── Volumes ───────────────────────────────────────────────────────────────
 volumes:
   redis_data:
   mysql_data:
