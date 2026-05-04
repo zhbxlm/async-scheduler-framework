@@ -1,13 +1,20 @@
-"""Database base class and session management."""
+"""Database base class and session management.
+
+This module keeps the synchronous engine/session helpers for
+cLI tools and migration scripts.  The authoritative `Base`
+declaration lives in `src.common.async_db`; we re-export it
+here so all models import from one place.
+"""
 from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
-Base = declarative_base()
+# Single source of truth for ORM metadata
+from src.common.async_db import Base  # noqa: F401
 
 _engine = None
 _SessionLocal: type[Session] | None = None

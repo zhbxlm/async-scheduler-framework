@@ -1,6 +1,6 @@
 # Ray Async API Documentation
 
-> Auto-generated on 2026-05-05 00:36 — do not edit manually.
+> Auto-generated on 2026-05-05 00:47 — do not edit manually.
 
 **Version:** `1.0.0`  
 
@@ -348,6 +348,18 @@ List DAG IDs via Redis scan (dag_def:{tenant_id}:* keys).
 
 ## health
 
+### `GET /health`
+
+**Health**
+
+**Responses:**
+
+| Status | Description |
+|--------|-------------|
+| `200` | Successful Response |
+
+---
+
 ### `GET /health/`
 
 **Health Overview**
@@ -449,18 +461,6 @@ Redis health check.
 ### `GET /callbacks/stats`
 
 **Callbacks Stats**
-
-**Responses:**
-
-| Status | Description |
-|--------|-------------|
-| `200` | Successful Response |
-
----
-
-### `GET /health`
-
-**Health**
 
 **Responses:**
 

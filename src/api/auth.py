@@ -19,7 +19,7 @@ async def authenticate(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
 ) -> dict:
     """Authenticate via API key; return tenant context dict."""
-    from config.settings import settings
+    from config.settings_compat import settings
 
     if not credentials:
         raise HTTPException(status_code=401, detail="Missing API key")
@@ -58,8 +58,13 @@ async def authenticate(
             "quota": None,
         }
 
-    from src.platform.tenant_registry import TenantRegistry
-    registry = TenantRegistry(redis_client)
+    # Reuse registry from app.state (initialised at startup) to avoid
+    # re-instantiating TenantRegistry on every request.
+    registry = getattr(request.app.state, "tenant_registry", None)
+    if registry is None:
+        # Fallback for tests or when app.state is not populated
+        from src.platform.tenant_registry import TenantRegistry
+        registry = TenantRegistry(redis_client)
     tenant_data = await registry.validate_key(api_key, tenant_id_header)
 
     if tenant_data is None:

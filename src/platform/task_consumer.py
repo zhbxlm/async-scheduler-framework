@@ -52,18 +52,26 @@ class TaskConsumer:
             await asyncio.sleep(self._poll_interval)
 
     async def _try_dequeue(self, capability: str) -> None:
-        if not await self._semaphore.acquire():
+        # Non-blocking capacity check before acquiring
+        if self._semaphore._value == 0:
             return
+
+        await self._semaphore.acquire()
         try:
             task_data = await self._queue.dequeue(capability)
-            if task_data is None:
-                self._semaphore.release()
-                return
-            t = asyncio.create_task(self._execute_task(task_data, capability))
-            self._tasks.add(t)
-            t.add_done_callback(self._tasks.discard)
-        except Exception:
+        except Exception as e:
+            logger.error("TaskConsumer: dequeue error cap=%s: %s", capability, e)
             self._semaphore.release()
+            return
+
+        if task_data is None:
+            self._semaphore.release()
+            return
+
+        # Dispatch; semaphore released in _execute_task.finally
+        t = asyncio.create_task(self._execute_task(task_data, capability))
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
 
     async def _execute_task(self, task_data: Any, capability: str) -> None:
         task_id = task_data.get("task_id", "unknown")

@@ -1,6 +1,6 @@
 # Project Structure
 
-> Auto-generated on 2026-05-05 00:36
+> Auto-generated on 2026-05-05 00:47
 
 ```
 async-scheduler-framework/
@@ -20,28 +20,9 @@ async-scheduler-framework/
 │   ├── _tenant.py
 │   ├── service_defaults.yaml
 │   ├── settings.py
-│   ├── settings_backup.py
 │   ├── settings_compat.py
 │   └── settings_pydantic.py
 ├── docs
-│   ├── deepwiki-reference
-│   │   ├── API 参考.md
-│   │   ├── Cron 调度.md
-│   │   ├── DAG 编排.md
-│   │   ├── RayData 集成.md
-│   │   ├── Worker 开发.md
-│   │   ├── catalog.json
-│   │   ├── 任务执行.md
-│   │   ├── 命令行工具.md
-│   │   ├── 异步代理.md
-│   │   ├── 快速开始.md
-│   │   ├── 数据模型.md
-│   │   ├── 节点代理.md
-│   │   ├── 调度与资源管理.md
-│   │   ├── 配置说明.md
-│   │   ├── 配额与多租户.md
-│   │   ├── 队列管理.md
-│   │   └── 项目概述.md
 │   ├── deployment
 │   │   └── docker.md
 │   ├── plans
@@ -121,6 +102,7 @@ async-scheduler-framework/
 │   ├── common
 │   │   ├── __init__.py
 │   │   ├── async_db.py
+│   │   ├── container.py
 │   │   ├── db.py
 │   │   ├── error_handling.py
 │   │   ├── lifecycle.py
