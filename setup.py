@@ -1,4 +1,11 @@
-"""Package setup for ray-async — aligned with src/ layout."""
+"""Package setup for ray-async — aligned with src/ layout.
+
+Note: User-facing components (agent, proxy, worker) are now available as
+independent packages in the packages/ directory:
+  - amu-agent: Node Agent for cluster node management
+  - amu-proxy: Async Proxy for long-running services
+  - amu-worker: Worker SDK for building Ray workers
+"""
 from setuptools import setup, find_packages
 
 setup(
@@ -25,6 +32,10 @@ setup(
             "pytest-asyncio>=0.21.0",
             "fakeredis>=2.23.0",
         ],
+        # User-facing packages are now available as independent packages:
+        #   pip install ../packages/node-agent    # or amu-agent
+        #   pip install ../packages/async-proxy   # or amu-proxy
+        #   pip install ../packages/worker-sdk    # or amu-worker
     },
     entry_points={
         "console_scripts": [

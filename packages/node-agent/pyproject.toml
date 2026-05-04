@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amu-agent"
+version = "0.1.0"
+description = "Ray AMU Node Agent — lightweight HTTP service for cluster node management"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "AMU Team", email = "amu@baidu.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "fastapi>=0.109",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.26",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+ray = ["ray>=2.54"]
+redis = ["redis>=5.0"]
+all = ["ray>=2.54", "redis>=5.0"]
+
+[project.scripts]
+amu-agent = "amu_agent.server:main"
+
+[project.urls]
+Homepage = "https://github.com/baidu/amu"
+Repository = "https://github.com/baidu/amu"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["amu_agent*"]
+
+[tool.setuptools.package-data]
+amu_agent = ["py.typed"]
