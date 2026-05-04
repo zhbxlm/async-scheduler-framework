@@ -1,6 +1,6 @@
 """Task API routes."""
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from typing import List
 

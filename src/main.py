@@ -5,6 +5,28 @@ from fastapi import FastAPI
 
 app = FastAPI(title="Ray Async API", version="0.1.0")
 
+# ── Register ops/task routes ───────────────────────────────────────────────
+from src.api.routes.tasks import router as tasks_router
+from src.api.routes.capabilities import router as capabilities_router
+from src.api.routes.clusters import router as clusters_router
+from src.api.routes.dags import router as dags_router
+from src.api.routes.nodes import router as nodes_router
+from src.api.routes.ops import router as ops_router
+from src.api.routes.schedules import router as schedules_router
+from src.api.routes.tenants import router as tenants_router
+
+for _r in (
+    tasks_router,
+    capabilities_router,
+    clusters_router,
+    dags_router,
+    nodes_router,
+    ops_router,
+    schedules_router,
+    tenants_router,
+):
+    app.include_router(_r)
+
 
 # ── Service container (replaceable for tests) ─────────────────────────────
 class _DefaultServices:
