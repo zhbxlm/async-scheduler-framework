@@ -65,13 +65,14 @@ async def init_services() -> None:
     from src.platform.queue_manager import QueueManager
     from src.platform.task_creator import TaskCreator
     from src.common.redis_client import create_redis_client
-    from src.common.db import init_engine, get_db
+    from src.common.async_db import init_async_engine, get_async_db
+    from src.common.lifecycle import get_lifecycle_manager, TaskReconcilerResource, CronSchedulerResource
     from config.settings import settings
 
     redis_client = create_redis_client(settings.redis.url or None)
     # DB engine (optional)
     if settings.infra.mysql.url:
-        init_engine(settings.infra.mysql.url)
+        init_async_engine(settings.infra.mysql.url)
 
     services.capability_registry = CapabilityRegistry(redis_client)
     services.cluster_registry = ClusterRegistry(redis_client)
@@ -87,7 +88,7 @@ async def init_services() -> None:
     )
     services.task_reconciler = TaskReconciler(
         redis_client=redis_client,
-        db_session_factory=get_db if settings.infra.mysql.url else None,
+        db_session_factory=get_async_db if settings.infra.mysql.url else None,
         queue_manager=services.queue_manager,
         interval_seconds=settings.background.reconcile.interval_seconds,
         stuck_max_per_tick=settings.background.reconcile.stuck_max_per_tick,
@@ -116,11 +117,17 @@ async def startup_event() -> None:
     app.state.dag_loader = services.dag_loader
     app.state.task_creator = services.task_creator
     app.state.task_reconciler = services.task_reconciler
-    # Start background services if enabled
+    # Register background services with lifecycle manager
+    manager = get_lifecycle_manager()
+    
     if settings.background.reconcile.enabled and services.task_reconciler:
-        await services.task_reconciler.start()
+        manager.register_resource(TaskReconcilerResource(services.task_reconciler))
+    
     if settings.background.cron.enabled and services.cron_scheduler:
-        await services.cron_scheduler.start()
+        manager.register_resource(CronSchedulerResource(services.cron_scheduler))
+    
+    # Start all registered resources
+    await manager.start_all()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

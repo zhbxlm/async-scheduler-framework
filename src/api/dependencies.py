@@ -1,11 +1,11 @@
 """FastAPI dependencies — auth, tenant context, DB session."""
 from __future__ import annotations
 from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
 
 from src.api.auth import authenticate
-from src.common.db import get_db
+from src.common.async_db import get_async_db
 
 
 async def get_tenant_context(auth_result: dict = Depends(authenticate)):
@@ -24,9 +24,10 @@ async def require_super_admin(ctx=Depends(get_tenant_context)):
     return ctx
 
 
-def get_db_session() -> Session:
-    """Dependency for DB session."""
-    return next(get_db())
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Dependency for async DB session."""
+    async with get_async_db() as session:
+        yield session
 
 
-DbSession = Annotated[Session, Depends(get_db_session)]
+DbSession = Annotated[AsyncSession, Depends(get_db_session)]

@@ -8,6 +8,11 @@ T = TypeVar("T")
 
 
 class BaseRedisRegistry(Generic[T]):
+    """Base registry with Redis storage.
+    
+    Provides standard CRUD operations with tenant isolation.
+    """
+    
     def __init__(
         self,
         redis_client: aioredis.Redis,
@@ -17,6 +22,7 @@ class BaseRedisRegistry(Generic[T]):
         self._r = redis_client
         self._prefix = key_prefix.rstrip(":")
         self._ttl = ttl_seconds
+        self._logger = logging.getLogger(self.__class__.__module__)
 
     def _make_key(self, tenant_id: str, item_id: str) -> str:
         return f"{self._prefix}:{tenant_id}:{item_id}"

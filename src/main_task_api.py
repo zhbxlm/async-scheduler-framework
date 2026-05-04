@@ -11,10 +11,10 @@ from fastapi import FastAPI
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from src.common.db import init_engine
+    from src.common.async_db import init_async_engine
     from config.settings import settings
     if settings.infra.mysql.url:
-        init_engine(settings.infra.mysql.url)
+        init_async_engine(settings.infra.mysql.url)
     yield
 
 
