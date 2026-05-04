@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from fastapi import FastAPI
 
-app = FastAPI(title="Ray AMU API", version="0.1.0")
+app = FastAPI(title="Async Scheduler API", version="0.1.0")
 
 
 # ── Service container (replaceable for tests) ─────────────────────────────

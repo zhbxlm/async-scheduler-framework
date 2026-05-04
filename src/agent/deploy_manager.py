@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-_DEPLOY_BASE = os.getenv("AGENT_DEPLOY_BASE_DIR", "/opt/ray-amu/deploys")
+_DEPLOY_BASE = os.getenv("AGENT_DEPLOY_BASE_DIR", "/opt/async-scheduler/deploys")
 _DOWNLOAD_TIMEOUT = int(os.getenv("AGENT_DEPLOY_DOWNLOAD_TIMEOUT", "600"))
 _MAX_PACKAGES = int(os.getenv("AGENT_DEPLOY_MAX_PACKAGES", "20"))
 

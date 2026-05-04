@@ -1,6 +1,6 @@
-# Ray AMU — Async Management Unit
+# Async Scheduler Framework
 
-> 基于 Ray 的企业级异步任务调度框架，提供 DAG 编排、多租户隔离、潮汐资源管理和长耗时服务代理能力。
+> 企业级异步任务调度框架，提供 DAG 编排、多租户隔离、潮汐资源管理和长耗时服务代理能力。
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -9,17 +9,17 @@
 
 ## 项目介绍
 
-Ray AMU（Asynchronous Management Unit）构建在 Ray 分布式计算框架之上，结合 FastAPI、Redis 和 MySQL，提供完整的异步任务调度解决方案：
+基于 FastAPI、Redis 和 MySQL 构建的完整异步任务调度解决方案：
 
 - **DAG 编排引擎** — 拓扑排序、并行扇出、条件分支、MAP scatter-gather、STREAMING 流式处理
 - **任务执行引擎** — 分布式执行锁、后台锁续约、取消信号检测
-- **调度 Actor** — Ray Detached Named Actor，多 capability ActorPool，支持灰度发布
+- **调度 Actor** — Detached Named Actor，多 capability ActorPool，支持灰度发布
 - **队列管理器** — Redis Sorted Set 优先级队列、三态熔断器（CLOSED/OPEN/HALF_OPEN）、Lua 原子操作
 - **资源管理器** — 4 阶段节点分配（SELECT → RESERVE → INVITE → CONFIRM）、自动扩缩容
 - **Cron 调度器** — Redis Leader 选举、幂等触发、分布式防重
 - **配额执行器** — 多租户配额管理、Redis Lua atomic check-increment
 - **异步代理** — 长耗时 Flask 服务 Sidecar，Redis Pub/Sub 异步通知
-- **节点代理** — 资源探测、心跳所有权协议、Ray 集群加入/退出
+- **节点代理** — 资源探测、心跳所有权协议、集群加入/退出
 - **CLI 工具** — kubectl 风格命令行，管理集群/能力/任务/节点/调度/租户
 
 ---
@@ -27,34 +27,24 @@ Ray AMU（Asynchronous Management Unit）构建在 Ray 分布式计算框架之�
 ## 项目结构
 
 ```
-ray-amu/
+async-scheduler-framework/
 ├── config/                  # 分层配置
-│   ├── settings.py          # 全局单例 settings
-│   ├── _infra.py            # Redis + MySQL + 服务器配置
-│   ├── _task.py             # 任务执行配置
-│   ├── _dag.py              # DAG 编排配置
-│   ├── _scaling.py          # 扩缩容 + 熔断器配置
-│   ├── _background.py       # 后台守护任务配置
-│   └── _tenant.py           # 多租户配置
+│   └── settings.py          # 全局单例 settings
 ├── src/
 │   ├── main.py              # API 服务入口
-│   ├── main_task_api.py     # Task API 独立部署入口
 │   ├── api/                 # RESTful API (FastAPI)
 │   │   ├── auth.py          # API Key 认证
 │   │   ├── dependencies.py  # FastAPI 依赖注入
-│   │   └── routes/          # tasks / dags / clusters / capabilities / nodes /
-│   │                        # schedules / tenants / ops
+│   │   └── routes/          # tasks
 │   ├── cli/                 # CLI 工具 (Click)
-│   │   ├── main.py          # ray-amu 主命令
-│   │   ├── client.py        # HTTP 客户端
-│   │   └── commands/        # cluster / capability / node / task / schedule /
-│   │                        # queue / deploy / tenant / worker / dag
+│   │   ├── main.py          # async-scheduler 主命令
+│   │   └── client.py        # HTTP 客户端
 │   ├── agent/               # 节点代理
 │   │   ├── server.py        # FastAPI HTTP 服务
 │   │   ├── config.py        # 代理配置
 │   │   ├── heartbeat.py     # 所有权协议 + 心跳 (Lua CAS)
-│   │   ├── resource_detector.py  # CPU/GPU/内存探测 (60s 缓存)
-│   │   ├── ray_manager.py   # ray start/stop 幂等管理
+│   │   ├── resource_detector.py  # CPU/GPU/内存探测
+│   │   ├── ray_manager.py   # 计算集群进程管理
 │   │   └── deploy_manager.py     # 部署包下载/校验/解压
 │   ├── common/
 │   │   ├── db.py            # SQLAlchemy Base + get_db()
@@ -82,7 +72,6 @@ ray-amu/
 │   │   ├── schedule_registry.py  # 调度表 CRUD
 │   │   ├── queue_manager.py      # 优先级队列 + 熔断器
 │   │   ├── queue_keys.py         # Redis 键命名工具
-│   │   ├── circuit_breaker.py    # 三态熔断器
 │   │   ├── resource_manager.py   # 节点分配 + 自动扩缩容
 │   │   ├── node_registry.py      # 节点注册表
 │   │   ├── capability_registry.py  # 能力注册表
@@ -96,19 +85,15 @@ ray-amu/
 │   │   ├── async_service_proxy.py  # 长耗时服务 Sidecar
 │   │   └── async_command_proxy.py  # 命令代理
 │   └── workload/
-│       ├── scheduler_actor.py    # Ray Detached Actor 入口
+│       ├── scheduler_actor.py    # Detached Actor 入口
 │       ├── actor_pool_manager.py # ActorPool 管理
 │       ├── base_worker_actor.py  # Worker 基类
-│       ├── async_proxy_worker.py # 异步代理 Worker
-│       ├── worker_dev_kit.py     # 开发调试工具
-│       ├── node_registry.py      # 工作负载节点注册
-│       └── resource_manager.py   # 工作负载资源管理
-├── tests/                   # pytest 测试套件 (474+ 测试)
-├── examples/                # 使用示例
+│       └── async_proxy_worker.py # 异步代理 Worker
+├── tests/                   # pytest 测试套件 (119 测试)
 ├── scripts/                 # 验证脚本
 │   ├── dag_deploy_verify.py # 4 类 DAG 部署验证
 │   └── dag_streaming_verify.py  # STREAMING DAG 验证
-├── Dockerfile               # 多阶段镜像 (api / task-api / agent)
+├── Dockerfile               # 多阶段镜像 (api / agent)
 ├── docker-compose.yml       # 完整部署编排
 ├── pyproject.toml           # 包配置 (src/ 布局)
 └── setup.py                 # 兼容 setuptools
@@ -128,7 +113,7 @@ pip install -e ".[dev]"
 docker-compose up -d redis mysql
 
 # 3. 启动 API 服务
-MYSQL_PORT=3307 MYSQL_DATABASE=async_scheduler_test uvicorn src.main:app --reload
+MYSQL_PORT=3307 MYSQL_DATABASE=async_scheduler uvicorn src.main:app --reload
 
 # 4. 运行测试
 pytest -q
@@ -141,30 +126,29 @@ pytest -q
 docker-compose up -d
 
 # 服务端口
-# API:       http://localhost:8000
-# Task API:  http://localhost:8001
-# Agent:     http://localhost:9100
-# MySQL:     localhost:3307
-# Redis:     localhost:6379
+# API:    http://localhost:8000
+# Agent:  http://localhost:9100
+# MySQL:  localhost:3307
+# Redis:  localhost:6379
 ```
 
 ### CLI 使用
 
 ```bash
 # 查看集群状态
-ray-amu cluster list
+async-scheduler cluster list
 
 # 注册能力
-ray-amu capability register --name cap_preprocess --endpoint http://worker:8080
+async-scheduler capability register --name cap_preprocess --endpoint http://worker:8080
 
 # 提交任务
-ray-amu task submit --capability cap_preprocess --payload '{"data": "..."}'
+async-scheduler task submit --capability cap_preprocess --payload '{"data": "..."}'
 
 # 查看队列
-ray-amu queue stats --capability cap_preprocess
+async-scheduler queue stats --capability cap_preprocess
 
 # 创建 Cron 调度
-ray-amu schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
+async-scheduler schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
 ```
 
 ---
@@ -221,10 +205,10 @@ Worker 通过 `rpush(buffer_key, json)` 推送 chunk，引擎消费并并发触�
 REDIS_HOST=localhost  REDIS_PORT=6379  REDIS_DB=0
 
 # MySQL
-MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=ray_amu
+MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=async_scheduler
 
 # API
-API_HOST=0.0.0.0  API_PORT=8000  RAY_AMU_API_KEY=your-key
+API_HOST=0.0.0.0  API_PORT=8000  SCHEDULER_API_KEY=your-key
 
 # DAG
 DAG_MAX_PARALLELISM=8  DAG_HTTP_TIMEOUT_SECONDS=300
@@ -241,7 +225,7 @@ AGENT_NODE_ID=node-01  AGENT_PORT=9100
 ## 测试
 
 ```bash
-# 全量测试 (474 个)
+# 全量测试 (119 个)
 pytest -q
 
 # 单模块

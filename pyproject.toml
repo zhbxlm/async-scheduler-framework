@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ray-amu"
+name = "async-scheduler"
 version = "0.1.0"
-description = "Ray AMU — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
+description = "Async Scheduler — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Ray AMU Team"},
+    {name = "Async Scheduler Team"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -49,7 +49,7 @@ dev = [
 ]
 
 [project.scripts]
-ray-amu = "src.cli.main:cli"
+async-scheduler = "src.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

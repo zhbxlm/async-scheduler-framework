@@ -293,7 +293,7 @@ def create_agent_app(
         if redis_client and state.state in (NodeState.IDLE, NodeState.RESERVED):
             await release_ownership(redis_client, node_id, state.instance_id)
 
-    app = FastAPI(title="Ray AMU Node Agent", lifespan=lifespan)
+    app = FastAPI(title="Async Scheduler Node Agent", lifespan=lifespan)
 
     # -----------------------------------------------------------------------
     # Health

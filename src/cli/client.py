@@ -1,13 +1,13 @@
 """HTTP client for CLI."""
-import json
+import os
 from typing import Any
 import httpx
 
 
-class RayAmuClient:
+class ApiClient:
     def __init__(self, base_url: str, api_key: str = ""):
         self._base = base_url.rstrip("/")
-        self._key = api_key or os.getenv("RAY_AMU_API_KEY", "")
+        self._key = api_key or os.getenv("SCHEDULER_API_KEY", "")
         self._client = httpx.Client(timeout=30.0)
 
     def get(self, path: str, **kwargs) -> Any:

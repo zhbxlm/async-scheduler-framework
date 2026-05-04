@@ -5,9 +5,9 @@ x-env: &env
   # MySQL (port 3307 on host, 3306 inside container)
   MYSQL_HOST: mysql
   MYSQL_PORT: "3306"
-  MYSQL_USER: ray_amu
-  MYSQL_PASSWORD: ray_amu
-  MYSQL_DATABASE: ray_amu
+  MYSQL_USER: async_scheduler
+  MYSQL_PASSWORD: async_scheduler
+  MYSQL_DATABASE: async_scheduler
 
   # Redis
   REDIS_HOST: redis
@@ -17,7 +17,7 @@ x-env: &env
   # API
   API_HOST: "0.0.0.0"
   API_PORT: "8000"
-  RAY_AMU_API_KEY: dev-secret-key
+  SCHEDULER_API_KEY: dev-secret-key
 
   # Misc
   LOG_LEVEL: INFO
@@ -29,7 +29,7 @@ x-app: &app
     context: .
     dockerfile: Dockerfile
     target: api
-  image: ray-amu:latest
+  image: async-scheduler:latest
   restart: unless-stopped
   environment:
     <<: *env
@@ -62,9 +62,9 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: ray_amu
-      MYSQL_USER: ray_amu
-      MYSQL_PASSWORD: ray_amu
+      MYSQL_DATABASE: async_scheduler
+      MYSQL_USER: async_scheduler
+      MYSQL_PASSWORD: async_scheduler
     command:
       - mysqld
       - --default-authentication-plugin=mysql_native_password
@@ -90,24 +90,10 @@ services:
       target: api
     environment:
       <<: *env
-      SERVICE_NAME: ray-amu-api
+      SERVICE_NAME: async-scheduler-api
     ports:
       - "8000:8000"
     command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
-
-  task-api:
-    <<: *app
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: task-api
-    environment:
-      <<: *env
-      SERVICE_NAME: ray-amu-task-api
-      API_PORT: "8001"
-    ports:
-      - "8001:8001"
-    command: ["uvicorn", "src.main_task_api:app", "--host", "0.0.0.0", "--port", "8001"]
 
   agent:
     <<: *app
@@ -117,7 +103,7 @@ services:
       target: agent
     environment:
       <<: *env
-      SERVICE_NAME: ray-amu-agent
+      SERVICE_NAME: async-scheduler-agent
       AGENT_HOST: "0.0.0.0"
       AGENT_PORT: "9100"
       AGENT_NODE_ID: "local-node-01"

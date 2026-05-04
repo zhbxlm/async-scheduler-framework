@@ -34,7 +34,7 @@ class MySQLConfig:
     port: int = field(default_factory=lambda: int(os.getenv("MYSQL_PORT", "3306")))
     user: str = field(default_factory=lambda: os.getenv("MYSQL_USER", "root"))
     password: str = field(default_factory=lambda: os.getenv("MYSQL_PASSWORD", ""))
-    database: str = field(default_factory=lambda: os.getenv("MYSQL_DATABASE", "ray_amu"))
+    database: str = field(default_factory=lambda: os.getenv("MYSQL_DATABASE", "async_scheduler"))
     pool_size: int = 5
     max_overflow: int = 10
 

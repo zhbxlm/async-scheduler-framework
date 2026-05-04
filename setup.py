@@ -1,8 +1,8 @@
-"""Package setup for ray-amu — aligned with src/ layout."""
+"""Package setup for async-scheduler — aligned with src/ layout."""
 from setuptools import setup, find_packages
 
 setup(
-    name="ray-amu",
+    name="async-scheduler",
     version="0.1.0",
     packages=find_packages(include=["src*", "config*"]),
     install_requires=[
@@ -28,7 +28,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "ray-amu=src.cli.main:cli",
+            "async-scheduler=src.cli.main:cli",
         ],
     },
     python_requires=">=3.10",
