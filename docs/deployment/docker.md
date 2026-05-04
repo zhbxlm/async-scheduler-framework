@@ -1,6 +1,6 @@
 # Docker 部署
 
-本文档给出 Async Scheduler Framework 的 **分服务 Docker 部署方案**。
+本文档给出 Ray Async Framework 的 **分服务 Docker 部署方案**。
 
 ## 服务拆分
 
@@ -40,13 +40,13 @@ docker compose logs -f reconciler
 ### api
 
 ```bash
-async-scheduler api --host 0.0.0.0 --port 8000 --init-db
+ray-async api --host 0.0.0.0 --port 8000 --init-db
 ```
 
 ### worker
 
 ```bash
-async-scheduler worker --workers 2 --max-concurrent 16 --init-db
+ray-async worker --workers 2 --max-concurrent 16 --init-db
 ```
 
 如需扩容：
@@ -58,13 +58,13 @@ docker compose up -d --scale worker=3
 ### scheduler
 
 ```bash
-async-scheduler scheduler-service --poll-interval 15 --init-db
+ray-async scheduler-service --poll-interval 15 --init-db
 ```
 
 ### reconciler
 
 ```bash
-async-scheduler reconciler-service --interval 20 --init-db
+ray-async reconciler-service --interval 20 --init-db
 ```
 
 ## 关键环境变量
@@ -85,13 +85,13 @@ async-scheduler reconciler-service --interval 20 --init-db
 当前 compose 默认：
 
 ```bash
-mysql+asyncmy://async_scheduler:async_scheduler@mysql:3306/async_scheduler
+mysql+asyncmy://ray_async:ray_async@mysql:3306/ray_async
 ```
 
 若使用外部 MySQL：
 
 ```bash
-DATABASE_URL=mysql+asyncmy://user:pass@mysql-host:3306/async_scheduler
+DATABASE_URL=mysql+asyncmy://user:pass@mysql-host:3306/ray_async
 ```
 
 ### 2. Redis
@@ -112,16 +112,16 @@ docker compose up -d --scale worker=5
 ### 4. 镜像构建
 
 ```bash
-docker build -t async-scheduler-framework:latest .
+docker build -t ray-async-framework:latest .
 ```
 
 如果要分别标记：
 
 ```bash
-docker tag async-scheduler-framework:latest async-scheduler-framework:api
-docker tag async-scheduler-framework:latest async-scheduler-framework:worker
-docker tag async-scheduler-framework:latest async-scheduler-framework:scheduler
-docker tag async-scheduler-framework:latest async-scheduler-framework:reconciler
+docker tag ray-async-framework:latest ray-async-framework:api
+docker tag ray-async-framework:latest ray-async-framework:worker
+docker tag ray-async-framework:latest ray-async-framework:scheduler
+docker tag ray-async-framework:latest ray-async-framework:reconciler
 ```
 
 本质上仍然是同一份基础镜像，不同服务通过不同 `command` 启动。

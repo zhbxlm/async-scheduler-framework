@@ -276,6 +276,6 @@ def test_scheduler_actor_name_format():
 
 def test_tenant_actor_namespace():
     from src.workload.scheduler_actor import tenant_actor_namespace
-    assert tenant_actor_namespace("") == "async_scheduler"
-    assert tenant_actor_namespace("default") == "async_scheduler"
-    assert tenant_actor_namespace("acme") == "async_scheduler_acme"
+    assert tenant_actor_namespace("") == "ray_async"
+    assert tenant_actor_namespace("default") == "ray_async"
+    assert tenant_actor_namespace("acme") == "ray_async_acme"

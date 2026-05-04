@@ -27,7 +27,7 @@ from src.platform.dag_engine import DagEngine
 # ─────────────────────────────────────────────
 # DB 初始化 (3307)
 # ─────────────────────────────────────────────
-DB_URL = "mysql+pymysql://root@127.0.0.1:3307/async_scheduler_test?charset=utf8mb4"
+DB_URL = "mysql+pymysql://root@127.0.0.1:3307/ray_async_test?charset=utf8mb4"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS dag_execution_log (

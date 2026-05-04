@@ -5,14 +5,14 @@
 ## 1. 初始化数据库
 
 ```bash
-cd /home/gem/.openclaw/workspace/projects/async-scheduler-framework
-async-scheduler init-db-cmd --force
+cd /home/gem/.openclaw/workspace/projects/ray-async-framework
+ray-async init-db-cmd --force
 ```
 
 ## 2. 启动 API
 
 ```bash
-async-scheduler api --init-db
+ray-async api --init-db
 ```
 
 ## 3. 创建租户

@@ -1,1 +1,1 @@
-"""Scripts for testing and maintaining the async scheduler framework."""
+"""Scripts for testing and maintaining the Ray Async framework."""

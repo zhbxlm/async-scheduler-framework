@@ -18,8 +18,8 @@ It also validates core distributed flows against a local **userland Redis + Mari
 ## What changed
 
 ### 1. Configuration and runtime binding
-- added unified runtime settings via `async_scheduler/settings.py`
-- added enhanced config module under `async_scheduler/config/`
+- added unified runtime settings via `ray_async/settings.py`
+- added enhanced config module under `ray_async/config/`
 - made persistence engine binding lazy / rebindable
 - ensured test runs honor `TEST_DATABASE_URL`
 - improved test-time DB isolation and engine reset behavior

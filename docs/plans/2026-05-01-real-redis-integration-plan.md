@@ -1,7 +1,7 @@
 # Real Redis Integration Validation Plan
 
 Date: 2026-05-01
-Project: async-scheduler-framework
+Project: ray-async-framework
 Status: Partially completed
 
 ## Goal

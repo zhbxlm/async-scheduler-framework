@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文档用于明确 Async Scheduler Framework 当前与 deepwiki 风格分布式调度平台之间的**对齐边界**，避免误判为“已等价实现”。
+本文档用于明确 Ray Async Framework 当前与 deepwiki 风格分布式调度平台之间的**对齐边界**，避免误判为“已等价实现”。
 
 ---
 

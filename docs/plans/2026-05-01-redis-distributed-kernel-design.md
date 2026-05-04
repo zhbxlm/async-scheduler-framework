@@ -1,7 +1,7 @@
 # Redis Distributed Kernel Design
 
 Date: 2026-05-01
-Project: async-scheduler-framework
+Project: ray-async-framework
 Branch: feat/deepwiki-distributed-alignment
 Status: Draft for approval
 

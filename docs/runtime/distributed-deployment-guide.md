@@ -1,7 +1,7 @@
 # Distributed Deployment Guide
 
 Date: 2026-05-02
-Project: async-scheduler-framework
+Project: ray-async-framework
 
 ## Purpose
 
@@ -75,7 +75,7 @@ Running reconciler as its own process makes repair timing and ownership easier t
 Use `BackendConfig` with distributed mode enabled.
 
 ```python
-from async_scheduler.backends import BackendConfig
+from ray_async.backends import BackendConfig
 
 config = BackendConfig(
     queue_type="redis",
@@ -240,15 +240,15 @@ Known limitations include:
 ### Local split script with config validation
 
 ```bash
-DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/ray_async \
 REDIS_URL=redis://127.0.0.1:6379/0 \
 bash scripts/run_local_split.sh validate
 
-DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/ray_async \
 REDIS_URL=redis://127.0.0.1:6379/0 \
 bash scripts/run_local_split.sh dry-run
 
-DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler \
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/ray_async \
 REDIS_URL=redis://127.0.0.1:6379/0 \
 bash scripts/run_local_split.sh start
 ```
@@ -272,13 +272,13 @@ Example commands (shape only; adapt to your wrapper/config style):
 
 ```bash
 # process 1
-async-scheduler api --init-db
+ray-async api --init-db
 
 # process 2
-async-scheduler worker --workers 2 --max-concurrent 10
+ray-async worker --workers 2 --max-concurrent 10
 
 # process 3
-async-scheduler reconcile
+ray-async reconcile
 ```
 
 Operational checklist:

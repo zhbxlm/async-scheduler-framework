@@ -1,4 +1,4 @@
-# Async Scheduler Framework
+# Ray Async Framework
 
 > 企业级异步任务调度框架，提供 DAG 编排、多租户隔离、潮汐资源管理和长耗时服务代理能力。
 
@@ -27,7 +27,7 @@
 ## 项目结构
 
 ```
-async-scheduler-framework/
+ray-async-framework/
 ├── config/                  # 分层配置
 │   └── settings.py          # 全局单例 settings
 ├── src/
@@ -37,7 +37,7 @@ async-scheduler-framework/
 │   │   ├── dependencies.py  # FastAPI 依赖注入
 │   │   └── routes/          # tasks
 │   ├── cli/                 # CLI 工具 (Click)
-│   │   ├── main.py          # async-scheduler 主命令
+│   │   ├── main.py          # ray-async 主命令
 │   │   └── client.py        # HTTP 客户端
 │   ├── agent/               # 节点代理
 │   │   ├── server.py        # FastAPI HTTP 服务
@@ -113,7 +113,7 @@ pip install -e ".[dev]"
 docker-compose up -d redis mysql
 
 # 3. 启动 API 服务
-MYSQL_PORT=3307 MYSQL_DATABASE=async_scheduler uvicorn src.main:app --reload
+MYSQL_PORT=3307 MYSQL_DATABASE=ray_async uvicorn src.main:app --reload
 
 # 4. 运行测试
 pytest -q
@@ -136,19 +136,19 @@ docker-compose up -d
 
 ```bash
 # 查看集群状态
-async-scheduler cluster list
+ray-async cluster list
 
 # 注册能力
-async-scheduler capability register --name cap_preprocess --endpoint http://worker:8080
+ray-async capability register --name cap_preprocess --endpoint http://worker:8080
 
 # 提交任务
-async-scheduler task submit --capability cap_preprocess --payload '{"data": "..."}'
+ray-async task submit --capability cap_preprocess --payload '{"data": "..."}'
 
 # 查看队列
-async-scheduler queue stats --capability cap_preprocess
+ray-async queue stats --capability cap_preprocess
 
 # 创建 Cron 调度
-async-scheduler schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
+ray-async schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
 ```
 
 ---
@@ -205,10 +205,10 @@ Worker 通过 `rpush(buffer_key, json)` 推送 chunk，引擎消费并并发触�
 REDIS_HOST=localhost  REDIS_PORT=6379  REDIS_DB=0
 
 # MySQL
-MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=async_scheduler
+MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=ray_async
 
 # API
-API_HOST=0.0.0.0  API_PORT=8000  SCHEDULER_API_KEY=your-key
+API_HOST=0.0.0.0  API_PORT=8000  RAY_ASYNC_API_KEY=your-key
 
 # DAG
 DAG_MAX_PARALLELISM=8  DAG_HTTP_TIMEOUT_SECONDS=300

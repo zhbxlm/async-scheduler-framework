@@ -1,4 +1,4 @@
-# Async Scheduler runtime dependencies
+# Ray Async runtime dependencies
 # Generated from pyproject.toml — do not edit manually
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0

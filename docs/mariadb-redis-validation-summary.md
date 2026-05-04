@@ -11,8 +11,8 @@
 ## 本轮完成的关键改造
 
 ### 1. 配置体系
-- 新增统一 `async_scheduler/settings.py`
-- 新增增强配置层 `async_scheduler/config/`
+- 新增统一 `ray_async/settings.py`
+- 新增增强配置层 `ray_async/config/`
 - 支持 `TEST_DATABASE_URL` 优先级
 - 持久化层改为 **懒加载 / 可重绑 engine**
 
@@ -61,7 +61,7 @@
 ### MariaDB
 - 用户态二进制启动成功
 - 本地地址：`127.0.0.1:3307`
-- 测试库用户：`async_scheduler / async_scheduler`
+- 测试库用户：`ray_async / ray_async`
 
 ## 核心回归结果
 

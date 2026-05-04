@@ -1,7 +1,7 @@
 # Redis Distributed Kernel Implementation Plan
 
 Date: 2026-05-01
-Project: async-scheduler-framework
+Project: ray-async-framework
 Branch: feat/deepwiki-distributed-alignment
 Related design: docs/plans/2026-05-01-redis-distributed-kernel-design.md
 Status: Approved for implementation
@@ -38,9 +38,9 @@ Introduce the minimal dependency/config plumbing required to run the framework i
 
 ### Files
 - pyproject.toml
-- async_scheduler/backends/factory.py
-- async_scheduler/backends/__init__.py
-- async_scheduler/platform/services.py
+- ray_async/backends/factory.py
+- ray_async/backends/__init__.py
+- ray_async/platform/services.py
 - README.md
 - tests/* (new/updated as needed)
 
@@ -65,9 +65,9 @@ Introduce the minimal dependency/config plumbing required to run the framework i
 Provide a real Redis-backed queue implementation supporting immediate enqueue/dequeue, delayed tasks, requeue, cancellation, and stats.
 
 ### Files
-- async_scheduler/backends/redis.py (new)
-- async_scheduler/backends/factory.py
-- async_scheduler/queue/manager.py
+- ray_async/backends/redis.py (new)
+- ray_async/backends/factory.py
+- ray_async/queue/manager.py
 - tests/test_redis_queue_backend.py (new)
 - tests/test_queue_manager_distributed.py (new or updated)
 
@@ -98,9 +98,9 @@ Provide a real Redis-backed queue implementation supporting immediate enqueue/de
 Introduce token-safe lease semantics for distributed task ownership.
 
 ### Files
-- async_scheduler/backends/redis.py
+- ray_async/backends/redis.py
 - tests/test_redis_lease_backend.py (new)
-- possibly async_scheduler/backends/base.py if abstractions need extension
+- possibly ray_async/backends/base.py if abstractions need extension
 
 ### Scope
 - acquire(key, ttl) -> tokenized handle
@@ -127,10 +127,10 @@ Introduce token-safe lease semantics for distributed task ownership.
 Make workers externally visible and track liveness in distributed mode.
 
 ### Files
-- async_scheduler/worker/base.py
-- async_scheduler/platform/services.py
-- async_scheduler/api/app.py
-- async_scheduler/distributed/worker_registry.py (new)
+- ray_async/worker/base.py
+- ray_async/platform/services.py
+- ray_async/api/app.py
+- ray_async/distributed/worker_registry.py (new)
 - tests/test_worker_registry.py (new)
 
 ### Scope
@@ -156,9 +156,9 @@ Make workers externally visible and track liveness in distributed mode.
 Persist distributed execution attempts so ownership and recovery are inspectable and repairable.
 
 ### Files
-- async_scheduler/persistence/models.py
-- async_scheduler/persistence/repositories.py
-- async_scheduler/core/models.py
+- ray_async/persistence/models.py
+- ray_async/persistence/repositories.py
+- ray_async/core/models.py
 - migration/init logic as needed
 - tests/test_execution_attempts.py (new)
 
@@ -185,10 +185,10 @@ Persist distributed execution attempts so ownership and recovery are inspectable
 Ensure only a valid lease-holder may execute a task and that running tasks renew ownership while alive.
 
 ### Files
-- async_scheduler/core/consumer.py
-- async_scheduler/executor/executor.py
-- async_scheduler/queue/manager.py
-- async_scheduler/platform/services.py
+- ray_async/core/consumer.py
+- ray_async/executor/executor.py
+- ray_async/queue/manager.py
+- ray_async/platform/services.py
 - tests/test_distributed_claim_flow.py (new)
 
 ### Scope
@@ -215,9 +215,9 @@ Ensure only a valid lease-holder may execute a task and that running tasks renew
 Make duplicate completion delivery converge safely.
 
 ### Files
-- async_scheduler/platform/completion.py
-- async_scheduler/persistence/repositories.py
-- async_scheduler/backends/redis.py
+- ray_async/platform/completion.py
+- ray_async/persistence/repositories.py
+- ray_async/backends/redis.py
 - tests/test_completion_idempotency.py (new)
 
 ### Scope
@@ -242,9 +242,9 @@ Make duplicate completion delivery converge safely.
 Repair stale tasks in a shared-state environment without conflicting with live workers.
 
 ### Files
-- async_scheduler/platform/reconciler.py
-- async_scheduler/distributed/repair.py (new, optional)
-- async_scheduler/api/app.py
+- ray_async/platform/reconciler.py
+- ray_async/distributed/repair.py (new, optional)
+- ray_async/api/app.py
 - tests/test_distributed_reconciler.py (new)
 
 ### Scope
@@ -301,7 +301,7 @@ Make the new distributed mode usable by humans instead of only passing tests.
 - README.md
 - examples/end_to_end_demo.md
 - scripts/smoke_test.py
-- async_scheduler/api/app.py
+- ray_async/api/app.py
 - config examples if added
 
 ### Scope

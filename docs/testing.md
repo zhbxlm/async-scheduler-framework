@@ -22,7 +22,7 @@ pytestmark = pytest.mark.mysql_required
 优先使用：
 
 ```bash
-export TEST_DATABASE_URL=mysql+asyncmy://user:pass@host:3306/async_scheduler_test
+export TEST_DATABASE_URL=mysql+asyncmy://user:pass@host:3306/ray_async_test
 ```
 
 如果未设置，则回退到：
@@ -42,7 +42,7 @@ pytest -q tests/test_settings.py tests/test_config_module.py tests/test_service_
 ### 跑全部测试（有 MySQL 时）
 
 ```bash
-export TEST_DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/async_scheduler_test
+export TEST_DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/ray_async_test
 pytest -q
 ```
 

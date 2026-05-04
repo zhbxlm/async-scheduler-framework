@@ -3,7 +3,7 @@
 ## 本轮完成项
 
 ### 1. 配置体系增强
-- 在 `async_scheduler.settings` 中新增 `RuntimeMetadata`
+- 在 `ray_async.settings` 中新增 `RuntimeMetadata`
 - 新增统一运行时元信息：
   - `environment`
   - `deployment_role`
@@ -34,7 +34,7 @@
 - 默认将 split 部署后端收敛到 redis queue / redis lock / memory registry
 
 ### 4. 配置展示增强
-- `python -m async_scheduler.config --json` 现在包含 `runtime` 摘要信息
+- `python -m ray_async.config --json` 现在包含 `runtime` 摘要信息
 
 ---
 

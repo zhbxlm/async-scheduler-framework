@@ -1,7 +1,7 @@
 # Deepwiki Distributed Architecture Reference
 
 Date: 2026-05-02
-Project: async-scheduler-framework
+Project: ray-async-framework
 Status: Updated to reflect current progress
 
 ## Purpose
@@ -58,8 +58,8 @@ Expected behavior:
 - requeue/cancel/stat inspection are observable
 
 Current repository mapping:
-- `async_scheduler.backends.redis.RedisQueueBackend`
-- `async_scheduler.queue.QueueManager`
+- `ray_async.backends.redis.RedisQueueBackend`
+- `ray_async.queue.QueueManager`
 
 Current status:
 - queue contract is implemented
@@ -77,8 +77,8 @@ Expected behavior:
 - expired lease makes task eligible for recovery/reclaim
 
 Current repository mapping:
-- `async_scheduler.backends.redis.RedisLockBackend`
-- `async_scheduler.core.consumer.TaskConsumer`
+- `ray_async.backends.redis.RedisLockBackend`
+- `ray_async.core.consumer.TaskConsumer`
 
 Current status:
 - lease contract is implemented
@@ -96,7 +96,7 @@ Expected behavior:
 - repair logic can rely on worker liveness view
 
 Current repository mapping:
-- `async_scheduler.distributed.worker_registry.WorkerRegistry`
+- `ray_async.distributed.worker_registry.WorkerRegistry`
 - `WorkerInfo`
 
 Current status:
@@ -112,8 +112,8 @@ Expected behavior:
 - stale or failed attempts remain inspectable for recovery/debugging
 
 Current repository mapping:
-- `async_scheduler.core.models.ExecutionAttempt*`
-- `async_scheduler.persistence.models.ExecutionAttemptORM`
+- `ray_async.core.models.ExecutionAttempt*`
+- `ray_async.persistence.models.ExecutionAttemptORM`
 - `ExecutionAttemptRepository`
 
 Current status:
@@ -133,7 +133,7 @@ Expected behavior:
 - completion dedupe should ideally work across workers/processes
 
 Current repository mapping:
-- `async_scheduler.platform.completion.TaskCompletionNode`
+- `ray_async.platform.completion.TaskCompletionNode`
 - `RedisCompletionDedupBackend`
 
 Current status:
@@ -153,7 +153,7 @@ Expected behavior:
 - repair must update durable task and attempt records
 
 Current repository mapping:
-- `async_scheduler.platform.reconciler.TaskReconciler`
+- `ray_async.platform.reconciler.TaskReconciler`
 
 Current status:
 - distributed repair v2 minimal version implemented

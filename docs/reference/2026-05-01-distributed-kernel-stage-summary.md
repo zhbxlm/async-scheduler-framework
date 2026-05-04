@@ -2,7 +2,7 @@
 
 ## Summary
 
-This stage moved the project from a local deepwiki-aligned async scheduler
+This stage moved the project from a local deepwiki-aligned Ray Async
 framework into a distributed-kernel skeleton with tested execution, repair,
 and idempotency semantics.
 

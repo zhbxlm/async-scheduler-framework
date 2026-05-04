@@ -2,7 +2,7 @@
 
 项目当前采用两层配置体系：
 
-## 1. 基础运行时设置 `async_scheduler.settings`
+## 1. 基础运行时设置 `ray_async.settings`
 
 负责：
 - 数据库配置
@@ -13,7 +13,7 @@
 - `load_settings(env=None)`
 - `get_settings()`
 
-## 2. 增强配置层 `async_scheduler.config`
+## 2. 增强配置层 `ray_async.config`
 
 负责：
 - 环境识别（production / staging / test / development / local）
@@ -24,7 +24,7 @@
 ### 示例
 
 ```python
-from async_scheduler.config import config
+from ray_async.config import config
 
 print(config.environment)
 print(config.database.url)
@@ -34,8 +34,8 @@ print(config.backends.redis_url)
 ### 查看当前配置
 
 ```bash
-async-scheduler config --json
-async-scheduler config --env
+ray-async config --json
+ray-async config --env
 ```
 
 ## 关键环境变量
@@ -79,7 +79,7 @@ LOCK_TYPE=memory
 ### 分服务部署
 ```bash
 ENVIRONMENT=production
-DATABASE_URL=mysql+asyncmy://user:pass@mysql:3306/async_scheduler
+DATABASE_URL=mysql+asyncmy://user:pass@mysql:3306/ray_async
 REDIS_URL=redis://redis:6379/0
 QUEUE_TYPE=redis
 LOCK_TYPE=redis

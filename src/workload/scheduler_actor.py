@@ -58,8 +58,8 @@ def actor_name(cluster_id: str, release: str) -> str:
 def tenant_actor_namespace(tenant_id: str) -> str:
     """Return Ray actor namespace for a tenant."""
     if not tenant_id or tenant_id in ("default", ""):
-        return "async_scheduler"
-    return f"async_scheduler_{tenant_id}"
+        return "ray_async"
+    return f"ray_async_{tenant_id}"
 
 
 def get_scheduler_actor(

@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "async-scheduler"
+name = "ray-async"
 version = "0.1.0"
-description = "Async Scheduler — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
+description = "Ray Async — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Async Scheduler Team"},
+    {name = "Ray Async Team"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -49,7 +49,7 @@ dev = [
 ]
 
 [project.scripts]
-async-scheduler = "src.cli.main:cli"
+ray-async = "src.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

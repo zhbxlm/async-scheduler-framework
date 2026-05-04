@@ -1,7 +1,7 @@
 # Non-Critical Shared-State Boundary
 
 Date: 2026-05-02
-Project: async-scheduler-framework
+Project: ray-async-framework
 
 ## Purpose
 
@@ -136,25 +136,25 @@ When deciding whether a path should be promoted from local/fallback-oriented beh
 
 | Area | Current modules / files | Recommendation |
 |------|--------------------------|----------------|
-| Queue coordination | `async_scheduler/backends/redis.py`, `async_scheduler/queue/*` | **promote / keep shared** |
-| Lease / ownership | `async_scheduler/backends/redis.py`, `async_scheduler/core/consumer.py` | **promote / keep shared** |
-| Completion dedupe | `async_scheduler/platform/completion.py`, `async_scheduler/platform/completion.py`, Redis-backed dedupe wiring | **promote / keep shared** |
-| Worker liveness | `async_scheduler/distributed/worker_registry.py` | **promote / keep shared** |
+| Queue coordination | `ray_async/backends/redis.py`, `ray_async/queue/*` | **promote / keep shared** |
+| Lease / ownership | `ray_async/backends/redis.py`, `ray_async/core/consumer.py` | **promote / keep shared** |
+| Completion dedupe | `ray_async/platform/completion.py`, `ray_async/platform/completion.py`, Redis-backed dedupe wiring | **promote / keep shared** |
+| Worker liveness | `ray_async/distributed/worker_registry.py` | **promote / keep shared** |
 
 ### Durable but not necessarily Redis-shared code paths
 
 | Area | Current modules / files | Recommendation |
 |------|--------------------------|----------------|
-| Task persistence | `async_scheduler/persistence/models.py`, `async_scheduler/persistence/repositories.py` | **keep durable DB-backed** |
-| Attempt persistence | `async_scheduler/persistence/models.py`, `async_scheduler/persistence/repositories.py` | **keep durable DB-backed** |
-| Schedule registry | `async_scheduler/scheduler/*`, `RegistryBackend` paths | **investigate before promote** |
+| Task persistence | `ray_async/persistence/models.py`, `ray_async/persistence/repositories.py` | **keep durable DB-backed** |
+| Attempt persistence | `ray_async/persistence/models.py`, `ray_async/persistence/repositories.py` | **keep durable DB-backed** |
+| Schedule registry | `ray_async/scheduler/*`, `RegistryBackend` paths | **investigate before promote** |
 
 ### Local / control-plane aggregation code paths
 
 | Area | Current modules / files | Recommendation |
 |------|--------------------------|----------------|
-| Debug summaries | `async_scheduler/api/app.py` (`/debug/summary`) | **keep local aggregation** |
-| Lease anomaly views | `async_scheduler/api/app.py` (`/debug/leases*`) | **keep local aggregation; improve operator UX** |
+| Debug summaries | `ray_async/api/app.py` (`/debug/summary`) | **keep local aggregation** |
+| Lease anomaly views | `ray_async/api/app.py` (`/debug/leases*`) | **keep local aggregation; improve operator UX** |
 | PR / review docs | `README.md`, `PR_READY_NOTES.md`, `docs/reference/*` | **keep local/documentation only** |
 
 ## 7. Decision table
