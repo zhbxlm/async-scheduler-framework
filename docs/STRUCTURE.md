@@ -1,6 +1,6 @@
 # Project Structure
 
-> Auto-generated on 2026-05-05 00:30
+> Auto-generated on 2026-05-05 00:36
 
 ```
 async-scheduler-framework/
@@ -58,9 +58,12 @@ async-scheduler-framework/
 │   │   └── non-critical-shared-state-boundary.md
 │   ├── runtime
 │   │   └── distributed-deployment-guide.md
+│   ├── API.md
+│   ├── STRUCTURE.md
 │   ├── configuration.md
 │   ├── implementation_summary.json
 │   ├── mariadb-redis-validation-summary.md
+│   ├── openapi.json
 │   ├── pr-description.md
 │   └── testing.md
 ├── examples

@@ -1,265 +1,208 @@
-# Ray Async Framework
+# async-scheduler-framework
 
-> 企业级异步任务调度框架，提供 DAG 编排、多租户隔离、潮汐资源管理和长耗时服务代理能力。
+> Ray-powered asynchronous task scheduling framework with multi-tenant support, DAG orchestration, and production-grade observability.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
----
-
-## 项目介绍
-
-基于 FastAPI、Redis 和 MySQL 构建的完整异步任务调度解决方案：
-
-- **DAG 编排引擎** — 拓扑排序、并行扇出、条件分支、MAP scatter-gather、STREAMING 流式处理
-- **任务执行引擎** — 分布式执行锁、后台锁续约、取消信号检测
-- **调度 Actor** — Detached Named Actor，多 capability ActorPool，支持灰度发布
-- **队列管理器** — Redis Sorted Set 优先级队列、三态熔断器（CLOSED/OPEN/HALF_OPEN）、Lua 原子操作
-- **资源管理器** — 4 阶段节点分配（SELECT → RESERVE → INVITE → CONFIRM）、自动扩缩容
-- **Cron 调度器** — Redis Leader 选举、幂等触发、分布式防重
-- **配额执行器** — 多租户配额管理、Redis Lua atomic check-increment
-- **异步代理** — 长耗时 Flask 服务 Sidecar，Redis Pub/Sub 异步通知
-- **节点代理** — 资源探测、心跳所有权协议、集群加入/退出
-- **CLI 工具** — kubectl 风格命令行，管理集群/能力/任务/节点/调度/租户
+[![CI](https://github.com/zhbxlm/async-scheduler-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/zhbxlm/async-scheduler-framework/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
+[![Tests](https://img.shields.io/badge/tests-163%20passed-brightgreen)](#testing)
 
 ---
 
-## 项目结构
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/API.md](docs/API.md) | Full REST API reference (58 endpoints, auto-generated) |
+| [docs/STRUCTURE.md](docs/STRUCTURE.md) | Project structure overview (auto-generated) |
+| [docs/openapi.json](docs/openapi.json) | OpenAPI 3.x JSON schema |
+| [docs/deepwiki-reference/](docs/deepwiki-reference/) | Architecture design reference |
+
+---
+
+## 🏗️ Architecture
 
 ```
-ray-async-framework/
-├── config/                  # 分层配置
-│   └── settings.py          # 全局单例 settings
-├── src/
-│   ├── main.py              # API 服务入口
-│   ├── api/                 # RESTful API (FastAPI)
-│   │   ├── auth.py          # API Key 认证
-│   │   ├── dependencies.py  # FastAPI 依赖注入
-│   │   └── routes/          # tasks
-│   ├── cli/                 # CLI 工具 (Click)
-│   │   ├── main.py          # ray-async 主命令
-│   │   └── client.py        # HTTP 客户端
-│   ├── agent/               # 节点代理
-│   │   ├── server.py        # FastAPI HTTP 服务
-│   │   ├── config.py        # 代理配置
-│   │   ├── heartbeat.py     # 所有权协议 + 心跳 (Lua CAS)
-│   │   ├── resource_detector.py  # CPU/GPU/内存探测
-│   │   ├── ray_manager.py   # 计算集群进程管理
-│   │   └── deploy_manager.py     # 部署包下载/校验/解压
-│   ├── common/
-│   │   ├── db.py            # SQLAlchemy Base + get_db()
-│   │   └── redis_client.py  # Redis 客户端工厂
-│   ├── models/              # Pydantic/ORM 数据模型
-│   │   ├── task.py          # TaskRecord / TaskStatus / TaskPriority / TaskDispatchMode
-│   │   ├── dag.py           # DagStep / DagDefinition / DagContext / StepKind
-│   │   ├── capability.py    # CapabilityInfo / ActorConfig
-│   │   ├── cluster.py       # ClusterInfo / ClusterResources
-│   │   ├── node.py          # NodeInfo / NodeState / NodeResources / NodeLease
-│   │   ├── schedule.py      # ScheduleRecord / ScheduleInfo
-│   │   ├── tenant.py        # TenantInfo / TenantQuota
-│   │   ├── deploy.py        # DeployedPackageInfo / DeployRequest
-│   │   └── tenant_context.py     # TenantContext (per-request)
-│   ├── platform/            # 平台核心
-│   │   ├── dag_engine.py    # DAG 执行引擎（含 STREAMING）
-│   │   ├── dag_loader.py    # YAML + Redis DAG 加载
-│   │   ├── step_executors.py     # Sync/Async/Map 步骤执行器
-│   │   ├── task_executor.py      # 任务执行服务层
-│   │   ├── task_consumer.py      # 任务消费循环
-│   │   ├── task_router.py        # 任务路由
-│   │   ├── task_completion_node.py  # 任务完成节点（持久化+回调）
-│   │   ├── task_reconciler.py    # 三阶段对账修复
-│   │   ├── cron_scheduler.py     # Cron 调度器（Leader 选举）
-│   │   ├── schedule_registry.py  # 调度表 CRUD
-│   │   ├── queue_manager.py      # 优先级队列 + 熔断器
-│   │   ├── queue_keys.py         # Redis 键命名工具
-│   │   ├── resource_manager.py   # 节点分配 + 自动扩缩容
-│   │   ├── node_registry.py      # 节点注册表
-│   │   ├── capability_registry.py  # 能力注册表
-│   │   ├── cluster_registry.py   # 集群注册表
-│   │   ├── quota_enforcer.py     # 配额执行器
-│   │   ├── tenant_registry.py    # 租户注册表
-│   │   ├── base_registry.py      # Redis 注册表基类
-│   │   ├── raydata_client.py     # RayData HTTP 客户端
-│   │   └── remote_code_fetcher.py  # 远程代码获取
-│   ├── proxy/
-│   │   ├── async_service_proxy.py  # 长耗时服务 Sidecar
-│   │   └── async_command_proxy.py  # 命令代理
-│   └── workload/
-│       ├── scheduler_actor.py    # Detached Actor 入口
-│       ├── actor_pool_manager.py # ActorPool 管理
-│       ├── base_worker_actor.py  # Worker 基类
-│       └── async_proxy_worker.py # 异步代理 Worker
-├── tests/                   # pytest 测试套件 (119 测试)
-├── scripts/                 # 验证脚本
-│   ├── dag_deploy_verify.py # 4 类 DAG 部署验证
-│   └── dag_streaming_verify.py  # STREAMING DAG 验证
-├── Dockerfile               # 多阶段镜像 (api / agent)
-├── docker-compose.yml       # 完整部署编排
-├── pyproject.toml           # 包配置 (src/ 布局)
-└── setup.py                 # 兼容 setuptools
+┌─────────────────────────────────────────────────────┐
+│                  API Layer (FastAPI)                 │
+│  /tasks  /capabilities  /clusters  /nodes  /health  │
+└────────────────────┬────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────┐
+│               Platform Services                      │
+│  QueueManager  CronScheduler  TaskReconciler        │
+│  CapabilityRegistry  ClusterRegistry  NodeRegistry  │
+└────────────────────┬────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────┐
+│              Infrastructure                          │
+│         Redis (queue/registry)  MySQL (tasks)        │
+└─────────────────────────────────────────────────────┘
 ```
+
+**Three entry points:**
+
+| Entry point | File | Purpose |
+|-------------|------|---------|
+| Main API | `src/main.py` | Scheduling, registry, DAG, ops |
+| Task API | `src/main_task_api.py` | Lightweight task CRUD only |
+| Node Agent | `src/agent/server.py` | Per-node heartbeat & ownership |
 
 ---
 
-## 快速开始
+## 🚀 Quick Start
 
-### 本地开发
+### Docker Compose (recommended)
 
 ```bash
-# 1. 安装依赖
-pip install -e ".[dev]"
+# Start full stack
+docker compose up
 
-# 2. 启动 Redis + MySQL (Docker)
-docker-compose up -d redis mysql
+# Start with observability tools (Jaeger, Prometheus, Grafana)
+docker compose --profile observability up
 
-# 3. 启动 API 服务
-MYSQL_PORT=3307 MYSQL_DATABASE=ray_async uvicorn src.main:app --reload
-
-# 4. 运行测试
-pytest -q
+# Run test suite
+docker compose --profile test run --rm test
 ```
 
-### Docker 一键部署
+### Local development
 
 ```bash
-# 构建并启动全部服务
-docker-compose up -d
+# Install dependencies
+pip install -r requirements.txt
 
-# 服务端口
-# API:    http://localhost:8000
-# Agent:  http://localhost:9100
-# MySQL:  localhost:3307
-# Redis:  localhost:6379
+# Configure (copy and edit)
+cp .env.example .env
+
+# Run main API
+uvicorn src.main:app --reload --port 8000
+
+# Run task API (separate process)
+uvicorn src.main_task_api:app --reload --port 8001
 ```
 
-### CLI 使用
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `MYSQL_URL` | _(empty)_ | MySQL URL; if empty, uses in-memory only |
+| `ENVIRONMENT` | `development` | `development` / `testing` / `production` |
+| `BACKGROUND__RECONCILE__ENABLED` | `false` | Enable task reconciler |
+| `BACKGROUND__CRON__ENABLED` | `false` | Enable cron scheduler |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | Jaeger/Tempo OTLP endpoint |
+
+---
+
+## 🧪 Testing
 
 ```bash
-# 查看集群状态
-ray-async cluster list
+# All tests
+python -m pytest tests/ -v
 
-# 注册能力
-ray-async capability register --name cap_preprocess --endpoint http://worker:8080
+# With coverage
+python -m pytest tests/ --cov=src --cov-report=term-missing
 
-# 提交任务
-ray-async task submit --capability cap_preprocess --payload '{"data": "..."}'
+# Performance benchmarks
+python -m pytest tests/test_benchmarks.py -v -s
 
-# 查看队列
-ray-async queue stats --capability cap_preprocess
-
-# 创建 Cron 调度
-ray-async schedule create --name daily-job --cron "0 9 * * *" --capability cap_preprocess
+# Standalone benchmark report
+python tests/test_benchmarks.py
 ```
+
+**Test suite:** 163 tests — unit, integration, health checks, benchmarks.
+
+### Benchmark results (mocked Redis, 0.1ms simulated latency)
+
+| Path | mean | p99 | TPS |
+|------|------|-----|-----|
+| BaseRedisRegistry.get | 1.2ms | 1.2ms | 850/s |
+| CapabilityRegistry.get | 0.02ms | 0.04ms | 46K/s |
+| TaskCreator.create_task | 0.04ms | 0.1ms | 25K/s |
+| JSON round-trip (TaskRecord) | 0.03ms | 0.04ms | 36K/s |
+| @log_errors overhead | ~0ms | ~0ms | 2.3M/s |
 
 ---
 
-## DAG 示例
+## 📡 API Overview
 
-### 线性 Pipeline
+Base URL: `http://localhost:8000`
 
-```python
-from src.models.dag import DagDefinition, DagStep, RetryPolicy, ExecutionMode, StepKind
-from src.platform.dag_engine import DagEngine
+| Tag | Endpoints | Description |
+|-----|-----------|-------------|
+| `tasks` | 5 | Create, list, get, result, cancel tasks |
+| `capabilities` | 3 | Register and manage capabilities |
+| `clusters` | 4 | Cluster registry and resource management |
+| `nodes` | 4 | Node registration and state management |
+| `schedules` | 3 | Cron schedule management |
+| `tenants` | 3 | Tenant management and API keys |
+| `dags` | 4 | DAG definition management |
+| `ops` | 8 | Operations: queues, health, stats |
+| `health` | 6 | Health checks and Prometheus metrics |
 
-dag = DagDefinition(
-    dag_id="pipeline_001",
-    tenant_id="tenant_a",
-    steps=[
-        DagStep(step_name="A", capability="cap_preprocess", step_kind=StepKind.TASK,
-                execution_mode=ExecutionMode.SYNC, depends_on=[], ...),
-        DagStep(step_name="B", capability="cap_transform", step_kind=StepKind.TASK,
-                execution_mode=ExecutionMode.SYNC, depends_on=["A"], ...),
-    ],
-)
-
-engine = DagEngine()
-ctx = await engine.execute(dag, my_dispatcher, initial_context={"task_id": "t1"})
-```
-
-### STREAMING 流式处理
-
-```python
-DagStep(
-    step_name="stream_producer",
-    step_kind=StepKind.STREAMING,
-    streaming_trigger=StreamingTrigger(
-        buffer_key="streaming:{task_id}:stream_producer",
-        trigger_condition="chunk_ready",
-        downstream_steps=["chunk_handler"],
-        flush_on_complete=True,
-    ),
-    ...
-)
-```
-
-Worker 通过 `rpush(buffer_key, json)` 推送 chunk，引擎消费并并发触发下游步骤，最后 `{"__done__": true, "summary": {...}}` 结束流。
+Full reference: [docs/API.md](docs/API.md) or `GET /docs` (Swagger UI).
 
 ---
 
-## 配置
+## 🔍 Observability
 
-所有配置通过环境变量控制，优先级：**环境变量 > YAML 文件 > 代码默认值**
+### Health checks
 
 ```bash
-# Redis
-REDIS_HOST=localhost  REDIS_PORT=6379  REDIS_DB=0
-
-# MySQL
-MYSQL_HOST=localhost  MYSQL_PORT=3306  MYSQL_USER=root  MYSQL_PASSWORD=  MYSQL_DATABASE=ray_async
-
-# API
-API_HOST=0.0.0.0  API_PORT=8000  RAY_ASYNC_API_KEY=your-key
-
-# DAG
-DAG_MAX_PARALLELISM=8  DAG_HTTP_TIMEOUT_SECONDS=300
-
-# Scaling
-SCALE_UP_THRESHOLD=0.8  SCALE_DOWN_THRESHOLD=0.2  SCALE_COOLDOWN_SECONDS=300
-
-# Agent
-AGENT_NODE_ID=node-01  AGENT_PORT=9100
+GET /health/        # Basic health
+GET /health/ready   # Readiness probe (K8s)
+GET /health/detailed # System + process metrics
+GET /health/metrics  # Prometheus text format
 ```
 
----
+### Distributed tracing
 
-## 测试
+Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317` to export traces.
+View at `http://localhost:16686` (Jaeger UI, via docker compose profile).
+
+### Prometheus + Grafana
 
 ```bash
-# 全量测试 (119 个)
-pytest -q
-
-# 单模块
-pytest tests/test_dag_engine.py -v
-
-# 部署验证 (需要 MariaDB 3307)
-python scripts/dag_deploy_verify.py      # 4 类 DAG
-python scripts/dag_streaming_verify.py   # STREAMING DAG
+docker compose --profile observability up prometheus grafana
+# Prometheus: http://localhost:9090
+# Grafana:    http://localhost:3000  (admin/admin)
 ```
 
 ---
 
-## 架构参考
+## 📦 Key Components
 
-详细架构文档见 [`docs/deepwiki-reference/`](docs/deepwiki-reference/)：
-
-| 文档 | 说明 |
-|---|---|
-| [项目概述](docs/deepwiki-reference/项目概述.md) | 系统架构总览 |
-| [DAG 编排](docs/deepwiki-reference/DAG%20编排.md) | DAG 引擎设计 |
-| [任务执行](docs/deepwiki-reference/任务执行.md) | 执行引擎与对账 |
-| [队列管理](docs/deepwiki-reference/队列管理.md) | Redis 队列 + 熔断器 |
-| [调度与资源管理](docs/deepwiki-reference/调度与资源管理.md) | 节点分配 + 扩缩容 |
-| [节点代理](docs/deepwiki-reference/节点代理.md) | 所有权协议 + 资源探测 |
-| [Cron 调度](docs/deepwiki-reference/Cron%20调度.md) | 分布式 Cron |
-| [配额与多租户](docs/deepwiki-reference/配额与多租户.md) | 多租户隔离 |
-| [配置说明](docs/deepwiki-reference/配置说明.md) | 完整配置参数 |
-| [API 参考](docs/deepwiki-reference/API%20参考.md) | RESTful API |
-| [命令行工具](docs/deepwiki-reference/命令行工具.md) | CLI 命令参考 |
-| [Worker 开发](docs/deepwiki-reference/Worker%20开发.md) | 自定义 Worker |
-| [异步代理](docs/deepwiki-reference/异步代理.md) | Sidecar 代理 |
+| Module | Purpose |
+|--------|---------|
+| `src/common/async_db.py` | Async SQLAlchemy engine & session |
+| `src/common/error_handling.py` | Structured errors + `@log_errors` decorator |
+| `src/common/lifecycle.py` | Background task lifecycle manager |
+| `src/common/tracing.py` | OpenTelemetry tracing setup |
+| `src/platform/base_registry.py` | Generic Redis CRUD base class |
+| `src/platform/queue_manager.py` | Priority queue with Lua atomic enqueue |
+| `src/platform/task_creator.py` | Task creation adapter (Redis + DB) |
+| `src/platform/task_reconciler.py` | Stuck-task detection with leader election |
+| `src/platform/cron_scheduler.py` | Cron-based task scheduling |
+| `config/settings_pydantic.py` | Type-safe config with pydantic-settings |
 
 ---
 
-## License
+## 📄 Generating docs
 
-MIT
+```bash
+# Regenerate all docs from live app
+python scripts/generate_docs.py --all
+
+# Individual targets
+python scripts/generate_docs.py --schema     # openapi.json
+python scripts/generate_docs.py --api        # API.md
+python scripts/generate_docs.py --structure  # STRUCTURE.md
+```
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Run tests: `python -m pytest tests/`
+4. Push and open a PR — CI will run lint, tests, security scan, and Docker build automatically.
