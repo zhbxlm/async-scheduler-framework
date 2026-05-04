@@ -1,6 +1,6 @@
 """Tenant quota enforcement with Redis-backed atomic check-and-increment.
 
-Aligned with deepwiki ray-amu QuotaEnforcer spec:
+Aligned with deepwiki ray-async QuotaEnforcer spec:
 - Per-tenant usage counters stored in Redis Hash ``tenant_usage:{tenant_id}``
 - Lua scripts guarantee atomic check+increment (avoids TOCTOU races)
 - Three quota dimensions: task_count, gpu_count, actor_count

@@ -1,6 +1,6 @@
 """Queue manager for task prioritization and scheduling.
 
-Aligned with the deepwiki ray-amu queue-management spec:
+Aligned with the deepwiki ray-async queue-management spec:
 
 * Per-capability queues  (``queue:{capability}:pending`` / ``:running``)
 * Priority + timestamp score encoding: ``(priority+offset) * 10**13 + ts_ms``

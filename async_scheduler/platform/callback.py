@@ -11,7 +11,7 @@ Level 2 (persistent retry queue backed by Redis ZSET):
     ``max_persistent_attempts`` are moved to ``callback:dead_letter`` (kept
     for ``dead_letter_ttl_seconds``).
 
-This matches the deepwiki ray-amu TaskCompletionNode two-level retry spec.
+This matches the deepwiki ray-async TaskCompletionNode two-level retry spec.
 """
 
 from __future__ import annotations

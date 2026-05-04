@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class TaskStatus(str, Enum):
     """Task execution status.
 
-    Aligned with deepwiki ray-amu task state machine.
+    Aligned with deepwiki ray-async task state machine.
     """
 
     PENDING = "pending"
@@ -43,7 +43,7 @@ class ExecutionAttemptStatus(str, Enum):
 class TaskPriority(int, Enum):
     """Task priority levels.
 
-    Aligned with deepwiki ray-amu spec.
+    Aligned with deepwiki ray-async spec.
     ``priority_rank`` is the sort key used in queue score encoding:
     score = priority_rank * 10**13 + timestamp_ms
     Smaller rank ⇒ higher priority (VERY_HIGH = 1, TIDE = 5).

@@ -1,6 +1,6 @@
 # Async Scheduler Framework
 
-一个本地可运行、并已经演进到 **可验证的分布式调度内核骨架** 的异步调度框架，参考 ray-amu deepwiki 的能力边界，提供：
+一个本地可运行、并已经演进到 **可验证的分布式调度内核骨架** 的异步调度框架，参考 ray-async deepwiki 的能力边界，提供：
 
 > 当前仓库已经具备一条可工作的 **real Redis-backed distributed kernel path**：包括 queue、lease / heartbeat、worker registry、execution attempts、completion idempotency、distributed reconciler，以及 executor / consumer / worker 之间收敛后的 retry exhaustion 语义。关键共享状态路径（queue / lock / completion dedupe / worker registry）已经支持真实 async Redis client；queue promotion 与 lock compare-and-act 等关键操作已补入 Lua/CAS 风格原子语义；同时保留无真实 Redis client 时的进程内 fallback 模式。仓库还提供 live Redis smoke / recovery / overlap / consumer-recovery / retry-exhaustion 验证套件，以及一组面向 finalize / callback / reconciler overlap 的高价值 fault-injection 测试。它仍然不是最终形态的生产级 deepwiki 等价实现，但已经具备真正多进程 / 多节点部署所需的核心语义与验证基础。
 
@@ -322,7 +322,7 @@ curl 'http://127.0.0.1:8000/reconciler/history?action=requeue'
 
 这个仓库当前应被视为：
 
-- **ray-amu / deepwiki 设计启发下的单机版 MVP**
+- **ray-async / deepwiki 设计启发下的单机版 MVP**
 - **本地可运行、可测试、可演进的结构原型**
 - **不是 deepwiki 分布式平台的等价实现**
 
