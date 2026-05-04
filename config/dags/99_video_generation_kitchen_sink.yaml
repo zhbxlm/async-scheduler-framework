@@ -1,0 +1,40 @@
+# rebuilt from deepwiki-reference alignment
+# Kitchen-sink video generation DAG: demonstrates all step kinds
+dag_id: "video_generation_kitchen_sink"
+tenant_id: "default"
+steps:
+  - step_name: "parse_request"
+    capability: "cap_parser"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: []
+    timeout_seconds: 30
+
+  - step_name: "fetch_assets"
+    capability: "cap_asset_fetcher"
+    step_kind: "TASK"
+    execution_mode: "ASYNC"
+    depends_on: ["parse_request"]
+    timeout_seconds: 120
+
+  - step_name: "encode_segments"
+    capability: "cap_encoder"
+    step_kind: "MAP"
+    execution_mode: "ASYNC"
+    depends_on: ["fetch_assets"]
+    map_over: "fetch_assets.segments"
+    max_parallelism: 4
+
+  - step_name: "merge_video"
+    capability: "cap_merger"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["encode_segments"]
+    timeout_seconds: 300
+
+  - step_name: "upload_result"
+    capability: "cap_uploader"
+    step_kind: "TASK"
+    execution_mode: "ASYNC"
+    depends_on: ["merge_video"]
+    timeout_seconds: 60

@@ -1,0 +1,30 @@
+# rebuilt from deepwiki-reference alignment
+# Conditional branch: preprocess → [branch_a | branch_b] → merge
+dag_id: "pipeline_branch"
+tenant_id: "default"
+steps:
+  - step_name: "preprocess"
+    capability: "cap_preprocess"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: []
+
+  - step_name: "branch_a"
+    capability: "cap_branch_a"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["preprocess"]
+    condition: "input.get('type') == 'a'"
+
+  - step_name: "branch_b"
+    capability: "cap_branch_b"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["preprocess"]
+    condition: "input.get('type') != 'a'"
+
+  - step_name: "merge"
+    capability: "cap_merge"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["branch_a", "branch_b"]

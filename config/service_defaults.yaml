@@ -1,0 +1,36 @@
+# rebuilt from deepwiki-reference alignment
+# Default service configuration for Ray Async framework
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  db: 0
+  decode_responses: true
+  max_connections: 50
+
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: ""
+  database: "ray_async"
+  pool_size: 20
+  max_overflow: 10
+
+dag:
+  http_timeout_seconds: 300
+  max_parallelism: 8
+  context_ttl_seconds: 259200
+
+task:
+  consumer:
+    enabled: true
+    poll_interval: 2.0
+    max_concurrent: 16
+  execution_lock:
+    lease_seconds: 60
+    renew_interval_seconds: 15
+
+scaling:
+  up_threshold: 0.8
+  down_threshold: 0.2
+  cooldown_seconds: 300

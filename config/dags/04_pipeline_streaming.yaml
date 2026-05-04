@@ -1,0 +1,33 @@
+# rebuilt from deepwiki-reference alignment
+# STREAMING: producer pushes chunks → chunk_handler (per chunk) → finalize
+dag_id: "pipeline_streaming"
+tenant_id: "default"
+steps:
+  - step_name: "pre"
+    capability: "cap_pre"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: []
+
+  - step_name: "stream_producer"
+    capability: "cap_stream"
+    step_kind: "STREAMING"
+    execution_mode: "ASYNC"
+    depends_on: ["pre"]
+    streaming_trigger:
+      buffer_key: "streaming:{task_id}:stream_producer"
+      trigger_condition: "chunk_ready"
+      downstream_steps: ["chunk_handler"]
+      flush_on_complete: true
+
+  - step_name: "chunk_handler"
+    capability: "cap_chunk"
+    step_kind: "TASK"
+    execution_mode: "ASYNC"
+    depends_on: []
+
+  - step_name: "finalize"
+    capability: "cap_finalize"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["stream_producer"]

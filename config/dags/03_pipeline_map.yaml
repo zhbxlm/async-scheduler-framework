@@ -1,0 +1,24 @@
+# rebuilt from deepwiki-reference alignment
+# MAP scatter-gather: split → [worker × N] → gather
+dag_id: "pipeline_map"
+tenant_id: "default"
+steps:
+  - step_name: "split"
+    capability: "cap_split"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: []
+
+  - step_name: "map_worker"
+    capability: "cap_worker"
+    step_kind: "MAP"
+    execution_mode: "ASYNC"
+    depends_on: ["split"]
+    map_over: "split.shards"
+    max_parallelism: 8
+
+  - step_name: "gather"
+    capability: "cap_gather"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["map_worker"]

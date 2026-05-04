@@ -1,0 +1,28 @@
+# rebuilt from deepwiki-reference alignment
+# Linear pipeline: A → B → C
+dag_id: "pipeline_linear"
+tenant_id: "default"
+steps:
+  - step_name: "preprocess"
+    capability: "cap_preprocess"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: []
+    timeout_seconds: 60
+    max_retries: 2
+
+  - step_name: "transform"
+    capability: "cap_transform"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["preprocess"]
+    timeout_seconds: 120
+    max_retries: 2
+
+  - step_name: "postprocess"
+    capability: "cap_postprocess"
+    step_kind: "TASK"
+    execution_mode: "SYNC"
+    depends_on: ["transform"]
+    timeout_seconds: 60
+    max_retries: 1

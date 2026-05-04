@@ -1,0 +1,22 @@
+# rebuilt from deepwiki-reference alignment
+# Node Agent configuration example — copy to agent.yaml and customize
+
+node_id: "node-001"
+host: "0.0.0.0"
+port: 9100
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+
+heartbeat:
+  interval_seconds: 15
+  lease_ttl_seconds: 45
+
+deploy:
+  base_dir: "/opt/ray-async/deploys"
+  cleanup_on_exit: true
+
+ray:
+  head_address: ""   # e.g. ray://head-node:6379
+  object_store_memory: 2000000000
