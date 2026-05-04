@@ -19,7 +19,7 @@ class _FakeDispatcher:
 
 @pytest.mark.asyncio
 async def test_callback_stats_endpoint_returns_summary() -> None:
-    mod = importlib.import_module("async_scheduler.api.app")
+    mod = importlib.import_module("src.main")
 
     fake_services = type("FakeServices", (), {"callback_dispatcher": _FakeDispatcher()})()
     original_services = mod.services

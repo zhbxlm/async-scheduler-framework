@@ -33,7 +33,7 @@ class _FakeResourceManager:
 
 @pytest.mark.asyncio
 async def test_resources_stats_endpoint_exposes_workload_summary() -> None:
-    mod = importlib.import_module("async_scheduler.api.app")
+    mod = importlib.import_module("src.main")
 
     fake_services = type("FakeServices", (), {"resource_manager": _FakeResourceManager()})()
     original_services = mod.services

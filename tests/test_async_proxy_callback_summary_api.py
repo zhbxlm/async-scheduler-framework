@@ -29,7 +29,7 @@ class _FakeDispatcher:
 
 @pytest.mark.asyncio
 async def test_async_proxy_stats_includes_callback_control_plane_summary() -> None:
-    mod = importlib.import_module("async_scheduler.api.app")
+    mod = importlib.import_module("src.main")
 
     fake_services = type(
         "FakeServices",

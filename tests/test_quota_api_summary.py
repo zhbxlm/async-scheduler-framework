@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 @pytest.mark.asyncio
 async def test_quota_stats_returns_usage_limits_and_summary() -> None:
-    mod = importlib.import_module("async_scheduler.api.app")
+    mod = importlib.import_module("src.main")
 
     mock_quota = MagicMock()
     mock_quota.stats = AsyncMock(return_value={
