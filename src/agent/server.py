@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import subprocess
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -53,7 +52,7 @@ _HEARTBEAT_INTERVAL = 10
 # ---------------------------------------------------------------------------
 
 class AgentState:
-    """Thread-safe mutable state container for the node agent."""
+    """Mutable state container for the node agent (assumed single-threaded async)."""
 
     def __init__(self, node_id: str, host: str, agent_port: int = 9100) -> None:
         self.node_id = node_id
@@ -65,26 +64,23 @@ class AgentState:
         self.ray_head_address: str = ""
         self.resources: NodeResources = NodeResources()
         self.deployed_packages: dict[str, DeployedPackageInfo] = {}
-        self._lock = threading.Lock()
 
     def transition(self, new_state: NodeState, **kwargs: Any) -> None:
-        with self._lock:
-            self.state = new_state
-            for k, v in kwargs.items():
-                setattr(self, k, v)
+        self.state = new_state
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     def to_node_info(self) -> NodeInfo:
-        with self._lock:
-            return NodeInfo(
-                node_id=self.node_id,
-                host=self.host,
-                agent_port=self.agent_port,
-                state=self.state,
-                resources=self.resources,
-                cluster_id=self.cluster_id,
-                ray_head_address=self.ray_head_address,
-                last_heartbeat=time.time(),
-            )
+        return NodeInfo(
+            node_id=self.node_id,
+            host=self.host,
+            agent_port=self.agent_port,
+            state=self.state,
+            resources=self.resources,
+            cluster_id=self.cluster_id,
+            ray_head_address=self.ray_head_address,
+            last_heartbeat=time.time(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -182,76 +178,55 @@ def _ray_is_running() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Heartbeat thread
+# Heartbeat background task
 # ---------------------------------------------------------------------------
 
-class HeartbeatThread(threading.Thread):
-    """Background thread: renews ownership + updates NodeRegistry."""
-
+async def heartbeat_task(
+    state: AgentState,
+    redis_client: Any,
+    node_registry: Any | None,
+    stop_event: asyncio.Event,
+    interval: float = _HEARTBEAT_INTERVAL,
+) -> None:
+    """Background coroutine: renews ownership + updates NodeRegistry."""
     MAX_RETRIES = 3
-
-    def __init__(
-        self,
-        state: AgentState,
-        redis_client: Any,
-        node_registry: Any,
-        *,
-        interval: float = HEARTBEAT_INTERVAL,
-    ) -> None:
-        super().__init__(daemon=True, name="agent-heartbeat")
-        self._state = state
-        self._redis = redis_client
-        self._registry = node_registry
-        self._interval = interval
-        self._stop_event = threading.Event()
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    def stop(self) -> None:
-        self._stop_event.set()
-
-    def run(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._heartbeat_loop())
-
-    async def _heartbeat_loop(self) -> None:
-        consecutive_failures = 0
-        while not self._stop_event.is_set():
-            try:
-                ok = await renew_ownership(
-                    self._redis, self._state.node_id, self._state.instance_id
+    consecutive_failures = 0
+    while not stop_event.is_set():
+        try:
+            ok = await renew_ownership(
+                redis_client, state.node_id, state.instance_id
+            )
+            if not ok:
+                logger.warning("heartbeat_task: ownership renewal failed, retrying")
+                # Try re-acquire
+                ok = await acquire_ownership(
+                    redis_client, state.node_id, state.instance_id
                 )
                 if not ok:
-                    logger.warning("HeartbeatThread: ownership renewal failed, retrying")
-                    # Try re-acquire
-                    ok = await acquire_ownership(
-                        self._redis, self._state.node_id, self._state.instance_id
-                    )
-                    if not ok:
-                        consecutive_failures += 1
-                        if consecutive_failures >= self.MAX_RETRIES:
-                            logger.error(
-                                "HeartbeatThread: lost ownership after %d retries, stopping",
-                                self.MAX_RETRIES,
-                            )
-                            break
-                    else:
-                        consecutive_failures = 0
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_RETRIES:
+                        logger.error(
+                            "heartbeat_task: lost ownership after %d retries, stopping",
+                            MAX_RETRIES,
+                        )
+                        break
                 else:
                     consecutive_failures = 0
+            else:
+                consecutive_failures = 0
 
-                # Update NodeRegistry
-                if self._registry is not None:
-                    node_info = self._state.to_node_info()
-                    await self._registry.heartbeat(
-                        self._state.node_id,
-                        resources=self._state.resources.model_dump(),
-                    )
+            # Update NodeRegistry
+            if node_registry is not None:
+                node_info = state.to_node_info()
+                await node_registry.heartbeat(
+                    state.node_id,
+                    resources=state.resources.model_dump(),
+                )
 
-            except Exception as e:
-                logger.error("HeartbeatThread exception: %s", e)
+        except Exception as e:
+            logger.error("heartbeat_task exception: %s", e)
 
-            await asyncio.sleep(self._interval)
+        await asyncio.sleep(interval)
 
 
 # ---------------------------------------------------------------------------
@@ -270,11 +245,12 @@ def create_agent_app(
 ) -> FastAPI:
     """Create and return the Node Agent FastAPI application."""
     state = AgentState(node_id=node_id, host=host, agent_port=agent_port)
-    heartbeat: HeartbeatThread | None = None
+    stop_event = asyncio.Event()
+    heartbeat_task_handle: asyncio.Task | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal heartbeat
+        nonlocal heartbeat_task_handle
         # Acquire ownership
         if redis_client:
             ok = await acquire_ownership(redis_client, node_id, state.instance_id)
@@ -283,13 +259,19 @@ def create_agent_app(
             # Register node
             if node_registry:
                 await node_registry.register(state.to_node_info())
-            # Start heartbeat
-            heartbeat = HeartbeatThread(state, redis_client, node_registry)
-            heartbeat.start()
+            # Start heartbeat background task
+            heartbeat_task_handle = asyncio.create_task(
+                heartbeat_task(state, redis_client, node_registry, stop_event)
+            )
         yield
         # Cleanup
-        if heartbeat:
-            heartbeat.stop()
+        stop_event.set()
+        if heartbeat_task_handle:
+            heartbeat_task_handle.cancel()
+            try:
+                await heartbeat_task_handle
+            except asyncio.CancelledError:
+                pass
         if redis_client and state.state in (NodeState.IDLE, NodeState.RESERVED):
             await release_ownership(redis_client, node_id, state.instance_id)
 

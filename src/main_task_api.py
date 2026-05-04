@@ -11,7 +11,10 @@ from fastapi import FastAPI
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Services would be initialised here in a full deployment
+    from src.common.db import init_engine
+    from config.settings import settings
+    if settings.infra.mysql.url:
+        init_engine(settings.infra.mysql.url)
     yield
 
 

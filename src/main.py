@@ -33,10 +33,57 @@ class _DefaultServices:
     """Stub service container. Replace attributes for testing.
     Supported: callback_dispatcher, async_proxy_sidecar, async_proxy,
                quota_manager, quota_enforcer, resource_manager
+               capability_registry, cluster_registry, node_registry,
+               schedule_registry, tenant_registry, dag_loader
     """
+    capability_registry = None
+    cluster_registry = None
+    node_registry = None
+    schedule_registry = None
+    tenant_registry = None
+    dag_loader = None
 
 
 services = _DefaultServices()
+
+
+async def init_services() -> None:
+    """Initialize platform services and registries."""
+    from src.platform.capability_registry import CapabilityRegistry
+    from src.platform.cluster_registry import ClusterRegistry
+    from src.platform.node_registry import NodeRegistry
+    from src.platform.schedule_registry import ScheduleRegistry
+    from src.platform.tenant_registry import TenantRegistry
+    from src.platform.dag_loader import DagLoader
+    from src.common.redis_client import create_redis_client
+    from src.common.db import init_engine
+    from config.settings import settings
+
+    redis_client = create_redis_client(settings.redis.url or None)
+    # DB engine (optional)
+    if settings.infra.mysql.url:
+        init_engine(settings.infra.mysql.url)
+
+    services.capability_registry = CapabilityRegistry(redis_client)
+    services.cluster_registry = ClusterRegistry(redis_client)
+    services.node_registry = NodeRegistry(redis_client)
+    services.schedule_registry = ScheduleRegistry(redis_client)
+    services.tenant_registry = TenantRegistry(redis_client)
+    services.dag_loader = DagLoader(redis_client=redis_client)  # uses default config/dags
+    # other services can be added here when needed
+
+
+# ── Startup hook ──────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event() -> None:
+    await init_services()
+    # Mount registries onto app.state for compatibility with existing route helpers
+    app.state.capability_registry = services.capability_registry
+    app.state.cluster_registry = services.cluster_registry
+    app.state.node_registry = services.node_registry
+    app.state.schedule_registry = services.schedule_registry
+    app.state.tenant_registry = services.tenant_registry
+    app.state.dag_loader = services.dag_loader
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
