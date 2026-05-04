@@ -2,7 +2,7 @@
 
 Full-spec DAG execution engine:
 - Topological scheduling with asyncio.gather() for parallel fan-out
-- Condition expression evaluation via simple context lookup
+- Condition expression evaluation via AST-based safe evaluator
 - SYNC / ASYNC / FLASK_WRAPPED execution modes
 - MAP scatter-gather
 - STREAMING: blpop Redis buffer, per-chunk downstream dispatch, sentinel detection
@@ -12,12 +12,24 @@ Full-spec DAG execution engine:
 """
 from __future__ import annotations
 
+import ast as _ast
 import asyncio
 import concurrent.futures
 import json
 import logging
 import time
 from typing import Any, Callable, Awaitable
+
+_ALLOWED_COMPARE_OPS = (
+    _ast.Eq, _ast.NotEq, _ast.Lt, _ast.LtE, _ast.Gt, _ast.GtE,
+    _ast.In, _ast.NotIn,
+)
+
+_ALLOWED_BOOL_OPS = (_ast.And, _ast.Or)
+
+_ALLOWED_UNARY_OPS = (_ast.Not,)
+
+_ALLOWED_CONST_TYPES = (str, int, float, bool, type(None))
 
 _STREAMING_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -63,6 +75,7 @@ class DagEngine:
     ) -> DagContext:
         """Execute *dag_def* and return the final DagContext."""
         ctx = DagContext(
+            schema_version=1,
             task_id=(initial_context or {}).get("task_id") or dag_def.dag_id,
             dag_id=dag_def.dag_id,
             tenant_id=dag_def.tenant_id,
@@ -270,13 +283,103 @@ class DagEngine:
             resp.raise_for_status()
             return resp.json()
 
+    def _safe_eval_condition(self, expr: str, ctx: DagContext) -> bool:
+        """Evaluate a condition expression safely using AST node walking.
+
+        Supported syntax:
+        - Constants: strings, numbers, booleans, None
+        - Variable names (looked up in local_vars)
+        - Comparison: ==, !=, <, <=, >, >=, in, not in
+        - Boolean: and, or, not
+        - Attribute access: x.y (nested field access)
+
+        Unsupported (raises ValueError): function calls, subscripts, assignments, import.
+        On any error, returns True (fail-open).
+        """
+        try:
+            tree = _ast.parse(expr, mode="eval")
+            local_vars = {**ctx.context, **ctx.input_data}
+            return bool(self._eval_node(tree.body, local_vars))
+        except Exception:
+            logger.warning("DagEngine: failed to parse condition expr=%s, fail-open", expr)
+            return True
+
+    def _eval_node(self, node: _ast.AST, local_vars: dict[str, Any]) -> Any:
+        """Recursively evaluate AST node safely."""
+        if isinstance(node, _ast.Constant):
+            # String, number, bool, None
+            if isinstance(node.value, _ALLOWED_CONST_TYPES):
+                return node.value
+            return None
+        elif isinstance(node, _ast.Name):
+            # Variable lookup
+            return local_vars.get(node.id, None)
+        elif isinstance(node, _ast.Compare):
+            # Comparison: left ops comparators
+            left_val = self._eval_node(node.left, local_vars)
+            result = True
+            for op, comparator in zip(node.ops, node.comparators):
+                right_val = self._eval_node(comparator, local_vars)
+                if isinstance(op, _ast.Eq):
+                    result = result and (left_val == right_val)
+                elif isinstance(op, _ast.NotEq):
+                    result = result and (left_val != right_val)
+                elif isinstance(op, _ast.Lt):
+                    result = result and (left_val < right_val)
+                elif isinstance(op, _ast.LtE):
+                    result = result and (left_val <= right_val)
+                elif isinstance(op, _ast.Gt):
+                    result = result and (left_val > right_val)
+                elif isinstance(op, _ast.GtE):
+                    result = result and (left_val >= right_val)
+                elif isinstance(op, _ast.In):
+                    try:
+                        result = result and (left_val in right_val)
+                    except TypeError:
+                        result = False
+                elif isinstance(op, _ast.NotIn):
+                    try:
+                        result = result and (left_val not in right_val)
+                    except TypeError:
+                        result = False
+                else:
+                    raise ValueError(f"Unsupported comparison op: {type(op)}")
+                left_val = right_val
+            return result
+        elif isinstance(node, _ast.BoolOp):
+            # Boolean: and, or
+            values = [self._eval_node(v, local_vars) for v in node.values]
+            if isinstance(node.op, _ast.And):
+                return all(values)
+            elif isinstance(node.op, _ast.Or):
+                return any(values)
+            else:
+                raise ValueError(f"Unsupported bool op: {type(node.op)}")
+        elif isinstance(node, _ast.UnaryOp):
+            # Unary: not, +, -
+            operand = self._eval_node(node.operand, local_vars)
+            if isinstance(node.op, _ast.Not):
+                return not operand
+            elif isinstance(node.op, _ast.UAdd):
+                return +operand
+            elif isinstance(node.op, _ast.USub):
+                return -operand
+            else:
+                raise ValueError(f"Unsupported unary op: {type(node.op)}")
+        elif isinstance(node, _ast.Attribute):
+            # Attribute access: x.y
+            obj_val = self._eval_node(node.value, local_vars)
+            if isinstance(obj_val, dict):
+                return obj_val.get(node.attr, None)
+            else:
+                # Only allow attribute access on dicts
+                raise ValueError(f"Attribute access only allowed on dicts: {type(obj_val)}")
+        else:
+            raise ValueError(f"Unsupported AST node: {type(node)}")
+
     def _eval_condition(self, expr: str, ctx: DagContext) -> bool:
         """Simple condition evaluation against context."""
-        try:
-            local_vars = {**ctx.context, **ctx.input_data}
-            return bool(eval(expr, {"__builtins__": {}}, local_vars))
-        except Exception:
-            return True  # fail-open
+        return self._safe_eval_condition(expr, ctx)
 
     def _topo_sort(self, steps: list[DagStep]) -> list[list[str]]:
         """Return topological levels (waves) for parallel execution."""

@@ -3,6 +3,7 @@ aligned with docs/deepwiki-reference/API 参考.md
 """
 from __future__ import annotations
 
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
@@ -25,6 +26,87 @@ async def ops_health(request: Request) -> dict:
     return {
         "status": "ok" if redis_ok else "degraded",
         "redis": "ok" if redis_ok else "unavailable",
+    }
+
+
+@router.get("/overview", summary="System overview with capability stats", include_in_schema=True)
+async def ops_overview(request: Request) -> dict:
+    """Return system-wide health summary with per-capability statistics."""
+    redis = getattr(request.app.state, "redis", None)
+    qm = getattr(request.app.state, "queue_manager", None)
+
+    redis_ok = False
+    if redis:
+        try:
+            await redis.ping()
+            redis_ok = True
+        except Exception:
+            pass
+
+    # Get capabilities
+    caps = []
+    if qm is not None:
+        caps = await qm.discover_queue_capabilities()
+
+    capabilities_stats = {}
+    total_pending = 0
+    total_running = 0
+    any_open = False
+
+    for cap in caps:
+        cap_stats = {}
+        if qm is not None:
+            try:
+                snapshot = await qm.get_queue_snapshot(cap)
+                pending = snapshot.get("pending", 0)
+                running = snapshot.get("running", 0)
+                max_concurrent = snapshot.get("max_concurrent", 8)
+                circuit_state = "closed"
+
+                # Try to get circuit_state from redis stats hash
+                if redis is not None:
+                    try:
+                        stats_key = f"queue:{cap}:stats"
+                        circuit_raw = await redis.hget(stats_key, "circuit_state")
+                        if circuit_raw:
+                            circuit_state = circuit_raw.decode() if isinstance(circuit_raw, bytes) else circuit_raw
+                            if circuit_state == "open":
+                                any_open = True
+                    except Exception:
+                        pass
+
+                utilization = round(running / max_concurrent, 2) if max_concurrent > 0 else 0.0
+
+                cap_stats = {
+                    "pending": pending,
+                    "running": running,
+                    "max_concurrent": max_concurrent,
+                    "circuit_state": circuit_state,
+                    "utilization": utilization,
+                }
+                total_pending += pending
+                total_running += running
+            except Exception as exc:
+                cap_stats = {"error": str(exc)}
+
+        capabilities_stats[cap] = cap_stats
+
+    # Determine overall status
+    if not redis_ok:
+        overall_status = "critical"
+    elif any_open:
+        overall_status = "degraded"
+    else:
+        overall_status = "ok"
+
+    return {
+        "status": overall_status,
+        "redis": "ok" if redis_ok else "unavailable",
+        "capabilities": capabilities_stats,
+        "total_capabilities": len(caps),
+        "total_pending": total_pending,
+        "total_running": total_running,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 

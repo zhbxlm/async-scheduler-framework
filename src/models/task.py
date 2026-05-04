@@ -84,6 +84,7 @@ class TaskRecord(Base):
     # Data
     input_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Control
@@ -93,6 +94,7 @@ class TaskRecord(Base):
     )
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=3600)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cron_expr: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -170,6 +172,7 @@ class TaskInfo(BaseModel):
     current_step: str | None = None
     input_data: dict[str, Any] = Field(default_factory=dict)
     output_data: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     callback_url: str | None = None
     idempotency_key: str | None = None
@@ -214,6 +217,7 @@ class TaskResultResponse(BaseModel):
     task_id: str
     status: TaskStatus
     output_data: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
 
 
 class TaskSummary(BaseModel):
@@ -228,6 +232,7 @@ class TaskSummary(BaseModel):
     dispatch_mode: TaskDispatchMode = TaskDispatchMode.DAG_ORCHESTRATED
     created_at: str = ""
     updated_at: str = ""
+    attempt: int = 0
 
 
 class TaskListResponse(BaseModel):

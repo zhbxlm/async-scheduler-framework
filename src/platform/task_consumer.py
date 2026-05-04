@@ -35,6 +35,13 @@ class TaskConsumer:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._tasks: set[asyncio.Task] = set()
 
+        # Weighted round-robin state
+        self._active_caps: dict[str, int] = {}  # cap -> consecutive empty rounds
+        self._burst_per_active: int = 3
+        self._backoff_multiplier: float = 1.0
+        self._max_backoff: float = 8.0
+        self._empty_rounds = 0
+
     async def start(self) -> None:
         self._running = True
         logger.info("TaskConsumer started caps=%s", self._capabilities)
@@ -47,9 +54,43 @@ class TaskConsumer:
 
     async def _poll_loop(self) -> None:
         while self._running:
+            got_task = False
+
+            # Phase 1: Burst dequeue from active caps (recently had tasks)
+            for cap in list(self._active_caps.keys()):
+                for _ in range(self._burst_per_active):
+                    if await self._try_dequeue(cap):
+                        got_task = True
+                        self._active_caps[cap] = 0  # reset empty counter
+                    else:
+                        # Track consecutive empty rounds for this cap
+                        self._active_caps[cap] = self._active_caps.get(cap, 0) + 1
+                        if self._active_caps[cap] >= 3:
+                            # Remove from active set after 3 empty rounds
+                            del self._active_caps[cap]
+                        break
+
+            # Phase 2: Normal round-robin for all caps
             for cap in self._capabilities:
-                await self._try_dequeue(cap)
-            await asyncio.sleep(self._poll_interval)
+                if cap in self._active_caps:
+                    continue  # already processed in burst phase
+                if await self._try_dequeue(cap):
+                    got_task = True
+                    self._active_caps[cap] = 0  # add to active set
+
+            # Backoff logic: if no tasks, increase wait time
+            if got_task:
+                self._backoff_multiplier = 1.0
+                self._empty_rounds = 0
+            else:
+                self._empty_rounds += 1
+                self._backoff_multiplier = min(
+                    self._max_backoff,
+                    self._backoff_multiplier * 2
+                )
+
+            wait_time = self._poll_interval * self._backoff_multiplier
+            await asyncio.sleep(wait_time)
 
     async def _try_dequeue(self, capability: str) -> None:
         # Non-blocking capacity check before acquiring

@@ -240,6 +240,24 @@ class TaskReconciler:
 
             if self._qm and attempt < max_retries:
                 # Requeue with exponential backoff delay
+                # Increment attempt counter in database atomically
+                if self._db is not None:
+                    try:
+                        from sqlalchemy import update
+                        from src.models.task import TaskRecord
+                        async with self._db() as db_session:
+                            stmt = (
+                                update(TaskRecord)
+                                .where(TaskRecord.task_id == tid)
+                                .values(attempt=TaskRecord.attempt + 1)
+                            )
+                            await db_session.execute(stmt)
+                            await db_session.commit()
+                    except Exception as exc:
+                        logger.warning(
+                            "TaskReconciler: phase2 increment attempt failed task_id=%s: %s",
+                            tid, exc,
+                        )
                 delay_ms = min(600_000, 10_000 * (2 ** attempt))
                 capability = task.get("capability", task.get("task_type", ""))
                 if capability:

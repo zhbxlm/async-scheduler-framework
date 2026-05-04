@@ -141,6 +141,7 @@ class DagDefinition(BaseModel):
 
 class DagContext(BaseModel):
     """DAG execution context stored in Redis."""
+    schema_version: int = 1  # bumped when DagContext fields change
     task_id: str
     dag_id: str
     tenant_id: str = ""

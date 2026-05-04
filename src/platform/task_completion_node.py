@@ -89,19 +89,30 @@ class TaskCompletionNode:
                 stmt = select(TaskRecord).where(TaskRecord.task_id == task_id)
                 row = (await session.execute(stmt)).scalar_one_or_none()
                 result_json = json.dumps(result, ensure_ascii=False) if result is not None else None
+                error_msg = None
+                if status == "failed" and isinstance(result, dict):
+                    error_msg = str(result.get("error", ""))
+                    if error_msg:
+                        error_msg = error_msg[:2000]  # truncate to 2000 chars
                 if row:
+                    update_values = {"status": status, "output": result_json}
+                    if error_msg:
+                        update_values["error_message"] = error_msg
                     await session.execute(
                         update(TaskRecord)
                         .where(TaskRecord.task_id == task_id)
-                        .values(status=status, output=result_json)
+                        .values(**update_values)
                     )
                 else:
-                    session.add(TaskRecord(
-                        task_id=task_id,
-                        tenant_id=tenant_id,
-                        status=status,
-                        output=result_json,
-                    ))
+                    create_values = {
+                        "task_id": task_id,
+                        "tenant_id": tenant_id,
+                        "status": status,
+                        "output": result_json,
+                    }
+                    if error_msg:
+                        create_values["error_message"] = error_msg
+                    session.add(TaskRecord(**create_values))
                 await session.commit()
                 logger.info("TaskCompletionNode: persisted task_id=%s status=%s", task_id, status)
         except Exception as exc:
