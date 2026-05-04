@@ -75,23 +75,23 @@ def test_health_metrics(test_client: TestClient):
 
 
 def test_health_redis(test_client: TestClient):
-    """Test Redis health check (placeholder)."""
+    """Test Redis health check."""
     response = test_client.get("/health/redis")
+    # No redis configured in tests — expect 200 with status unknown/healthy
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "healthy"
+    assert data["status"] in ("healthy", "unknown")
     assert data["service"] == "redis"
-    assert "note" in data
 
 
 def test_health_mysql(test_client: TestClient):
-    """Test MySQL health check (placeholder)."""
+    """Test MySQL health check."""
     response = test_client.get("/health/mysql")
+    # No mysql configured in tests — expect 200 with status disabled/healthy
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "healthy"
+    assert data["status"] in ("healthy", "disabled", "unknown")
     assert data["service"] == "mysql"
-    assert "note" in data
 
 
 def test_health_error_handling(test_client: TestClient):

@@ -16,6 +16,11 @@ from src.common.error_handling import (
     handle_external_service_error,
 )
 from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
+from src.common.logging_config import configure_logging
+from src.api.middleware import RequestIDMiddleware
+
+# Structured logging (JSON in production, plain text in dev)
+configure_logging()
 
 # Initialise tracing before creating the app (spans start from here)
 setup_tracing(service_name="scheduler-api", service_version="1.0.0")
@@ -34,6 +39,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         TaskReconcilerResource,
         CronSchedulerResource,
     )
+
+    # init shared http client pool
+    from src.common.http_client import init_http_client
+    init_http_client()
 
     container = await ServiceContainer.build(settings)
     set_container(container)
@@ -62,6 +71,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── shutdown ──────────────────────────────────────────────────
     manager = get_lifecycle_manager()
     await manager.stop_all()
+    from src.common.http_client import close_http_client
+    await close_http_client()
     shutdown_tracing()
 
 
@@ -78,6 +89,7 @@ app = FastAPI(
 )
 
 instrument_fastapi(app)
+app.add_middleware(RequestIDMiddleware)
 
 app.add_exception_handler(SystemError, handle_system_error)
 app.add_exception_handler(BusinessError, handle_business_error)

@@ -47,9 +47,8 @@ def init_async_engine(url: str, **kwargs) -> None:
     )
 
 
-def get_async_engine() -> AsyncEngine:
-    if _async_engine is None:
-        raise RuntimeError("Async engine not initialized. Call init_async_engine() first.")
+def get_async_engine() -> Optional[AsyncEngine]:
+    """Return the async engine, or None if not initialised."""
     return _async_engine
 
 

@@ -1,6 +1,6 @@
 # Project Structure
 
-> Auto-generated on 2026-05-05 00:47
+> Auto-generated on 2026-05-05 00:57
 
 ```
 async-scheduler-framework/
@@ -82,7 +82,9 @@ async-scheduler-framework/
 │   │   │   └── tenants.py
 │   │   ├── __init__.py
 │   │   ├── auth.py
-│   │   └── dependencies.py
+│   │   ├── dependencies.py
+│   │   ├── middleware.py
+│   │   └── schemas.py
 │   ├── cli
 │   │   ├── commands
 │   │   │   ├── __init__.py
@@ -105,7 +107,11 @@ async-scheduler-framework/
 │   │   ├── container.py
 │   │   ├── db.py
 │   │   ├── error_handling.py
+│   │   ├── events.py
+│   │   ├── http_client.py
 │   │   ├── lifecycle.py
+│   │   ├── logging_config.py
+│   │   ├── protocols.py
 │   │   ├── redis_client.py
 │   │   └── tracing.py
 │   ├── models
@@ -149,6 +155,9 @@ async-scheduler-framework/
 │   │   ├── __init__.py
 │   │   ├── async_command_proxy.py
 │   │   └── async_service_proxy.py
+│   ├── sdk
+│   │   ├── __init__.py
+│   │   └── client.py
 │   ├── workload
 │   │   ├── __init__.py
 │   │   ├── actor_pool_manager.py
@@ -183,6 +192,7 @@ async-scheduler-framework/
 │   ├── test_quota_api_summary.py
 │   ├── test_quota_enforcer.py
 │   ├── test_resources_stats_workload_alignment.py
+│   ├── test_sdk_client.py
 │   ├── test_split_script.sh
 │   ├── test_task_creator.py
 │   └── test_task_routes.py

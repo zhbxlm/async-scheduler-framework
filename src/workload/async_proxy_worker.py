@@ -198,15 +198,15 @@ class AsyncProxyWorker:
     # Health check
     # ------------------------------------------------------------------
 
-    def health_check(self) -> dict:
-        """Check Proxy /health and Redis ping."""
+    async def health_check(self) -> dict:
+        """Check Proxy /health and Redis ping (async)."""
         proxy_ok = False
         redis_ok = False
 
         try:
-            import requests
-            hresp = requests.get(self._proxy_url.rstrip("/") + "/health", timeout=5)
-            proxy_ok = hresp.status_code == 200
+            from src.common.http_client import async_get
+            await async_get(self._proxy_url.rstrip("/") + "/health", timeout=5.0)
+            proxy_ok = True
         except Exception:
             pass
 

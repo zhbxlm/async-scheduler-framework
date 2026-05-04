@@ -1,6 +1,6 @@
 # Ray Async API Documentation
 
-> Auto-generated on 2026-05-05 00:47 — do not edit manually.
+> Auto-generated on 2026-05-05 00:57 — do not edit manually.
 
 **Version:** `1.0.0`  
 
@@ -406,7 +406,7 @@ Prometheus metrics endpoint (text format).
 
 **Health Mysql**
 
-MySQL health check.
+MySQL liveness check — executes SELECT 1.
 
 **Responses:**
 
@@ -434,7 +434,7 @@ Readiness probe for Kubernetes/load balancers.
 
 **Health Redis**
 
-Redis health check.
+Redis liveness check — actually PINGs Redis.
 
 **Responses:**
 

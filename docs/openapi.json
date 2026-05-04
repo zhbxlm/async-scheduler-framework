@@ -2403,7 +2403,7 @@
           "health"
         ],
         "summary": "Health Redis",
-        "description": "Redis health check.",
+        "description": "Redis liveness check — actually PINGs Redis.",
         "operationId": "health_redis_health_redis_get",
         "responses": {
           "200": {
@@ -2427,7 +2427,7 @@
           "health"
         ],
         "summary": "Health Mysql",
-        "description": "MySQL health check.",
+        "description": "MySQL liveness check — executes SELECT 1.",
         "operationId": "health_mysql_health_mysql_get",
         "responses": {
           "200": {

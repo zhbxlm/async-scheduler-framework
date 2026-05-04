@@ -5,7 +5,7 @@ import psutil
 import time
 from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from src.common.error_handling import log_errors
@@ -122,27 +122,55 @@ async def metrics_prometheus() -> Response:
 
 # Health check endpoints for external services
 @router.get("/redis")
-@log_errors(log_level="ERROR", raise_exception=False)
-async def health_redis() -> Dict[str, Any]:
-    """Redis health check."""
-    # This would check Redis connection
-    # For now, return placeholder
-    return {
-        "status": "healthy",
-        "service": "redis",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "note": "Redis check not implemented - requires app context"
-    }
+async def health_redis(request: Request) -> Dict[str, Any]:
+    """Redis liveness check — actually PINGs Redis."""
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is None:
+        return {
+            "status": "unknown",
+            "service": "redis",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "note": "Redis not configured",
+        }
+    try:
+        import asyncio
+        await asyncio.wait_for(redis_client.ping(), timeout=2.0)
+        return {
+            "status": "healthy",
+            "service": "redis",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Redis unreachable: {e}",
+        )
 
 
 @router.get("/mysql")
-@log_errors(log_level="ERROR", raise_exception=False)
-async def health_mysql() -> Dict[str, Any]:
-    """MySQL health check."""
-    # This would check MySQL connection
-    return {
-        "status": "healthy",
-        "service": "mysql",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "note": "MySQL check not implemented - requires app context"
-    }
+async def health_mysql(request: Request) -> Dict[str, Any]:
+    """MySQL liveness check — executes SELECT 1."""
+    try:
+        from src.common.async_db import get_async_engine
+        engine = get_async_engine()
+        if engine is None:
+            return {
+                "status": "disabled",
+                "service": "mysql",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "note": "MySQL not configured",
+            }
+        from sqlalchemy import text
+        import asyncio
+        async with engine.connect() as conn:
+            await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=2.0)
+        return {
+            "status": "healthy",
+            "service": "mysql",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"MySQL unreachable: {e}",
+        )
