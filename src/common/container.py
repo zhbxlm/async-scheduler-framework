@@ -32,6 +32,7 @@ class ServiceContainer:
     queue_manager: Any = None
     task_creator: Any = None
     task_reconciler: Any = None
+    task_completion_node: Any = None
     cron_scheduler: Any = None
 
     @classmethod
@@ -87,6 +88,12 @@ class ServiceContainer:
             stuck_max_per_tick=rcfg.stuck_max_per_tick,
             stuck_task_max_age_seconds=rcfg.stuck_task_max_age_seconds,
             batch_size=rcfg.batch_size,
+        )
+
+        from src.platform.task_completion_node import TaskCompletionNode
+        c.task_completion_node = TaskCompletionNode(
+            db_session_factory=get_async_db if settings.mysql.url else None,
+            redis_client=c.redis_client,
         )
 
         ccfg = settings.background.cron

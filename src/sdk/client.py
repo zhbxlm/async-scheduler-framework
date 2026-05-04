@@ -75,6 +75,7 @@ class SchedulerClient:
         priority: str = "normal",
         tenant_id: str = "",
         idempotency_key: str | None = None,
+        callback_url: str | None = None,
         timeout_seconds: int = 3600,
     ) -> dict[str, Any]:
         """Submit a new task and return the creation response.
@@ -87,6 +88,7 @@ class SchedulerClient:
             priority: Task priority ("very_high", "high", "normal", "low", "tide").
             tenant_id: Tenant identifier for multi-tenancy.
             idempotency_key: Unique key for idempotent task creation.
+            callback_url: URL to send callback when task completes.
             timeout_seconds: Maximum execution time in seconds.
 
         Returns:
@@ -101,6 +103,8 @@ class SchedulerClient:
         }
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
+        if callback_url:
+            payload["callback_url"] = callback_url
 
         resp = await self._client.post("/tasks", json=payload)
         resp.raise_for_status()
@@ -156,7 +160,7 @@ class SchedulerClient:
         Raises RuntimeError if the task fails or is cancelled.
         """
         terminal = {"completed", "failed", "cancelled"}
-        deadline = asyncio.get_event_loop().time() + timeout
+        deadline = asyncio.get_running_loop().time() + timeout
 
         while True:
             task = await self.get_task(task_id)
@@ -170,7 +174,7 @@ class SchedulerClient:
                     )
                 return task
 
-            if asyncio.get_event_loop().time() >= deadline:
+            if asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError(
                     f"Task {task_id} did not complete within {timeout}s "
                     f"(current status: {status})"
@@ -186,6 +190,7 @@ class SchedulerClient:
         priority: str = "normal",
         tenant_id: str = "",
         idempotency_key: str | None = None,
+        callback_url: str | None = None,
         timeout_seconds: int = 3600,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         wait_timeout: float = _DEFAULT_TIMEOUT,
@@ -203,6 +208,7 @@ class SchedulerClient:
             priority=priority,
             tenant_id=tenant_id,
             idempotency_key=idempotency_key,
+            callback_url=callback_url,
             timeout_seconds=timeout_seconds,
         )
         return await self.wait_for_task(

@@ -94,20 +94,36 @@ class TaskConsumer:
 
     async def _try_dequeue(self, capability: str) -> bool:
         """Try to dequeue one task. Returns True if a task was dispatched."""
+        # Acquire semaphore first to bound concurrency BEFORE we pop from queue
+        # This ensures we never pop a task we cannot execute.
+        acquired = False
         try:
-            task_data = await self._queue.dequeue(capability)
-        except Exception as e:
-            logger.error("TaskConsumer: dequeue error cap=%s: %s", capability, e)
-            return False
+            # Non-blocking check: if semaphore is exhausted, skip immediately
+            acquired = self._semaphore._value > 0
+            if not acquired:
+                return False
+            await self._semaphore.acquire()
+            acquired = True
 
-        if task_data is None:
-            return False
+            try:
+                task_data = await self._queue.dequeue(capability)
+            except Exception as e:
+                logger.error("TaskConsumer: dequeue error cap=%s: %s", capability, e)
+                self._semaphore.release()
+                return False
 
-        await self._semaphore.acquire()
-        t = asyncio.create_task(self._execute_task(task_data, capability))
-        self._tasks.add(t)
-        t.add_done_callback(self._tasks.discard)
-        return True
+            if task_data is None:
+                self._semaphore.release()
+                return False
+
+            t = asyncio.create_task(self._execute_task(task_data, capability))
+            self._tasks.add(t)
+            t.add_done_callback(self._tasks.discard)
+            return True
+        except asyncio.CancelledError:
+            if acquired:
+                self._semaphore.release()
+            raise
 
     async def _execute_task(self, task_data: Any, capability: str) -> None:
         task_id = task_data.get("task_id", "unknown")

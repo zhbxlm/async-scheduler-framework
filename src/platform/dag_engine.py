@@ -44,7 +44,7 @@ def _get_streaming_executor(max_workers: int = 64) -> concurrent.futures.ThreadP
 
 from src.models.dag import (
     DagContext, DagDefinition, DagStatus, DagStep,
-    ExecutionMode, OnFailureAction, StepKind,
+    ExecutionMode, OnFailureAction, StepKind, MapErrorPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,11 @@ class DagEngine:
             context=initial_context or {},
             status=DagStatus.RUNNING,
         )
+
+        # schema_version compatibility: if resuming from a stored context
+        # (schema_version=0 means legacy context missing new fields),
+        # the defaults in DagContext already handle backward compat.
+        # Future: schema_version=2 migration hooks go here.
 
         step_map = {s.step_name: s for s in dag_def.steps}
         self._current_steps = dag_def.steps
@@ -132,8 +137,51 @@ class DagEngine:
 
         result: dict[str, Any] = {}
         async with semaphore:
+            # ── MAP step ────────────────────────────────────────────────
+            if step.map_over and step.step_kind == StepKind.MAP:
+                # Get the list to iterate from context
+                items = input_data.get(step.map_over) or ctx.context.get(step.map_over, [])
+                if not isinstance(items, list):
+                    items = [items]
+
+                # Bound concurrency: respect step.max_concurrency (default 16)
+                map_limit = step.max_concurrency or 16
+                map_semaphore = asyncio.Semaphore(map_limit)
+
+                async def _map_one(item: Any, idx: int) -> Any:
+                    async with map_semaphore:
+                        item_input = {**input_data, step.map_over: item, "_map_index": idx}
+                        try:
+                            if step.execution_mode == ExecutionMode.SYNC:
+                                return await asyncio.wait_for(
+                                    dispatch(step.capability, step.step_name, item_input),
+                                    timeout=step.timeout_seconds,
+                                )
+                            else:
+                                return await dispatch(step.capability, step.step_name, item_input)
+                        except Exception as e:
+                            if step.map_error_policy == MapErrorPolicy.CONTINUE:
+                                logger.warning("MAP step=%s idx=%d failed (continue): %s", step.step_name, idx, e)
+                                return {"__map_error__": str(e), "_map_index": idx}
+                            raise
+
+                sub_tasks = [asyncio.create_task(_map_one(item, i)) for i, item in enumerate(items)]
+                map_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
+
+                # Collect errors
+                errors = [r for r in map_results if isinstance(r, Exception)]
+                if errors and step.map_error_policy == MapErrorPolicy.ABORT_ALL:
+                    if step.on_failure == OnFailureAction.FALLBACK and step.fallback:
+                        result = dict(step.fallback.output_mapping)
+                    elif step.on_failure == OnFailureAction.SKIP:
+                        result = {}
+                    else:
+                        raise errors[0]
+                else:
+                    result = {"results": [r for r in map_results if not isinstance(r, Exception)]}
+
             # ── STREAMING step ──────────────────────────────────────────
-            if step.step_kind == StepKind.STREAMING and step.streaming_trigger:
+            elif step.step_kind == StepKind.STREAMING and step.streaming_trigger:
                 try:
                     result = await self._run_streaming_step(step, ctx, dispatch, input_data)
                 except Exception as e:
