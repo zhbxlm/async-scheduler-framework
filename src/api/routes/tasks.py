@@ -16,7 +16,6 @@ from src.models.task import (
     TaskCancelResponse,
     TaskCreate,
     TaskCreateResponse,
-    TaskDispatchMode,
     TaskInfo,
     TaskListResponse,
     TaskPriority,
@@ -60,7 +59,6 @@ def _to_task_info(task: TaskRecord) -> TaskInfo:
         dag_id=task.dag_id,
         status=task.status,
         priority=task.priority,
-        dispatch_mode=task.dispatch_mode,
         cluster_id=task.cluster_id,
         current_step=task.current_step,
         input_data=_to_json(task.input_data),
@@ -84,7 +82,6 @@ def _to_task_summary(task: TaskRecord) -> TaskSummary:
         task_type=task.task_type or "",
         status=task.status,
         cluster_id=task.cluster_id or "",
-        dispatch_mode=task.dispatch_mode,
         created_at=str(task.created_at) if task.created_at else "",
         updated_at=str(task.updated_at) if task.updated_at else "",
     )
@@ -157,13 +154,11 @@ async def create_task(
                 task_id=existing.task_id,
                 tenant_id=existing.tenant_id or "",
                 status=existing.status,
-                dispatch_mode=existing.dispatch_mode,
                 cluster_id=existing.cluster_id or "",
                 idempotent_reused=True,
             )
 
     task_id = f"task-{uuid.uuid4().hex[:12]}"
-    dispatch_mode = req.dispatch_mode or TaskDispatchMode.DAG_ORCHESTRATED
 
     task = TaskRecord(
         task_id=task_id,
@@ -171,7 +166,6 @@ async def create_task(
         task_type=req.task_type,
         status=TaskStatus.PENDING,
         priority=req.priority,
-        dispatch_mode=dispatch_mode,
         input_data=_serialize(req.input_data),
         metadata_json=_serialize(req.metadata),
         callback_url=req.callback_url,
@@ -187,7 +181,6 @@ async def create_task(
         task_id=task.task_id,
         tenant_id=task.tenant_id or "",
         status=task.status,
-        dispatch_mode=task.dispatch_mode,
         cluster_id=task.cluster_id or "",
         idempotent_reused=False,
     )

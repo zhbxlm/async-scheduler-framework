@@ -10,7 +10,7 @@ from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from src.common.db import Base
+from src.common.async_db import Base
 
 
 # ---------------------------------------------------------------------------

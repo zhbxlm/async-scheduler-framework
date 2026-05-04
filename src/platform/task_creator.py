@@ -137,8 +137,8 @@ class TaskCreator:
         if not self._db:
             return
 
-        from src.models.task import TaskRecord, TaskStatus, TaskPriority, TaskDispatchMode
-        
+        from src.models.task import TaskRecord, TaskStatus, TaskPriority
+
         async with self._db() as session:
             record = TaskRecord(
                 task_id=task_id,
@@ -146,7 +146,6 @@ class TaskCreator:
                 task_type=task_type,
                 status=TaskStatus.QUEUED,
                 priority=TaskPriority(template.get("priority", "normal")),
-                dispatch_mode=TaskDispatchMode(template.get("dispatch_mode", "dag_orchestrated")),
                 input_data=json.dumps(template.get("input_data", {})),
                 metadata_json=json.dumps(template.get("metadata", {})),
                 callback_url=template.get("callback_url"),

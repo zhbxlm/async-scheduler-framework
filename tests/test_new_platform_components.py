@@ -1,120 +1,15 @@
-"""Tests for RayDataClient, RemoteCodeFetcher and NodeRegistry."""
+"""Tests for RemoteCodeFetcher and NodeRegistry."""
 from __future__ import annotations
 
-import json
-import os
 import tarfile
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.models.cluster import ClusterInfo
-from src.models.node import NodeInfo, NodeResources, NodeState
-from src.models.task import TaskInfo, TaskStatus, TaskDispatchMode, TaskPriority
-from src.platform.raydata_client import RayDataClient, _safe_json
+from src.models.node import NodeInfo
 from src.platform.remote_code_fetcher import ArtifactError, RemoteCodeFetcher
-
-
-# ===========================================================================
-# RayDataClient tests
-# ===========================================================================
-
-class TestRayDataClient:
-    def _make_task(self, **kwargs) -> TaskInfo:
-        defaults = dict(
-            task_id="t1", task_type="inference", status=TaskStatus.PENDING,
-            priority=TaskPriority.NORMAL,
-            dispatch_mode=TaskDispatchMode.RAYDATA_NATIVE,
-        )
-        defaults.update(kwargs)
-        return TaskInfo(**defaults)
-
-    def _make_cluster(self, **kwargs) -> ClusterInfo:
-        defaults = dict(cluster_id="c1", ray_head_address="http://10.0.0.1:8265")
-        defaults.update(kwargs)
-        return ClusterInfo(**defaults)
-
-    def test_raises_without_ray_head_address(self):
-        client = RayDataClient()
-        cluster = self._make_cluster(ray_head_address="")
-        task = self._make_task()
-        with pytest.raises(RuntimeError, match="no ray_head_address"):
-            client.submit_task(cluster, task)
-
-    def test_standard_payload_built_correctly(self):
-        task = self._make_task(
-            input_data={"prompt": "hello"},
-            callback_url="http://cb.example.com/done",
-        )
-        payload = RayDataClient._build_payload(task)
-        assert payload["task_id"] == "t1"
-        assert payload["task_type"] == "inference"
-        assert payload["input_data"] == {"prompt": "hello"}
-        assert payload["callback_url"] == "http://cb.example.com/done"
-
-    def test_custom_raydata_request_used_verbatim(self):
-        task = self._make_task(input_data={"raydata_request": {"custom": "payload"}})
-        payload = RayDataClient._build_payload(task)
-        assert payload == {"custom": "payload"}
-
-    def test_bearer_token_header(self):
-        client = RayDataClient(api_token="secret123")
-        headers = client._build_headers()
-        assert headers["Authorization"] == "Bearer secret123"
-
-    def test_no_token_no_auth_header(self):
-        client = RayDataClient()
-        headers = client._build_headers()
-        assert "Authorization" not in headers
-
-    def test_submit_task_success(self):
-        client = RayDataClient()
-        cluster = self._make_cluster()
-        task = self._make_task()
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"submission_id": "sub-abc", "status": "ok"}
-
-        with patch("httpx.Client") as MockClient:
-            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
-            result = client.submit_task(cluster, task)
-
-        assert result["submission_id"] == "sub-abc"
-        assert result["cluster_id"] == "c1"
-        assert result["submit_url"] == "http://10.0.0.1:8265/api/jobs/"
-
-    def test_submit_task_fallback_to_job_id(self):
-        client = RayDataClient()
-        cluster = self._make_cluster()
-        task = self._make_task()
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"job_id": "job-xyz"}
-
-        with patch("httpx.Client") as MockClient:
-            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
-            result = client.submit_task(cluster, task)
-
-        assert result["submission_id"] == "job-xyz"
-
-    def test_submit_task_fallback_to_task_id(self):
-        client = RayDataClient()
-        cluster = self._make_cluster()
-        task = self._make_task()
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"other_field": "value"}
-
-        with patch("httpx.Client") as MockClient:
-            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
-            result = client.submit_task(cluster, task)
-
-        assert result["submission_id"] == "t1"  # fallback to task_id
 
 
 # ===========================================================================
@@ -210,6 +105,7 @@ class TestRemoteCodeFetcher:
 
 class TestNodeRegistry:
     def _make_redis(self) -> MagicMock:
+        from unittest.mock import AsyncMock
         r = AsyncMock()
         r._store: dict = {}
 

@@ -1,62 +1,9 @@
-"""Tests for ResourceManager, TaskExecutor, TaskConsumer, CronScheduler, DagEngine (src/)."""
+"""Tests for TaskExecutor, TaskConsumer, CronScheduler, DagEngine (src/)."""
 from __future__ import annotations
 
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-
-
-# ===========================================================================
-# ResourceManager
-# ===========================================================================
-
-class TestResourceManager:
-    def _make_rm(self, **kwargs):
-        from src.platform.resource_manager import ResourceManager
-        node_reg = AsyncMock()
-        cluster_reg = AsyncMock()
-        cap_reg = AsyncMock()
-        queue_mgr = AsyncMock()
-        redis = AsyncMock()
-        redis.eval = AsyncMock(return_value=b"ok")
-        cap_reg.list_all = AsyncMock(return_value=[])
-        return ResourceManager(
-            node_reg, cluster_reg, cap_reg, queue_mgr, redis, **kwargs
-        )
-
-    @pytest.mark.asyncio
-    async def test_allocate_no_candidates(self):
-        rm = self._make_rm()
-        from src.models.cluster import ClusterInfo
-        rm._nodes.select_nodes = AsyncMock(return_value=[])
-        result = await rm.allocate_nodes(ClusterInfo(cluster_id="c1"), required_gpus=2)
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_evaluate_scaling_up(self):
-        rm = self._make_rm(scaling_up_threshold=0.8, cooldown_seconds=0)
-        rm._queue.get_queue_snapshot = AsyncMock(return_value={"pending": 20, "running": 8})
-        rm._r.eval = AsyncMock(return_value=b"ok")
-        target = await rm.evaluate_scaling("inference", current_size=8)
-        assert target is not None
-        assert target > 8
-
-    @pytest.mark.asyncio
-    async def test_evaluate_scaling_down(self):
-        rm = self._make_rm(scaling_down_threshold=0.3, min_actors=1, cooldown_seconds=0)
-        rm._queue.get_queue_snapshot = AsyncMock(return_value={"pending": 0, "running": 1})
-        rm._r.eval = AsyncMock(return_value=b"ok")
-        target = await rm.evaluate_scaling("inference", current_size=8)
-        assert target is not None
-        assert target < 8
-
-    @pytest.mark.asyncio
-    async def test_evaluate_scaling_cooldown_blocks(self):
-        rm = self._make_rm(scaling_up_threshold=0.0)
-        rm._queue.get_queue_snapshot = AsyncMock(return_value={"pending": 50, "running": 8})
-        rm._r.eval = AsyncMock(return_value=b"cooling")
-        target = await rm.evaluate_scaling("inference", current_size=8)
-        assert target is None
 
 
 # ===========================================================================

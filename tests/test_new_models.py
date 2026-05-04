@@ -5,7 +5,7 @@ import pytest
 
 from src.models.task import (
     TaskCreate, TaskInfo, TaskStatus, TaskPriority,
-    TaskDispatchMode, TaskCreateResponse, TaskSummary, TaskCancelResponse,
+    TaskCreateResponse, TaskSummary, TaskCancelResponse,
 )
 from src.models.dag import (
     DagStep, DagDefinition, DagContext, DagStatus, StepKind,
@@ -33,7 +33,6 @@ from src.models.deploy import DeployedPackageInfo, DeployState, DeployRequest
 def test_task_create_basic():
     t = TaskCreate(task_type="inference", input_data={"prompt": "hello"})
     assert t.priority == TaskPriority.NORMAL
-    assert t.dispatch_mode is None
     assert t.tenant_id == ""
 
 
@@ -50,11 +49,6 @@ def test_task_priority_weight():
     assert TaskPriority.NORMAL.weight == 3
     assert TaskPriority.LOW.weight == 4
     assert TaskPriority.TIDE.weight == 5
-
-
-def test_task_dispatch_mode():
-    assert TaskDispatchMode.DAG_ORCHESTRATED.value == "dag_orchestrated"
-    assert TaskDispatchMode.RAYDATA_NATIVE.value == "raydata_native"
 
 
 def test_task_create_with_artifact():

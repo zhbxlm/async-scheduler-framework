@@ -11,7 +11,7 @@ from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from src.common.db import Base
+from src.common.async_db import Base
 
 
 # ---------------------------------------------------------------------------
@@ -42,12 +42,6 @@ class TaskPriority(str, Enum):
         return {"very_high": 1, "high": 2, "normal": 3, "low": 4, "tide": 5}[self.value]
 
 
-class TaskDispatchMode(str, Enum):
-    """Task dispatch mode."""
-    DAG_ORCHESTRATED = "dag_orchestrated"
-    RAYDATA_NATIVE = "raydata_native"
-
-
 # ---------------------------------------------------------------------------
 # ORM Model
 # ---------------------------------------------------------------------------
@@ -72,11 +66,6 @@ class TaskRecord(Base):
     )
     priority: Mapped[TaskPriority] = mapped_column(
         SAEnum(TaskPriority), nullable=False, default=TaskPriority.NORMAL
-    )
-    dispatch_mode: Mapped[TaskDispatchMode] = mapped_column(
-        SAEnum(TaskDispatchMode),
-        nullable=False,
-        default=TaskDispatchMode.DAG_ORCHESTRATED,
     )
     cluster_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     current_step: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -128,7 +117,6 @@ class TaskCreate(BaseModel):
     tenant_id: str = ""
     task_type: str = Field(..., min_length=1, max_length=128)
     priority: TaskPriority = TaskPriority.NORMAL
-    dispatch_mode: TaskDispatchMode | None = None
 
     # Data
     input_data: dict[str, Any] = Field(default_factory=dict)
@@ -173,7 +161,6 @@ class TaskInfo(BaseModel):
     dag_id: str | None = None
     status: TaskStatus = TaskStatus.PENDING
     priority: TaskPriority = TaskPriority.NORMAL
-    dispatch_mode: TaskDispatchMode = TaskDispatchMode.DAG_ORCHESTRATED
     cluster_id: str | None = None
     current_step: str | None = None
     input_data: dict[str, Any] = Field(default_factory=dict)
@@ -210,7 +197,6 @@ class TaskCreateResponse(BaseModel):
     task_id: str
     tenant_id: str = ""
     status: TaskStatus
-    dispatch_mode: TaskDispatchMode = TaskDispatchMode.DAG_ORCHESTRATED
     cluster_id: str = ""
     estimated_wait_seconds: int = 0
     queue_position: int = 0
@@ -235,7 +221,6 @@ class TaskSummary(BaseModel):
     task_type: str = ""
     status: TaskStatus = TaskStatus.PENDING
     cluster_id: str = ""
-    dispatch_mode: TaskDispatchMode = TaskDispatchMode.DAG_ORCHESTRATED
     created_at: str = ""
     updated_at: str = ""
     attempt: int = 0

@@ -46,7 +46,7 @@ def task_client():
     from sqlalchemy.orm import sessionmaker
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from src.common.db import Base
+    from src.common.async_db import Base
     from src.models import task as _task_models  # noqa: F401
 
     engine = create_engine(

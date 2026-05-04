@@ -148,24 +148,3 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=False)
-
-
-# ── Legacy test-seam: tests patch `mod.services` to inject mocks ──────────
-# This proxy object re-routes attribute access to the container when set,
-# but can be replaced wholesale (mod.services = mock) by test code.
-class _ServicesProxy:
-    """Backward-compatible service accessor.
-
-    Tests that do ``mod.services = FakeServices()`` still work because
-    the stats endpoints read from this object.  Production code should
-    prefer get_container() or request.app.state.*
-    """
-    def __getattr__(self, name: str):
-        try:
-            from src.common.container import get_container
-            return getattr(get_container(), name, None)
-        except RuntimeError:
-            return None
-
-
-services = _ServicesProxy()
