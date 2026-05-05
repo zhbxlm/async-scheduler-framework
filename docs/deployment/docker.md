@@ -1,136 +1,149 @@
 # Docker 部署
 
-本文档给出 Ray Async Framework 的 **分服务 Docker 部署方案**。
+本文档描述当前仓库的 Docker / Compose 部署方式，已与代码现状对齐。
 
-## 服务拆分
+## 当前服务拆分
 
-- `api`：对外 HTTP API（FastAPI）
-- `worker`：任务消费执行
-- `scheduler`：Cron 调度
-- `reconciler`：后台修复/补偿
-- `redis`：共享队列 / 分布式锁 / 协调状态
-- `mysql`：任务元数据持久化
+### 1. ops-api
+- 入口：`src.main:app`
+- 端口：`8000`
+- 职责：运维管理面
+- 路由：`/ops/v1/*` + `/health/*`
+- 后台任务：`CronScheduler`
+- 依赖：Redis（不要求 MySQL）
 
-> 当前 compose 默认已切换为 **MySQL 8**，更适合分服务部署与后续扩容。
+### 2. task-api
+- 入口：`src.main_tasks:app`
+- 端口：`8001`
+- 职责：任务提交、查询、取消、结果获取
+- 路由：`/tasks/*` + `/health/*`
+- 后台任务：`TaskReconciler`
+- 依赖：Redis + MySQL
 
-## 一键启动
+### 3. redis
+- 队列、注册表、锁、协调状态
 
-```bash
-docker compose up -d --build
-```
+### 4. mysql
+- `TaskRecord` 持久化
 
-查看状态：
+### 5. observability（可选 profile）
+- `jaeger`
+- `prometheus`
+- `grafana`
 
-```bash
-docker compose ps
-docker compose logs -f api
-docker compose logs -f worker
-docker compose logs -f scheduler
-docker compose logs -f reconciler
-```
+## 启动示例
 
-访问：
-
-- API: `http://127.0.0.1:8000`
-- Swagger: `http://127.0.0.1:8000/docs`
-- Health: `http://127.0.0.1:8000/health`
-
-## 服务说明
-
-### api
+### 启动核心服务
 
 ```bash
-ray-async api --host 0.0.0.0 --port 8000 --init-db
+docker compose up -d ops-api task-api redis mysql
 ```
 
-### worker
+### 启动完整环境（含观测）
 
 ```bash
-ray-async worker --workers 2 --max-concurrent 16 --init-db
+docker compose --profile observability up -d
 ```
 
-如需扩容：
+### 查看日志
 
 ```bash
-docker compose up -d --scale worker=3
+docker compose logs -f ops-api
+docker compose logs -f task-api
+docker compose logs -f redis
+docker compose logs -f mysql
 ```
 
-### scheduler
+## 访问地址
+
+- Ops API: `http://127.0.0.1:8000`
+- Task API: `http://127.0.0.1:8001`
+- Ops Swagger: `http://127.0.0.1:8000/docs`
+- Task Swagger: `http://127.0.0.1:8001/docs`
+- Ops Health: `http://127.0.0.1:8000/health/ready`
+- Task Health: `http://127.0.0.1:8001/health/ready`
+
+## 当前 compose 里的关键配置
+
+### ops-api
+
+- `BACKGROUND__RECONCILE__ENABLED=false`
+- `BACKGROUND__CRON__ENABLED=true`
+
+### task-api
+
+- `BACKGROUND__RECONCILE__ENABLED=true`
+- `BACKGROUND__CRON__ENABLED=false`
+
+这是推荐生产分工：
+- cron 调度只在 ops-api 跑
+- reconcile 修复只在 task-api 跑
+
+## 常用命令
+
+### 仅启动 ops-api
 
 ```bash
-ray-async scheduler-service --poll-interval 15 --init-db
+docker compose up -d ops-api redis
 ```
 
-### reconciler
+### 仅启动 task-api
 
 ```bash
-ray-async reconciler-service --interval 20 --init-db
+docker compose up -d task-api redis mysql
 ```
 
-## 关键环境变量
+### 运行测试容器
 
-- `DATABASE_URL`：数据库连接串（默认 MySQL）
-- `REDIS_URL`：Redis 地址
-- `QUEUE_TYPE=redis`
-- `LOCK_TYPE=redis`
-- `REGISTRY_TYPE=memory`
-- `LOG_FORMAT=json`
-- `LOG_LEVEL=INFO`
-- `SERVICE_NAME=<service-name>`
+```bash
+docker compose --profile test run --rm test
+```
+
+## 环境变量
+
+主要环境变量由 `docker-compose.yml` 中的 `x-common-env` 提供：
+
+- `REDIS_URL`
+- `MYSQL_URL`
+- `ENVIRONMENT`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_SERVICE_NAME`
+
+可通过 `.env` 覆盖。
 
 ## 生产建议
 
-### 1. 数据库
-
-当前 compose 默认：
-
-```bash
-mysql+asyncmy://ray_async:ray_async@mysql:3306/ray_async
-```
-
-若使用外部 MySQL：
-
-```bash
-DATABASE_URL=mysql+asyncmy://user:pass@mysql-host:3306/ray_async
-```
-
-### 2. Redis
-
-生产建议：
+### 1. Redis
 - 开启持久化
-- 配认证
-- 独立部署，不与应用容器混跑
+- 配置认证
+- 与应用容器分离部署
 
-### 3. worker 扩缩容
+### 2. MySQL
+- task-api 才真正依赖 MySQL
+- 若 MySQL 不可用，task-api 的任务持久化与查询能力会受影响
 
-优先横向扩容 `worker`：
+### 3. 扩缩容建议
+- `task-api` 通常按请求量水平扩容
+- `ops-api` 通常保持少量实例即可
+- `CronScheduler` 和 `TaskReconciler` 都依赖 Redis 协调，避免多个实例无约束重复执行
 
+### 4. 镜像
+当前默认使用同一基础镜像，通过不同 `command` 启动不同服务。
+
+例如：
 ```bash
-docker compose up -d --scale worker=5
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn src.main_tasks:app --host 0.0.0.0 --port 8001
 ```
 
-### 4. 镜像构建
+## 说明
 
-```bash
-docker build -t ray-async-framework:latest .
-```
+旧文档中提到的这些角色已不再对应当前 compose：
+- `api`
+- `worker`
+- `scheduler`
+- `reconciler`
 
-如果要分别标记：
-
-```bash
-docker tag ray-async-framework:latest ray-async-framework:api
-docker tag ray-async-framework:latest ray-async-framework:worker
-docker tag ray-async-framework:latest ray-async-framework:scheduler
-docker tag ray-async-framework:latest ray-async-framework:reconciler
-```
-
-本质上仍然是同一份基础镜像，不同服务通过不同 `command` 启动。
-
-## 下一步
-
-如果你准备走真正生产部署，下一步建议做：
-1. PostgreSQL 替换 SQLite
-2. 健康检查与 readiness/liveness
-3. 镜像多阶段构建瘦身
-4. Helm / K8s manifests
-5. 日志直接输出到 ES / Loki / Fluent Bit 链路
+当前仓库的实际对外 HTTP 服务是：
+- `ops-api`
+- `task-api`

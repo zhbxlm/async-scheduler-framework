@@ -1,6 +1,6 @@
 # async-proxy
 
-Ray AMU Async Proxy — sidecar for long-running service async wrapping.
+Ray Async Proxy — sidecar for long-running service async wrapping.
 
 ## Overview
 

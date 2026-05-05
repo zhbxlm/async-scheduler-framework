@@ -1,6 +1,6 @@
 # async-worker
 
-Ray AMU Worker SDK — base classes for building Ray workers.
+Ray Async Worker SDK — base classes for building Ray workers.
 
 ## Overview
 

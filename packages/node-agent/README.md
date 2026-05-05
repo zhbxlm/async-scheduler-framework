@@ -1,6 +1,6 @@
 # async-agent
 
-Ray AMU Node Agent — lightweight HTTP service for cluster node management.
+Ray Async Node Agent — lightweight HTTP service for cluster node management.
 
 ## Overview
 
@@ -13,24 +13,16 @@ The Node Agent runs on each cluster machine and handles:
 
 ## Installation
 
-### Basic installation (no dependencies)
+### Installation
 ```bash
 pip install async-agent
 ```
 
-### With Ray support
-```bash
-pip install async-agent[ray]
-```
+`ray` is a required dependency because the agent manages local Ray lifecycle via the `ray` CLI.
 
-### With Redis support (for ownership protocol)
+### Optional Redis support
 ```bash
 pip install async-agent[redis]
-```
-
-### All features
-```bash
-pip install async-agent[all]
 ```
 
 ## Usage

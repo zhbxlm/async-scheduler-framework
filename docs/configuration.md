@@ -1,86 +1,138 @@
 # Configuration
 
-项目当前采用两层配置体系：
+本文档描述当前项目的实际配置结构，而不是历史 `ray_async.*` 体系。
 
-## 1. 基础运行时设置 `ray_async.settings`
+## 配置入口
 
-负责：
-- 数据库配置
-- 日志配置
-- backend / Redis / lease 配置
+当前主入口：
+- `config/settings_pydantic.py`：基于 pydantic-settings 的配置定义
+- `config/settings_compat.py`：兼容层，向旧代码暴露统一 `settings` 对象
 
-主要入口：
-- `load_settings(env=None)`
-- `get_settings()`
-
-## 2. 增强配置层 `ray_async.config`
-
-负责：
-- 环境识别（production / staging / test / development / local）
-- dotenv 加载
-- 临时覆盖（`ConfigContext`）
-- 统一对外暴露 config 对象
-
-### 示例
+运行时大多数代码通过：
 
 ```python
-from ray_async.config import config
-
-print(config.environment)
-print(config.database.url)
-print(config.backends.redis_url)
+from config.settings_compat import settings
 ```
 
-### 查看当前配置
+读取配置。
 
-```bash
-ray-async config --json
-ray-async config --env
-```
+## 主要配置分组
 
-## 关键环境变量
+### Redis
+- `settings.redis.url`
+- `settings.redis.host`
+- `settings.redis.port`
+- `settings.redis.password`
+- `settings.redis.db`
 
-### 数据库
-- `DATABASE_URL`
-- `SQL_ECHO`
-- `DB_POOL_SIZE`
-- `DB_MAX_OVERFLOW`
-- `DB_POOL_TIMEOUT`
-- `DB_POOL_RECYCLE`
+### MySQL
+- `settings.mysql.url`
+- `settings.mysql.host`
+- `settings.mysql.port`
+- `settings.mysql.username`
+- `settings.mysql.password`
+- `settings.mysql.database`
 
-### 日志
-- `LOG_LEVEL`
-- `LOG_FORMAT`
-- `SERVICE_NAME`
-- `SERVICE_VERSION`
-- `NODE_ID`
+### Server
+- `settings.server.host`
+- `settings.server.port`
+- `settings.server.workers`
+- `settings.server.reload`
+- `settings.server.access_log`
 
-### 分布式后端
+### Task
+- `settings.task.default_priority`
+- `settings.task.max_retries`
+- `settings.task.timeout_seconds`
+- `settings.task.result_ttl_seconds`
+- `settings.task.max_concurrent`
+
+### DAG
+- `settings.dag.config_dir`
+- `settings.dag.auto_reload`
+- `settings.dag.reload_interval`
+
+### Background
+- `settings.background.reconcile.enabled`
+- `settings.background.reconcile.interval_seconds`
+- `settings.background.reconcile.stuck_max_per_tick`
+- `settings.background.reconcile.stuck_task_max_age_seconds`
+- `settings.background.reconcile.batch_size`
+- `settings.background.cron.enabled`
+- `settings.background.cron.poll_interval`
+
+### Agent
+- `settings.agent.node_id`
+- `settings.agent.host`
+- `settings.agent.port`
+- `settings.agent.heartbeat_interval`
+- `settings.agent.owner_ttl_seconds`
+
+## 核心环境变量
+
+### 基础设施
 - `REDIS_URL`
-- `QUEUE_TYPE`
-- `LOCK_TYPE`
-- `REGISTRY_TYPE`
-- `LEASE_TTL_SECONDS`
-- `HEARTBEAT_INTERVAL_SECONDS`
+- `MYSQL_URL`
 
-### 环境
-- `ENVIRONMENT=production|staging|test|development|local`
+### 运行环境
+- `ENVIRONMENT`
+- `DEBUG`
 
-## 推荐实践
+### 后台任务开关
+- `BACKGROUND__RECONCILE__ENABLED`
+- `BACKGROUND__CRON__ENABLED`
 
-### 本地开发
+### 可观测性
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_SERVICE_NAME`
+
+## 推荐配置方式
+
+### ops-api
+
 ```bash
-ENVIRONMENT=local
-LOG_LEVEL=DEBUG
-QUEUE_TYPE=memory
-LOCK_TYPE=memory
+BACKGROUND__RECONCILE__ENABLED=false
+BACKGROUND__CRON__ENABLED=true
 ```
 
-### 分服务部署
+说明：
+- ops-api 负责 cron 调度
+- ops-api 主要依赖 Redis
+
+### task-api
+
 ```bash
-ENVIRONMENT=production
-DATABASE_URL=mysql+asyncmy://user:pass@mysql:3306/ray_async
-REDIS_URL=redis://redis:6379/0
-QUEUE_TYPE=redis
-LOCK_TYPE=redis
+BACKGROUND__RECONCILE__ENABLED=true
+BACKGROUND__CRON__ENABLED=false
 ```
+
+说明：
+- task-api 负责任务一致性修复
+- task-api 依赖 Redis + MySQL
+
+## 本地开发示例
+
+```bash
+export REDIS_URL=redis://localhost:6379/0
+export MYSQL_URL=mysql+aiomysql://user:pass@localhost:3306/scheduler
+
+uvicorn src.main:app --reload --port 8000
+uvicorn src.main_tasks:app --reload --port 8001
+```
+
+## Docker Compose 场景
+
+compose 已默认拆分为两类 API：
+- `ops-api`
+- `task-api`
+
+参见：`docker-compose.yml`
+
+## 说明
+
+旧文档里出现的这些历史命名已经不再适用：
+- `ray_async.settings`
+- `ray_async.config`
+- `DATABASE_URL` / `QUEUE_TYPE` / `LOCK_TYPE` / `REGISTRY_TYPE` 这套旧配置中心叙述
+
+当前仓库以 `config/settings_pydantic.py` + `config/settings_compat.py` 为准。
