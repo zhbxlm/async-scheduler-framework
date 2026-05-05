@@ -130,38 +130,7 @@ async def ops_stats(
     return {"capabilities": stats, "total": len(caps)}
 
 
-@router.post("/reconcile", summary="Manually trigger task reconciliation")
-async def trigger_reconcile(
-    request: Request,
-    _auth: dict = Depends(authenticate),
-) -> dict:
-    """Trigger one reconcile cycle (all three phases)."""
-    reconciler = getattr(request.app.state, "task_reconciler", None)
-    if reconciler is None:
-        raise HTTPException(status_code=503, detail="TaskReconciler not initialised")
-    batch = await reconciler._scan_task_batch()
-    import asyncio
-    await asyncio.gather(
-        reconciler._phase1_double_write(batch),
-        reconciler._phase2_stuck_recovery(batch),
-        reconciler._phase3_lost_callback(batch),
-        return_exceptions=True,
-    )
-    return {"triggered": True, "batch_size": len(batch)}
 
-
-@router.post("/callbacks/process", summary="Process due callback retries")
-async def process_callbacks(
-    request: Request,
-    batch_size: int = 50,
-    _auth: dict = Depends(authenticate),
-) -> dict:
-    """Drain due entries from the callback retry ZSET."""
-    tcn = getattr(request.app.state, "task_completion_node", None)
-    if tcn is None:
-        raise HTTPException(status_code=503, detail="TaskCompletionNode not initialised")
-    processed = await tcn.process_due_callbacks(batch_size=batch_size)
-    return {"processed": processed}
 
 
 @router.get("/queue/{capability}/snapshot", summary="Queue snapshot for one capability")

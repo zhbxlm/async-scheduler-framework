@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from src.api.dependencies import DbSession, get_tenant_context
+from src.api.dependencies import DbSession, get_tenant_context, get_db_session
 from src.models.task import (
     TaskCancelResponse,
     TaskCreate,
@@ -123,7 +123,7 @@ async def list_tasks(
 
 
 # ---------------------------------------------------------------------------
-# POST /tasks — create task
+# POST /tasks — create task (via TaskCreator)
 # ---------------------------------------------------------------------------
 
 @router.post(
@@ -134,13 +134,23 @@ async def list_tasks(
 )
 async def create_task(
     req: TaskCreate,
-    db: DbSession,
+    request: Request,
     ctx=Depends(get_tenant_context),
 ) -> TaskCreateResponse:
+    """Create and enqueue a task via TaskCreator."""
     tenant_id = ctx.tenant_id or req.tenant_id or "default"
+    task_creator = getattr(request.app.state, "task_creator", None)
+    if task_creator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TaskCreator not initialised (task-api only)",
+        )
 
-    # Idempotency check
+    # Idempotency check (still in DB for consistency)
+    from src.api.dependencies import get_db_session
+    db = next(get_db_session())
     if req.idempotency_key:
+        from src.models.task import TaskRecord
         existing = (
             db.query(TaskRecord)
             .filter(
@@ -158,30 +168,51 @@ async def create_task(
                 idempotent_reused=True,
             )
 
-    task_id = f"task-{uuid.uuid4().hex[:12]}"
+    # Convert to TaskCreator kwargs
+    kwargs = {
+        "task_type": req.task_type,
+        "priority": req.priority.value,
+        "input_data": req.input_data,
+        "metadata": req.metadata,
+        "callback_url": req.callback_url,
+        "idempotency_key": req.idempotency_key,
+        "timeout_seconds": req.timeout_seconds,
+        "max_retries": req.max_retries,
+        "cron_expr": req.cron_expr,
+        "persist_to_db": True,
+    }
+    if req.scheduled_at:
+        kwargs["scheduled_at"] = req.scheduled_at
+    if req.delay_seconds:
+        kwargs["delay_seconds"] = req.delay_seconds
+    if req.artifact_url:
+        kwargs["artifact_url"] = req.artifact_url
+    if req.artifact_sha256:
+        kwargs["artifact_sha256"] = req.artifact_sha256
 
-    task = TaskRecord(
-        task_id=task_id,
-        tenant_id=tenant_id,
-        task_type=req.task_type,
-        status=TaskStatus.PENDING,
-        priority=req.priority,
-        input_data=_serialize(req.input_data),
-        metadata_json=_serialize(req.metadata),
-        callback_url=req.callback_url,
-        idempotency_key=req.idempotency_key,
-        timeout_seconds=req.timeout_seconds,
-        max_retries=req.max_retries,
-        cron_expr=req.cron_expr,
-    )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
+    try:
+        result = await task_creator.create_task(
+            tenant_id=tenant_id,
+            idempotency_key=req.idempotency_key,
+            **kwargs,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Task creation failed: {e}",
+        )
+
+    # Map result to TaskCreateResponse
     return TaskCreateResponse(
-        task_id=task.task_id,
-        tenant_id=task.tenant_id or "",
-        status=task.status,
-        cluster_id=task.cluster_id or "",
+        task_id=result["task_id"],
+        tenant_id=tenant_id,
+        status=TaskStatus.QUEUED,
+        cluster_id="",  # Not yet assigned
+        estimated_wait_seconds=0,
+        queue_position=result.get("queue_position", -1),
+        scheduled_at="",
         idempotent_reused=False,
     )
 

@@ -99,7 +99,7 @@ def test_list_tasks_empty(task_client):
 
 
 def test_create_task(task_client):
-    client, _ = task_client
+    client, _, mock_task_creator = task_client
     resp = client.post("/api/v1/tasks/", json={
         "task_type": "video_gen",
         "input_data": {"file": "foo.mp4"},

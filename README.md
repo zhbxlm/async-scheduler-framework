@@ -75,18 +75,20 @@
 
 ## Quick Start
 
+For a **5‑minute quickstart** with split APIs (ops‑api + task‑api), see **[docs/getting‑started/quickstart.md](docs/getting‑started/quickstart.md)**.
+
 ### Docker Compose
 
 ```bash
 # Start full stack
-Docker compose up
+docker compose up
 ```
 
 More commonly:
 
 ```bash
 # Start both API services + infra
-docker compose up ops-api task-api redis mysql
+docker compose up scheduler-ops-api scheduler-task-api redis mysql
 
 # Start observability stack too
 docker compose --profile observability up
@@ -95,19 +97,18 @@ docker compose --profile observability up
 docker compose --profile test run --rm test
 ```
 
-### Local development
+### Local development (quick reference)
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install runtime + dev dependencies
+pip install -e .[dev]
 
-# Configure
-cp .env.example .env
-
-# Run ops API
+# Run ops API (Redis only)
+export REDIS_URL=redis://localhost:6379/0 DEPLOYMENT_ROLE=ops-api SERVICE_NAME=scheduler-ops-api
 uvicorn src.main:app --reload --port 8000
 
-# Run task API
+# Run task API (Redis + MySQL)
+export REDIS_URL=redis://localhost:6379/0 MYSQL_URL=mysql://root:secret@localhost:3306/async_scheduler DEPLOYMENT_ROLE=task-api SERVICE_NAME=scheduler-task-api
 uvicorn src.main_tasks:app --reload --port 8001
 ```
 
