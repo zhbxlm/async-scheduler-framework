@@ -1,0 +1,106 @@
+groups:
+  - name: scheduler_alerts
+    rules:
+      # 服务不可用
+      - alert: ServiceDown
+        expr: up{service=~"task-api|ops-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: "{{ $labels.service }} is down"
+          description: "Service {{ $labels.service }} has been down for more than 1 minute"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#service-down"
+
+      # 队列积压
+      - alert: QueueBacklogHigh
+        expr: scheduler_queue_pending_tasks > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: 'task-api'
+        annotations:
+          summary: "High queue backlog for {{ $labels.capability }}"
+          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#queue-backlog"
+
+      - alert: QueueBacklogCritical
+        expr: scheduler_queue_pending_tasks > 500
+        for: 2m
+        labels:
+          severity: critical
+          service: 'task-api'
+        annotations:
+          summary: "Critical queue backlog for {{ $labels.capability }}"
+          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks (critical)"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#queue-backlog"
+
+      # 高失败率
+      - alert: HighTaskFailureRate
+        expr: |
+          rate(scheduler_tasks_completed_total{status="failure"}[5m])
+          / ignoring(status)
+          rate(scheduler_tasks_completed_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: 'task-api'
+        annotations:
+          summary: "High failure rate for {{ $labels.capability }} tasks"
+          description: "Task failure rate for {{ $labels.capability }} is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#high-failure-rate"
+
+      # 慢任务
+      - alert: SlowTasks
+        expr: |
+          histogram_quantile(0.95, 
+            rate(scheduler_task_execution_duration_seconds_bucket[5m])
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: 'task-api'
+        annotations:
+          summary: "Slow tasks detected for {{ $labels.capability }}"
+          description: "95th percentile task execution for {{ $labels.capability }} > 30s"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#slow-tasks"
+
+      # Redis 连接问题
+      - alert: RedisConnectionError
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: 'task-api'
+        annotations:
+          summary: "Redis connection lost"
+          description: "Cannot connect to Redis for 1 minute"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#redis-connection"
+
+      # 高内存使用
+      - alert: HighMemoryUsage
+        expr: |
+          scheduler_memory_rss_bytes / 1024 / 1024 > 512  # > 512MB
+        for: 5m
+        labels:
+          severity: warning
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: "High memory usage for {{ $labels.service }}"
+          description: "{{ $labels.service }} is using {{ $value | humanize }}MB of memory"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#memory-usage"
+
+      # 高错误率（HTTP 5xx）
+      - alert: HighHttpErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m])
+          / rate(http_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: "High HTTP error rate for {{ $labels.service }}"
+          description: "HTTP error rate is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#http-errors"

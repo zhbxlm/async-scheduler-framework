@@ -95,6 +95,16 @@ jobs:
         pip install mypy
         mypy src/ --ignore-missing-imports || echo "Type checking completed (warnings allowed)"
 
+    - name: Security scanning with bandit
+      run: |
+        pip install bandit
+        bandit -r src/ -f json -o bandit-report.json || echo "Bandit scan completed"
+
+    - name: Dependency vulnerability scanning
+      run: |
+        pip install safety
+        safety check --json --output safety-report.json || echo "Safety check completed"
+
   build-packages:
     runs-on: ubuntu-latest
     needs: test
@@ -114,6 +124,11 @@ jobs:
         cd ../async-proxy && pip install build && python -m build
         cd ../worker-sdk && pip install build && python -m build
     
+    - name: Build documentation
+      run: |
+        pip install mkdocs mkdocs-material mkdocstrings-python
+        mkdocs build --site-dir _site
+    
     - name: Upload package artifacts
       uses: actions/upload-artifact@v3
       with:
@@ -121,3 +136,9 @@ jobs:
         path: |
           packages/*/dist/*.whl
           packages/*/dist/*.tar.gz
+    
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: _site/

@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: 'async-scheduler-task-api'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['task-api:8001']
+    metrics_path: '/api/v1/health/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):\d+'
+        target_label: service
+        replacement: 'task-api'
+
+  - job_name: 'async-scheduler-ops-api'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['ops-api:8000']
+    metrics_path: '/api/v1/health/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):\d+'
+        target_label: service
+        replacement: 'ops-api'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']

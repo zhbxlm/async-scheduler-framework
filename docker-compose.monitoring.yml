@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  # ==================== Database & Cache ====================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: scheduler123
+      MYSQL_DATABASE: scheduler
+      MYSQL_USER: scheduler
+      MYSQL_PASSWORD: scheduler123
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: 
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pscheduler123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Scheduler Services ====================
+  task-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MYSQL_URL=mysql://scheduler:scheduler123@mysql:3306/scheduler
+      - SERVER_PORT=8001
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ops-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_PORT=8000
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ops/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==================== Monitoring Stack ====================
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - task-api
+      - ops-api
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    depends_on:
+      - prometheus
+
+  # ==================== Node Agent (example) ====================
+  node-agent:
+    build:
+      context: ./packages/async-agent
+      dockerfile: Dockerfile
+    environment:
+      - AGENT_NODE_ID=worker-1
+      - SCHEDULER_URL=http://task-api:8001
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    depends_on:
+      task-api:
+        condition: service_healthy
+
+  # ==================== Load Generator (for testing) ====================
+  load-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      - TASK_API_URL=http://task-api:8001
+      - LOAD_RPS=10
+      - DURATION_SECONDS=300
+    depends_on:
+      task-api:
+        condition: service_healthy
+    command: python scripts/load_test.py
+
+volumes:
+  redis_data:
+  mysql_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
