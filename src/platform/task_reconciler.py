@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any
 
-import orjson
+import json
 
 from src.common.error_handling import log_errors, ExternalServiceError
 
@@ -82,7 +82,7 @@ class TaskReconciler:
         if ok:
             return True
         current = await self._r.get(_RECONCILE_LEADER_KEY)
-        current_id = current.decode() if isinstance(current, bytes) else current
+        current_id = current if isinstance(current, bytes) else current
         if current_id == self._instance_id:
             await self._r.expire(_RECONCILE_LEADER_KEY, self._leader_ttl)
             return True
@@ -129,10 +129,10 @@ class TaskReconciler:
             if not raw:
                 continue
             try:
-                data = orjson.loads(raw)
+                data = json.loads(raw)
                 if isinstance(data, dict):
                     tasks.append(data)
-            except (orjson.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError):
                 pass
         return tasks
 
@@ -178,7 +178,7 @@ class TaskReconciler:
                             task_id=task.get("task_id", ""),
                             tenant_id=task.get("tenant_id", ""),
                             status=task.get("status", "unknown"),
-                            output=orjson.dumps(task.get("output")).decode() if task.get("output") else None,
+                            output=json.dumps(task.get("output")) if task.get("output") else None,
                         )
                         session.add(record)
                     except Exception as exc:
@@ -277,10 +277,10 @@ class TaskReconciler:
                 raw = await self._r.get(task_key)
                 if raw:
                     try:
-                        data = orjson.loads(raw)
+                        data = json.loads(raw)
                         data["status"] = "failed"
                         data["error"] = "reconciler: stuck task, lock expired"
-                        await self._r.set(task_key, orjson.dumps(data))
+                        await self._r.set(task_key, json.dumps(data))
                         logger.info(
                             "TaskReconciler: phase2 marked FAILED task_id=%s", tid
                         )
@@ -325,7 +325,7 @@ class TaskReconciler:
 
             # Check if already in retry queue to avoid duplicates
             retry_members = await self._r.zrangebyscore(_CALLBACK_RETRY_KEY, "-inf", "+inf")
-            already_queued = any(tid in (m.decode() if isinstance(m, bytes) else m)
+            already_queued = any(tid in (m if isinstance(m, bytes) else m)
                                  for m in retry_members)
             if already_queued:
                 continue

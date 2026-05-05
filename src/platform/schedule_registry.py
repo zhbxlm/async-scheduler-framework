@@ -6,7 +6,7 @@ Cron schedule CRUD with:
 - list_due() for CronScheduler
 """
 from __future__ import annotations
-import orjson
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -104,7 +104,7 @@ class ScheduleRegistry(BaseRedisRegistry):
             if not raw:
                 continue
             try:
-                data = orjson.loads(raw)
+                data = json.loads(raw)
             except json.JSONDecodeError:
                 logger.warning("ScheduleRegistry: bad JSON for %s:%s", tid, sid)
                 continue
