@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "async-agent"
 version = "0.1.0"
-description = "Ray AMU Node Agent — lightweight HTTP service for cluster node management"
+description = "Ray Async Node Agent — lightweight HTTP service for cluster node management"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "AMU Team", email = "amu@baidu.com"}
+    {name = "Async Scheduler Team"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -37,8 +37,8 @@ redis = ["redis>=5.0"]
 async-agent = "async_agent.server:main"
 
 [project.urls]
-Homepage = "https://github.com/baidu/amu"
-Repository = "https://github.com/baidu/amu"
+Homepage = "https://github.com/zhbxlm/async-scheduler-framework"
+Repository = "https://github.com/zhbxlm/async-scheduler-framework"
 
 [tool.setuptools.packages.find]
 where = ["."]

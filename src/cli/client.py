@@ -1,6 +1,8 @@
 """HTTP client for CLI."""
 import os
 from typing import Any
+
+import click
 import httpx
 
 
@@ -27,8 +29,23 @@ class ApiClient:
         headers = kwargs.pop("headers", {})
         if self._key:
             headers["Authorization"] = f"Bearer {self._key}"
-        resp = self._client.request(method, url, headers=headers, **kwargs)
-        resp.raise_for_status()
+        try:
+            resp = self._client.request(method, url, headers=headers, **kwargs)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = e.response.text[:200]
+            except Exception:
+                pass
+            msg = f"{method} {path} failed: {e.response.status_code}"
+            if detail:
+                msg += f" — {detail}"
+            raise click.ClickException(msg)
+        except httpx.RequestError as e:
+            raise click.ClickException(
+                f"Cannot reach API at {self._base}: {e}"
+            )
         if resp.content:
             return resp.json()
         return None

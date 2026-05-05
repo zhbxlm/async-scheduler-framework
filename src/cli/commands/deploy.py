@@ -1,51 +1,20 @@
-# rebuilt from deepwiki-reference alignment
-"""deploy commands — kubectl-style CLI for /ops/v1/deploy."""
+"""deploy commands — kubectl-style CLI.
+
+Deprecation note: deployment moved to node-agent lifecycle.
+The CLI command group is kept as a stub to avoid breaking scripts.
+"""
 from __future__ import annotations
-import json
 import click
-
-
-def _print(data):
-    click.echo(json.dumps(data, ensure_ascii=False, indent=2, default=str))
 
 
 @click.group()
 def deploy():
-    """Manage deploys."""
+    """Manage deploys. (Deprecated — use node-agent instead.)"""
     pass
 
 
 @deploy.command("list")
 @click.pass_context
 def list_cmd(ctx):
-    """List all deploys."""
-    client = ctx.obj["client"]
-    _print(client.get("/ops/v1/deploy"))
-
-
-@deploy.command("get")
-@click.argument("item_id")
-@click.pass_context
-def get_cmd(ctx, item_id: str):
-    """Get deploy details."""
-    client = ctx.obj["client"]
-    _print(client.get(f"/ops/v1/deploy/{item_id}"))
-
-
-@deploy.command("create")
-@click.option("--data", default="{}", help="JSON payload")
-@click.pass_context
-def create_cmd(ctx, data: str):
-    """Create a new deploy."""
-    client = ctx.obj["client"]
-    _print(client.post("/ops/v1/deploy", json=json.loads(data)))
-
-
-@deploy.command("remove")
-@click.argument("item_id")
-@click.pass_context
-def remove_cmd(ctx, item_id: str):
-    """Remove a deploy."""
-    client = ctx.obj["client"]
-    client.delete(f"/ops/v1/deploy/{item_id}")
-    click.echo(f"Removed {item_id}")
+    """List deploys (deprecated)."""
+    click.echo("Deployment management has moved to node-agent.")

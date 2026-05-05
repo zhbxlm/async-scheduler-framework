@@ -147,10 +147,11 @@ class TaskCreator:
         """Look up an existing task by tenant + idempotency key."""
         if not self._db:
             return None
+        from sqlalchemy import select
         from src.models.task import TaskRecord
         async with self._db() as session:
             result = await session.execute(
-                __import__('sqlalchemy').sql.select(TaskRecord).where(
+                select(TaskRecord).where(
                     TaskRecord.tenant_id == tenant_id,
                     TaskRecord.idempotency_key == idempotency_key,
                 )

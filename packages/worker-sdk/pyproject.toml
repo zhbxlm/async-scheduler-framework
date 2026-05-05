@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "AMU Team", email = "amu@baidu.com"}
+    {name = "Async Scheduler Team"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -32,8 +32,8 @@ proxy = ["httpx>=0.26", "redis>=5.0", "requests>=2.31"]
 all = ["ray>=2.54", "httpx>=0.26", "redis>=5.0", "requests>=2.31"]
 
 [project.urls]
-Homepage = "https://github.com/baidu/amu"
-Repository = "https://github.com/baidu/amu"
+Homepage = "https://github.com/zhbxlm/async-scheduler-framework"
+Repository = "https://github.com/zhbxlm/async-scheduler-framework"
 
 [tool.setuptools.packages.find]
 where = ["."]

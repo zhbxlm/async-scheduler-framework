@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "async-proxy"
 version = "0.1.0"
-description = "Ray AMU Async Proxy — sidecar for long-running service async wrapping"
+description = "Ray Async Proxy — sidecar for long-running service async wrapping"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "AMU Team", email = "amu@baidu.com"}
+    {name = "Async Scheduler Team"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -32,8 +32,8 @@ dependencies = [
 async-proxy = "async_proxy.async_service_proxy:main"
 
 [project.urls]
-Homepage = "https://github.com/baidu/amu"
-Repository = "https://github.com/baidu/amu"
+Homepage = "https://github.com/zhbxlm/async-scheduler-framework"
+Repository = "https://github.com/zhbxlm/async-scheduler-framework"
 
 [tool.setuptools.packages.find]
 where = ["."]
