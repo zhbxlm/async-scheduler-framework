@@ -458,9 +458,11 @@ class DagEngine:
 
     def get_ready_nodes(self, step_names, completed, failed):
         """Return steps whose all dependencies are in completed set."""
+        # Build step name -> step mapping for O(1) lookup
+        step_map = {s.step_name: s for s in self._current_steps}
         ready = []
         for name in step_names:
-            step = next((s for s in self._current_steps if s.step_name == name), None)
+            step = step_map.get(name)
             if step is None:
                 continue
             deps = set(step.dependencies or [])

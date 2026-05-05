@@ -70,6 +70,7 @@ class TaskCreator:
         if idempotency_key and self._db:
             existing = await self._find_existing(tenant_id, idempotency_key)
             if existing:
+                # Return the existing task_id for true idempotency
                 return {
                     "task_id": existing.task_id,
                     "accepted": True,
@@ -78,10 +79,14 @@ class TaskCreator:
                     "idempotent_reused": True,
                 }
 
-        # Generate task_id (deterministic when idempotency_key provided)
+        # Generate task_id
         if idempotency_key:
+            # Generate deterministic ID for idempotent tasks
             safe_key = idempotency_key.replace(":", "-")[:60]
-            task_id = f"cron-{safe_key}-{uuid.uuid4().hex[:8]}"
+            # Use hash of idempotency_key for deterministic ID
+            import hashlib
+            key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]
+            task_id = f"cron-{safe_key}-{key_hash}"
         else:
             task_id = str(uuid.uuid4())
 

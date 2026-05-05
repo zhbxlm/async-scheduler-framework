@@ -155,6 +155,106 @@ async def queue_snapshot(
     return await qm.get_queue_snapshot(capability)
 
 
+@router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
+async def task_debug(
+    task_id: str,
+    request: Request,
+    _auth: dict = Depends(authenticate),
+) -> dict:
+    """Return comprehensive debug information for a task.
+    
+    Aggregates data from multiple sources:
+    - MySQL task record (if DB available)
+    - Redis queue status (pending/running/completed)
+    - Log context (if logging system supports it)
+    """
+    redis = getattr(request.app.state, "redis", None)
+    qm = getattr(request.app.state, "queue_manager", None)
+    db_session = getattr(request.app.state, "db_session_factory", None)
+    
+    result = {"task_id": task_id, "sources": {}}
+    
+    # 1. Check MySQL task record
+    if db_session:
+        from src.models.task import TaskRecord
+        async with db_session() as session:
+            from sqlalchemy import select
+            query = select(TaskRecord).where(TaskRecord.task_id == task_id)
+            task_record = (await session.execute(query)).scalar_one_or_none()
+            if task_record:
+                result["sources"]["mysql"] = {
+                    "task_id": task_record.task_id,
+                    "status": task_record.status.value,
+                    "created_at": task_record.created_at.isoformat() if task_record.created_at else None,
+                    "updated_at": task_record.updated_at.isoformat() if task_record.updated_at else None,
+                    "tenant_id": task_record.tenant_id,
+                    "task_type": task_record.task_type,
+                    "priority": task_record.priority.value if task_record.priority else None,
+                }
+            else:
+                result["sources"]["mysql"] = {"found": False}
+    else:
+        result["sources"]["mysql"] = {"available": False}
+    
+    # 2. Check Redis queues
+    if redis and qm:
+        # Check all capabilities' pending/running queues
+        capabilities = await redis.smembers("queue:capabilities:registry")
+        redis_status = {"capabilities": [], "found_in": []}
+        for cap in capabilities:
+            pending_key = f"queue:{cap}:pending"
+            running_key = f"queue:{cap}:running"
+            completed_key = f"queue:{cap}:stats"
+            
+            # Check pending
+            pending_score = await redis.zscore(pending_key, task_id)
+            if pending_score is not None:
+                rank = await redis.zrank(pending_key, task_id)
+                redis_status["found_in"].append({
+                    "queue": "pending",
+                    "capability": cap,
+                    "score": pending_score,
+                    "position": rank + 1 if rank is not None else None,
+                })
+            
+            # Check running
+            running_score = await redis.zscore(running_key, task_id)
+            if running_score is not None:
+                redis_status["found_in"].append({
+                    "queue": "running",
+                    "capability": cap,
+                    "score": running_score,
+                })
+            
+            # Check completed stats
+            completed_count = await redis.hget(completed_key, "total_completed")
+            if completed_count:
+                redis_status["capabilities"].append(cap)
+        
+        result["sources"]["redis"] = redis_status
+    else:
+        result["sources"]["redis"] = {"available": False}
+    
+    # 3. System recommendations
+    recommendations = []
+    mysql_found = result["sources"].get("mysql", {}).get("found", True) != False
+    redis_found = result["sources"].get("redis", {}).get("found_in", [])
+    
+    if not mysql_found and not redis_found:
+        recommendations.append("Task not found in MySQL or Redis. May have been cleaned up.")
+    elif redis_found:
+        for entry in redis_found:
+            if entry["queue"] == "pending":
+                recommendations.append(f"Task is pending in {entry['capability']} queue (position {entry.get('position', 'unknown')}).")
+            elif entry["queue"] == "running":
+                recommendations.append(f"Task is currently running in {entry['capability']}.")
+    
+    if recommendations:
+        result["recommendations"] = recommendations
+    
+    return result
+
+
 @router.post("/queue/{capability}/cleanup-stale", summary="Cleanup stale running entries")
 async def cleanup_stale(
     capability: str,

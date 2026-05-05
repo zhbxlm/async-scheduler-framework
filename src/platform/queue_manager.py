@@ -41,7 +41,6 @@ if cur >= max_depth then
 end
 redis.call('ZADD', pending_key, score, task_id)
 redis.call('HINCRBY', stats_key, 'total_enqueued', 1)
-local pos = redis.call('ZRANK', pending_key, task_id)
 local cnt = redis.call('ZCARD', pending_key)
 -- conditional TTL refresh
 for _, k in ipairs({pending_key, stats_key, config_key}) do
@@ -50,7 +49,7 @@ for _, k in ipairs({pending_key, stats_key, config_key}) do
         redis.call('EXPIRE', k, ttl)
     end
 end
-return {pos, cnt}
+return {cur + 1, cnt}
 """
 
 _LUA_DEQUEUE_READY = """
