@@ -244,3 +244,4 @@ Tracing:
 - `src/main_tasks.py` is now the **task-api** entrypoint.
 - `src/main_task_api.py` has been removed.
 - Old `amu_*` package naming has been renamed to `async_*` in packaged components.
+# CI trigger
