@@ -35,3 +35,18 @@ def slot_running(capability: str) -> str:
 def slot_config(capability: str) -> str:
     """Hash: step-level concurrency configuration."""
     return f"{{slot:{capability}}}:config"
+
+
+def callback_retry() -> str:
+    """ZSET: pending callback retries (score=next_retry_ts)."""
+    return "callback:retry:pending"
+
+
+def callback_done(task_id: str) -> str:
+    """SET: mark callback as sent (NX)."""
+    return f"callback:done:{task_id}"
+
+
+def callback_dlq() -> str:
+    """ZSET: dead-letter queue for failed callbacks."""
+    return "callback:dlq"

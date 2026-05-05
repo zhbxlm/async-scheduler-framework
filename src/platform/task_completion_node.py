@@ -15,12 +15,15 @@ import time
 from typing import Any
 
 import httpx
+from src.platform import queue_keys as qk
 
 logger = logging.getLogger(__name__)
 
-_CALLBACK_RETRY_KEY = "callback:retry:pending"   # ZSET: score=next_retry_ts
-_CALLBACK_DONE_KEY = "callback:done:{task_id}"   # SET NX to mark sent
-_CALLBACK_DLQ_KEY = "callback:dlq"               # ZSET: dead-letter queue
+_MAX_INLINE_RETRIES = 3
+_MAX_DURABLE_ATTEMPTS = 8
+_BASE_RETRY_DELAY = 10    # seconds
+_MAX_RETRY_DELAY = 600    # seconds
+_DLQ_TTL = 30 * 86400     # 30 days
 _MAX_INLINE_RETRIES = 3
 _MAX_DURABLE_ATTEMPTS = 8
 _BASE_RETRY_DELAY = 10    # seconds
@@ -47,6 +50,9 @@ class TaskCompletionNode:
         self._max_durable_attempts = max_durable_attempts
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
+        # Redis keys for callback retry
+        self._callback_retry_key = qk.callback_retry()
+        self._callback_dlq_key = qk.callback_dlq()
 
     async def handle_completion(
         self,
@@ -155,7 +161,7 @@ class TaskCompletionNode:
                 resp.raise_for_status()
                 if self._r:
                     await self._r.set(
-                        _CALLBACK_DONE_KEY.format(task_id=task_id), "1", ex=86400
+                        qk.callback_done(task_id), "1", ex=86400
                     )
                 logger.info("TaskCompletionNode: callback sent task_id=%s attempt=%d", task_id, attempt)
                 return
@@ -191,7 +197,7 @@ class TaskCompletionNode:
             "payload": payload,
             "attempt": attempt,
         })
-        await self._r.zadd(_CALLBACK_RETRY_KEY, {event: next_retry_ts})
+        await self._r.zadd(self._callback_retry_key, {event: next_retry_ts})
         logger.info(
             "TaskCompletionNode: enqueued durable retry task_id=%s attempt=%d delay=%ds",
             task_id, attempt, delay,
@@ -204,7 +210,7 @@ class TaskCompletionNode:
 
         now = time.time()
         events = await self._r.zrangebyscore(
-            _CALLBACK_RETRY_KEY, "-inf", now, start=0, num=batch_size, withscores=True
+            self._callback_retry_key, "-inf", now, start=0, num=batch_size, withscores=True
         )
         if not events:
             return 0
@@ -213,7 +219,7 @@ class TaskCompletionNode:
         for raw_event, score in events:
             event_str = raw_event.decode() if isinstance(raw_event, bytes) else raw_event
             # Atomic pop to prevent concurrent processing
-            removed = await self._r.zrem(_CALLBACK_RETRY_KEY, raw_event)
+            removed = await self._r.zrem(self._callback_retry_key, raw_event)
             if not removed:
                 continue
 
@@ -231,14 +237,14 @@ class TaskCompletionNode:
             if success:
                 if self._r:
                     await self._r.set(
-                        _CALLBACK_DONE_KEY.format(task_id=task_id), "1", ex=86400
+                        qk.callback_done(task_id), "1", ex=86400
                     )
             elif attempt < self._max_durable_attempts:
                 await self._enqueue_callback_retry(task_id, callback_url, payload, attempt + 1)
             else:
                 # Dead-letter queue
-                await self._r.zadd(_CALLBACK_DLQ_KEY, {event_str: time.time()})
-                await self._r.expire(_CALLBACK_DLQ_KEY, _DLQ_TTL)
+                await self._r.zadd(self._callback_dlq_key, {event_str: time.time()})
+                await self._r.expire(self._callback_dlq_key, _DLQ_TTL)
                 logger.error(
                     "TaskCompletionNode: DLQ task_id=%s after %d attempts", task_id, attempt
                 )
