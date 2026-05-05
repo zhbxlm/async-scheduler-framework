@@ -120,7 +120,7 @@ jobs:
     
     - name: Build packages
       run: |
-        cd packages/async-agent && pip install build && python -m build
+        cd packages/node-agent && pip install build && python -m build
         cd ../async-proxy && pip install build && python -m build
         cd ../worker-sdk && pip install build && python -m build
     
