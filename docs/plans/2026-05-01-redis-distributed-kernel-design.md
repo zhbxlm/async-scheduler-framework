@@ -1,5 +1,7 @@
 # Redis Distributed Kernel Design
 
+> Historical design draft. This file preserves an earlier distributed-kernel target and should be read as background context, not the exact current implementation.
+
 Date: 2026-05-01
 Project: ray-async-framework
 Branch: feat/deepwiki-distributed-alignment

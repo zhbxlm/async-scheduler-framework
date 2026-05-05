@@ -1,5 +1,7 @@
 # 2026-05-04 配置增强 / 调度优化 / 部署打包验证总结
 
+> Historical phase summary. Names like `ray_async.*`, `scheduler-service`, and `reconciler-service` below reflect the repository state at that time and are kept for traceability, not as the current source of truth.
+
 ## 本轮完成项
 
 ### 1. 配置体系增强

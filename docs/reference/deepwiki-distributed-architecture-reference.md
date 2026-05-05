@@ -1,8 +1,10 @@
 # Deepwiki Distributed Architecture Reference
 
+> Historical architecture reference. This file captures a convergence target and intermediate distributed-kernel terminology from an earlier phase. It should **not** be read as an exact description of the current codebase. For current runtime/documented behavior, prefer `README.md`, `docs/STRUCTURE.md`, and `docs/configuration.md`.
+
 Date: 2026-05-02
-Project: ray-async-framework
-Status: Updated to reflect current progress
+Project: async-scheduler-framework
+Status: Historical reference
 
 ## Purpose
 

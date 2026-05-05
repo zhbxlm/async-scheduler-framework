@@ -1,5 +1,7 @@
 # Real Redis Integration Validation Plan
 
+> Historical implementation plan. This document reflects an earlier design/verification phase and may reference modules or naming that no longer match the current repository layout.
+
 Date: 2026-05-01
 Project: ray-async-framework
 Status: Partially completed

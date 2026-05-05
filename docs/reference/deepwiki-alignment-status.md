@@ -1,5 +1,7 @@
 # DeepWiki 设计对齐状态
 
+> Historical alignment note. This document records a previous deepwiki-oriented alignment snapshot and contains endpoints/modules that are no longer present in the current repository. For current architecture and active entrypoints, prefer `README.md` and `docs/STRUCTURE.md`.
+
 ## 目的
 
 本文档用于明确 Ray Async Framework 当前与 deepwiki 风格分布式调度平台之间的**对齐边界**，避免误判为“已等价实现”。

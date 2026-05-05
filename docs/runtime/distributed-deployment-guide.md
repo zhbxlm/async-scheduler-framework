@@ -1,7 +1,12 @@
 # Distributed Deployment Guide
 
+> Historical/runtime reference. Parts of this document describe an earlier distributed-kernel direction and are **not fully aligned** with the current `ops-api` / `task-api` split. For the current deployment shape, prefer:
+> - `README.md`
+> - `docs/deployment/docker.md`
+> - `docs/configuration.md`
+
 Date: 2026-05-02
-Project: ray-async-framework
+Project: async-scheduler-framework
 
 ## Purpose
 
@@ -75,6 +80,9 @@ Running reconciler as its own process makes repair timing and ownership easier t
 Use `BackendConfig` with distributed mode enabled.
 
 ```python
+# Historical example from an earlier design phase.
+# The current repository no longer uses `ray_async.backends.BackendConfig`
+# as the primary runtime entry described here.
 from ray_async.backends import BackendConfig
 
 config = BackendConfig(
@@ -272,9 +280,11 @@ Example commands (shape only; adapt to your wrapper/config style):
 
 ```bash
 # process 1
+# Historical CLI example (outdated for current split APIs)
 ray-async api --init-db
 
 # process 2
+# Historical CLI example (outdated for current repository shape)
 ray-async worker --workers 2 --max-concurrent 10
 
 # process 3

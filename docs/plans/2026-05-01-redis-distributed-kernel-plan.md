@@ -1,5 +1,7 @@
 # Redis Distributed Kernel Implementation Plan
 
+> Historical implementation plan. Module paths and role names in this document may differ from the current repository state.
+
 Date: 2026-05-01
 Project: ray-async-framework
 Branch: feat/deepwiki-distributed-alignment
