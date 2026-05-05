@@ -19,7 +19,7 @@ async def authenticate(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
 ) -> dict:
     """Authenticate via API key; return tenant context dict."""
-    from config.settings_compat import settings
+    from config.settings_pydantic import settings
 
     if not credentials:
         raise HTTPException(status_code=401, detail="Missing API key")

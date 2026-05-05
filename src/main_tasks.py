@@ -30,7 +30,7 @@ setup_tracing(service_name="scheduler-task-api", service_version="1.0.0")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
     # ── startup ──────────────────────────────────────────────────
-    from config.settings_compat import settings
+    from config.settings_pydantic import settings
     from src.common.container import ServiceContainer, set_container
     from src.common.lifecycle import (
         get_lifecycle_manager,
