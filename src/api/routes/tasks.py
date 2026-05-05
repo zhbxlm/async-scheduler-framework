@@ -138,7 +138,7 @@ async def create_task(
     db: DbSession,
     ctx=Depends(get_tenant_context),
 ) -> TaskCreateResponse:
-    """Create and enqueue a task via TaskCreator."""
+    """Create and enqueue a task via TaskCreator (owns idempotency)."""
     tenant_id = ctx.tenant_id or req.tenant_id or "default"
     task_creator = getattr(request.app.state, "task_creator", None)
     if task_creator is None:
@@ -147,27 +147,7 @@ async def create_task(
             detail="TaskCreator not initialised (task-api only)",
         )
 
-    # Idempotency check (still in DB for consistency)
-    from src.models.task import TaskRecord
-    if req.idempotency_key:
-        existing = (
-            db.query(TaskRecord)
-            .filter(
-                TaskRecord.tenant_id == tenant_id,
-                TaskRecord.idempotency_key == req.idempotency_key,
-            )
-            .first()
-        )
-        if existing:
-            return TaskCreateResponse(
-                task_id=existing.task_id,
-                tenant_id=existing.tenant_id or "",
-                status=existing.status,
-                cluster_id=existing.cluster_id or "",
-                idempotent_reused=True,
-            )
-
-    # Convert to TaskCreator kwargs
+    # Convert to TaskCreator kwargs (TaskCreator handles idempotency)
     kwargs = {
         "task_type": req.task_type,
         "priority": req.priority.value,
@@ -211,7 +191,7 @@ async def create_task(
         estimated_wait_seconds=0,
         queue_position=result.get("queue_position", -1),
         scheduled_at="",
-        idempotent_reused=False,
+        idempotent_reused=result.get("idempotent_reused", False),
     )
 
 

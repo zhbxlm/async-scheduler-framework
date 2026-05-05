@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.common.lifecycle import (
         get_lifecycle_manager,
         TaskReconcilerResource,
+        CronSchedulerResource,
     )
     from src.common.error_handling import BusinessError
 
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Mount onto app.state so route helpers can access via request.app.state
     app.state.redis = container.redis_client
     app.state.tenant_registry = container.tenant_registry
+    app.state.schedule_registry = container.schedule_registry
     app.state.queue_manager = container.queue_manager
     app.state.task_creator = container.task_creator
     app.state.task_reconciler = container.task_reconciler
@@ -63,6 +65,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     manager = get_lifecycle_manager()
     if settings.background.reconcile.enabled and container.task_reconciler:
         manager.register_resource(TaskReconcilerResource(container.task_reconciler))
+    if settings.background.cron.enabled and container.cron_scheduler:
+        manager.register_resource(CronSchedulerResource(container.cron_scheduler))
     await manager.start_all()
 
     yield

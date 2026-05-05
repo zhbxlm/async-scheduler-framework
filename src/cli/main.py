@@ -1,11 +1,22 @@
-"""CLI entry point — kubectl-style commands."""
+"""CLI entry point — kubectl-style commands.
+
+The CLI connects to task-api (port 8001) by default since most operations
+(task creation, status, cancellation) require the task API.  Ops commands
+(capability, node, cluster, schedule management) are routed to the same
+URL for simplicity — in a split deployment, point --api-url at the
+appropriate service."""
 import os
 import click
 from src.cli.client import ApiClient
 
 
 @click.group()
-@click.option("--api-url", envvar="RAY_ASYNC_API_URL", default="http://localhost:8000", help="API server URL")
+@click.option(
+    "--api-url",
+    envvar="RAY_ASYNC_API_URL",
+    default="http://localhost:8001",
+    help="Task API base URL (port 8001). Override for ops commands if needed."
+)
 @click.pass_context
 def cli(ctx, api_url):
     ctx.ensure_object(dict)

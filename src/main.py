@@ -36,10 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── startup ──────────────────────────────────────────────────
     from config.settings_compat import settings
     from src.common.container import ServiceContainer, set_container
-    from src.common.lifecycle import (
-        get_lifecycle_manager,
-        CronSchedulerResource,
-    )
+    from src.common.lifecycle import get_lifecycle_manager
 
     # init shared http client pool
     from src.common.http_client import init_http_client
@@ -59,8 +56,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.queue_manager = container.queue_manager
 
     manager = get_lifecycle_manager()
-    if settings.background.cron.enabled and container.cron_scheduler:
-        manager.register_resource(CronSchedulerResource(container.cron_scheduler))
     await manager.start_all()
 
     yield

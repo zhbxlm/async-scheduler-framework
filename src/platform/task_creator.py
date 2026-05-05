@@ -45,6 +45,10 @@ class TaskCreator:
     ) -> dict[str, Any]:
         """Create and enqueue a task.
         
+        Idempotency: if idempotency_key is provided, checks DB for an
+        existing task with the same (tenant_id, idempotency_key) pair.
+        Returns the existing task if found — no duplicate is created.
+        
         Args:
             tenant_id: Tenant identifier
             idempotency_key: Optional idempotency key (used for dedup)
@@ -52,6 +56,7 @@ class TaskCreator:
         
         Returns:
             Dict with task_id, queue_position, pending_count, etc.
+            "idempotent_reused": True if an existing task was returned.
         
         Raises:
             ValueError if task_type/capability missing
@@ -61,10 +66,22 @@ class TaskCreator:
         if not capability:
             raise ValueError("task_type or capability must be provided in template")
 
-        # Generate task_id
+        # ── Idempotency check (DB lookup) ────────────────────────
+        if idempotency_key and self._db:
+            existing = await self._find_existing(tenant_id, idempotency_key)
+            if existing:
+                return {
+                    "task_id": existing.task_id,
+                    "accepted": True,
+                    "queue_position": -1,
+                    "pending_count": 0,
+                    "idempotent_reused": True,
+                }
+
+        # Generate task_id (deterministic when idempotency_key provided)
         if idempotency_key:
-            # Use idempotency_key as deterministic task_id prefix
-            task_id = f"cron-{idempotency_key}-{uuid.uuid4().hex[:16]}"
+            safe_key = idempotency_key.replace(":", "-")[:60]
+            task_id = f"cron-{safe_key}-{uuid.uuid4().hex[:8]}"
         else:
             task_id = str(uuid.uuid4())
 
@@ -125,6 +142,20 @@ class TaskCreator:
             "queue_position": result.get("queue_position", -1),
             "pending_count": result.get("pending_count", 0),
         }
+
+    async def _find_existing(self, tenant_id: str, idempotency_key: str) -> Any:
+        """Look up an existing task by tenant + idempotency key."""
+        if not self._db:
+            return None
+        from src.models.task import TaskRecord
+        async with self._db() as session:
+            result = await session.execute(
+                __import__('sqlalchemy').sql.select(TaskRecord).where(
+                    TaskRecord.tenant_id == tenant_id,
+                    TaskRecord.idempotency_key == idempotency_key,
+                )
+            )
+            return result.scalar_one_or_none()
 
     async def _persist_to_db(
         self,

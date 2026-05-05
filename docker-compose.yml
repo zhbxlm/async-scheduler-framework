@@ -35,7 +35,7 @@ x-api-common: &api-common
 # ---- Services --------------------------------------------------
 services:
 
-  # Ops API (port 8000, Redis-only registries, CronScheduler)
+  # Ops API (port 8000, Redis-only registries — NO CronScheduler)
   ops-api:
     <<: *api-common
     container_name: scheduler-ops-api
@@ -46,7 +46,7 @@ services:
     environment:
       <<: *common-env
       BACKGROUND__RECONCILE__ENABLED: "false"
-      BACKGROUND__CRON__ENABLED: "true"
+      BACKGROUND__CRON__ENABLED: "false"
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
@@ -58,7 +58,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.scheduler-ops-api.rule=Host(`scheduler.example.com`)"
 
-  # Task API (port 8001, MySQL+Redis, TaskReconciler)
+  # Task API (port 8001, MySQL+Redis, TaskReconciler + CronScheduler)
   task-api:
     <<: *api-common
     container_name: scheduler-task-api
@@ -69,7 +69,7 @@ services:
     environment:
       <<: *common-env
       BACKGROUND__RECONCILE__ENABLED: "true"
-      BACKGROUND__CRON__ENABLED: "false"
+      BACKGROUND__CRON__ENABLED: "true"
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')"]

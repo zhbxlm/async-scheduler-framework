@@ -113,6 +113,7 @@ def task_client():
                             "accepted": True,
                             "queue_position": 0,
                             "pending_count": 0,
+                            "idempotent_reused": True,
                         }
             
             # 生成唯一的 task_id

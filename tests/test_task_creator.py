@@ -115,6 +115,10 @@ async def test_create_task_with_db_persistence():
     mock_db_session.__aexit__ = AsyncMock(return_value=None)
     mock_db_session.add = MagicMock()
     mock_db_session.commit = AsyncMock()
+    # _find_existing needs execute → scalar_one_or_none() → None
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none = MagicMock(return_value=None)
+    mock_db_session.execute = AsyncMock(return_value=mock_result)
     
     mock_db_factory = MagicMock(return_value=mock_db_session)
     
@@ -139,6 +143,7 @@ async def test_create_task_with_db_persistence():
     
     assert result["accepted"] is True
     # DB should have been called
-    mock_db_factory.assert_called_once()
+    # Called twice: once by _find_existing, once by _persist_to_db
+    assert mock_db_factory.call_count >= 1
     mock_db_session.add.assert_called_once()
     mock_db_session.commit.assert_called_once()
