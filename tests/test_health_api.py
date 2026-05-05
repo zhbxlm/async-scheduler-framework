@@ -6,17 +6,16 @@ from fastapi.testclient import TestClient
 
 
 def test_health_basic(test_client: TestClient):
-    """Test basic health endpoint."""
-    response = test_client.get("/health")
+    """Test basic health endpoint (now under /api/v1/health)."""
+    response = test_client.get("/api/v1/health", follow_redirects=True)
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
-    assert "note" in data
+    assert data["status"] == "healthy"
 
 
 def test_health_detailed(test_client: TestClient):
     """Test detailed health endpoint."""
-    response = test_client.get("/health/detailed")
+    response = test_client.get("/api/v1/health/detailed")
     assert response.status_code == 200
     data = response.json()
     
@@ -48,7 +47,7 @@ def test_health_detailed(test_client: TestClient):
 
 def test_health_ready(test_client: TestClient):
     """Test readiness probe."""
-    response = test_client.get("/health/ready")
+    response = test_client.get("/api/v1/health/ready")
     assert response.status_code == 200
     data = response.json()
     
@@ -60,7 +59,7 @@ def test_health_ready(test_client: TestClient):
 
 def test_health_metrics(test_client: TestClient):
     """Test Prometheus metrics endpoint."""
-    response = test_client.get("/health/metrics")
+    response = test_client.get("/api/v1/health/metrics")
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/plain; charset=utf-8"
     
@@ -76,7 +75,7 @@ def test_health_metrics(test_client: TestClient):
 
 def test_health_redis(test_client: TestClient):
     """Test Redis health check."""
-    response = test_client.get("/health/redis")
+    response = test_client.get("/api/v1/health/redis")
     # No redis configured in tests — expect 200 with status unknown/healthy
     assert response.status_code == 200
     data = response.json()
@@ -86,7 +85,7 @@ def test_health_redis(test_client: TestClient):
 
 def test_health_mysql(test_client: TestClient):
     """Test MySQL health check."""
-    response = test_client.get("/health/mysql")
+    response = test_client.get("/api/v1/health/mysql")
     # No mysql configured in tests — expect 200 with status disabled/healthy
     assert response.status_code == 200
     data = response.json()
@@ -99,12 +98,12 @@ def test_health_error_handling(test_client: TestClient):
     # This test would simulate error conditions
     # For now, just verify endpoints exist
     endpoints = [
-        "/health",
-        "/health/detailed",
-        "/health/ready",
-        "/health/metrics",
-        "/health/redis",
-        "/health/mysql",
+        "/api/v1/health",
+        "/api/v1/health/detailed",
+        "/api/v1/health/ready",
+        "/api/v1/health/metrics",
+        "/api/v1/health/redis",
+        "/api/v1/health/mysql",
     ]
     
     for endpoint in endpoints:
@@ -120,12 +119,12 @@ def test_health_error_handling(test_client: TestClient):
 def test_health_request_count_increment(test_client: TestClient):
     """Test that request count increments."""
     # Get initial count
-    response1 = test_client.get("/health/detailed")
+    response1 = test_client.get("/api/v1/health/detailed")
     data1 = response1.json()
     initial_count = data1["request_count"]
     
     # Make another request
-    response2 = test_client.get("/health/detailed")
+    response2 = test_client.get("/api/v1/health/detailed")
     data2 = response2.json()
     new_count = data2["request_count"]
     
@@ -140,13 +139,13 @@ def test_health_uptime_increases(test_client: TestClient):
     """Test that uptime increases between requests."""
     import time
     
-    response1 = test_client.get("/health/detailed")
+    response1 = test_client.get("/api/v1/health/detailed")
     data1 = response1.json()
     uptime1 = data1["uptime_seconds"]
     
     time.sleep(0.1)  # Small delay
     
-    response2 = test_client.get("/health/detailed")
+    response2 = test_client.get("/api/v1/health/detailed")
     data2 = response2.json()
     uptime2 = data2["uptime_seconds"]
     

@@ -107,9 +107,11 @@ for _r in (
     ops_router,
     schedules_router,
     tenants_router,
-    health_router,
 ):
     app.include_router(_r)
+
+# Health gets /api/v1 prefix for consistency with task-api
+app.include_router(health_router, prefix="/api/v1")
 
 
 # ── Legacy health endpoint ────────────────────────────────────────────────
