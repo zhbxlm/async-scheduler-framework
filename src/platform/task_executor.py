@@ -22,6 +22,24 @@ _CANCEL_KEY = "task_cancel:{task_id}"
 _LOCK_RENEWAL_INTERVAL = 10  # seconds
 _DEFAULT_LOCK_TTL_MS = 30_000
 
+
+_LUA_LOCK_RELEASE = """
+-- Atomic lock release: only delete if value matches
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+"""
+
+_LUA_LOCK_RELEASE = """
+-- Atomic lock release: only delete if value matches
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+"""
 _LUA_LOCK_RENEW = """
 local key = KEYS[1]
 local val = ARGV[1]
@@ -50,6 +68,12 @@ class TaskExecutor:
         self._callback = callback_fn
         self._lock_ttl_ms = lock_ttl_ms
         self._lua_lock_renew = redis_client.register_script(_LUA_LOCK_RENEW)
+        self._lua_lock_release = redis_client.register_script(_LUA_LOCK_RELEASE)
+        self._draining = False
+        self._active_tasks = set()
+        self._lua_lock_release = redis_client.register_script(_LUA_LOCK_RELEASE)
+        self._draining = False
+        self._active_tasks = set()
 
     async def execute(self, task_id: str, dag_definition: Any, context: Any) -> dict[str, Any]:
         """Acquire lock, run DAG, release lock, callback."""
@@ -114,10 +138,18 @@ class TaskExecutor:
                 logger.warning("TaskExecutor: lock lost for key=%s", lock_key)
                 break
 
+    async def shutdown(self, timeout=30.0):
+        self._draining = True
+        if self._active_tasks:
+            import asyncio as a
+            deadline = a.get_event_loop().time() + timeout
+            while self._active_tasks and a.get_event_loop().time() < deadline:
+                await a.sleep(0.5)
+        logger.info("TaskExecutor: drain complete")
+
     async def _release_lock(self, lock_key: str, lock_val: str) -> None:
+        """Atomic lock release via Lua script (P0 fix)."""
         try:
-            current = await self._r.get(lock_key)
-            if current and (current.decode() if isinstance(current, bytes) else current) == lock_val:
-                await self._r.delete(lock_key)
+            await self._lua_lock_release(keys=[lock_key], args=[lock_val])
         except Exception:
             pass

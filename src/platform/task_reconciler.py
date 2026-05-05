@@ -29,6 +29,14 @@ _REQUEUE_DEDUP_KEY = "requeue_dedup:{task_id}"
 _REQUEUE_DEDUP_TTL = 300
 _STUCK_MAX_PER_TICK = 20
 _STUCK_TASK_MAX_AGE_SECONDS = 300
+
+_LUA_RENEW_LEADER = """
+local current = redis.call("GET", KEYS[1])
+if current and current == ARGV[1] then
+    return redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+return 0
+"""
 _RECONCILE_LEADER_KEY = "reconcile_leader"
 _LEADER_TTL = 90  # seconds
 
@@ -58,6 +66,7 @@ class TaskReconciler:
         self._batch_size = batch_size
         self._instance_id = instance_id or str(uuid.uuid4())
         self._leader_ttl = leader_ttl
+        self._lua_renew_leader = redis_client.register_script(_LUA_RENEW_LEADER) if redis_client else None
         self._running = False
         self._scan_cursor: int = 0
 
@@ -81,10 +90,11 @@ class TaskReconciler:
         ok = await self._r.set(_RECONCILE_LEADER_KEY, self._instance_id, nx=True, ex=self._leader_ttl)
         if ok:
             return True
-        current = await self._r.get(_RECONCILE_LEADER_KEY)
-        current_id = current if isinstance(current, bytes) else current
-        if current_id == self._instance_id:
-            await self._r.expire(_RECONCILE_LEADER_KEY, self._leader_ttl)
+        renewed = await self._lua_renew_leader(
+            keys=[_RECONCILE_LEADER_KEY],
+            args=[self._instance_id, str(self._leader_ttl)]
+        )
+        if renewed == 1:
             return True
         return False
 

@@ -6,6 +6,25 @@ Also handles stale running entry cleanup.
 from __future__ import annotations
 
 import asyncio
+
+_LUA_ACQUIRE_SLOT = """
+local current = tonumber(redis.call("GET", KEYS[1]) or "0")
+local limit = tonumber(ARGV[1])
+if current < limit then
+    redis.call("INCR", KEYS[1])
+    redis.call("EXPIRE", KEYS[1], 300)
+    return 1
+end
+return 0
+"""
+_LUA_RELEASE_SLOT = """
+local current = tonumber(redis.call("GET", KEYS[1]) or "0")
+if current > 0 then
+    return redis.call("DECR", KEYS[1])
+end
+return 0
+"""
+_GLOBAL_CONC_KEY = "global:consumer:concurrency"
 import logging
 from typing import Any
 
@@ -31,8 +50,12 @@ class TaskConsumer:
         self._poll_interval = poll_interval
         self._max_concurrent = max_concurrent
         self._stale_threshold = stale_threshold_seconds
+        self._global_conc_limit = max_concurrent
+        self._lua_acquire_slot = redis_client.register_script(_LUA_ACQUIRE_SLOT)
+        self._lua_release_slot = redis_client.register_script(_LUA_RELEASE_SLOT)
         self._running = False
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._use_global_conc = redis_client is not None
         self._tasks: set[asyncio.Task] = set()
 
         # Weighted round-robin state
@@ -99,9 +122,19 @@ class TaskConsumer:
         acquired = False
         try:
             # Non-blocking check: if semaphore is exhausted, skip immediately
-            acquired = self._semaphore._value > 0
+            acquired = (self._semaphore._value > 0) or True
             if not acquired:
                 return False
+            # Global concurrency check (P1 fix)
+            if self._use_global_conc:
+                while True:
+                    ok = await self._lua_acquire_slot(
+                        keys=[_GLOBAL_CONC_KEY],
+                        args=[str(self._global_conc_limit)]
+                    )
+                    if ok == 1:
+                        break
+                    await asyncio.sleep(0.5)
             await self._semaphore.acquire()
             acquired = True
 
@@ -109,10 +142,14 @@ class TaskConsumer:
                 task_data = await self._queue.dequeue(capability)
             except Exception as e:
                 logger.error("TaskConsumer: dequeue error cap=%s: %s", capability, e)
+                if self._use_global_conc:
+                    await self._lua_release_slot(keys=[_GLOBAL_CONC_KEY])
                 self._semaphore.release()
                 return False
 
             if task_data is None:
+                if self._use_global_conc:
+                    await self._lua_release_slot(keys=[_GLOBAL_CONC_KEY])
                 self._semaphore.release()
                 return False
 
@@ -122,6 +159,8 @@ class TaskConsumer:
             return True
         except asyncio.CancelledError:
             if acquired:
+                if self._use_global_conc:
+                    await self._lua_release_slot(keys=[_GLOBAL_CONC_KEY])
                 self._semaphore.release()
             raise
 
