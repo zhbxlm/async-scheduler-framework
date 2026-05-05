@@ -1,4 +1,4 @@
-# amu-worker
+# async-worker
 
 Ray AMU Worker SDK — base classes for building Ray workers.
 
@@ -13,22 +13,22 @@ The Worker SDK provides:
 
 ### Basic installation (no dependencies)
 ```bash
-pip install amu-worker
+pip install async-worker
 ```
 
 ### With Ray support
 ```bash
-pip install amu-worker[ray]
+pip install async-worker[ray]
 ```
 
 ### With AsyncProxyWorker support
 ```bash
-pip install amu-worker[proxy]
+pip install async-worker[proxy]
 ```
 
 ### All features
 ```bash
-pip install amu-worker[all]
+pip install async-worker[all]
 ```
 
 ## Usage
@@ -38,7 +38,7 @@ pip install amu-worker[all]
 Create a simple worker with the template-method pattern:
 
 ```python
-from amu_worker import BaseWorkerActor
+from async_worker import BaseWorkerActor
 
 class MyWorker(BaseWorkerActor):
     def __init__(self, capability: str, config: dict | None = None):
@@ -69,7 +69,7 @@ class MyWorker(BaseWorkerActor):
 Create a worker that delegates to an async service proxy:
 
 ```python
-from amu_worker import AsyncProxyWorker
+from async_worker import AsyncProxyWorker
 
 class LLMWorker(AsyncProxyWorker):
     backend_path = "/generate"
@@ -109,7 +109,7 @@ result = worker.run({"prompt": "Hello, world!"})
 Test workers locally without Ray:
 
 ```python
-from amu_worker import run_local_test, WorkerDevKit
+from async_worker import run_local_test, WorkerDevKit
 
 # Simple test
 result = run_local_test(MyWorker, {"input": "test"}, config={"model": "gpt-4"})

@@ -1,4 +1,4 @@
-"""Node Agent — amu-agent
+"""Node Agent — async-agent
 
 Lightweight HTTP service running on each cluster machine.
 Handles: ownership protocol, heartbeat, resource detection,
@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from amu_agent._models import (
+from async_agent._models import (
     DeployRequest,
     DeployResult,
     DeployState,
@@ -30,8 +30,8 @@ from amu_agent._models import (
     ReleaseRequest,
     UndeployRequest,
 )
-from amu_agent._remote_fetcher import RemoteCodeFetcher
-from amu_agent.ray_manager import ray_start, ray_stop
+from async_agent._remote_fetcher import RemoteCodeFetcher
+from async_agent.ray_manager import ray_start, ray_stop
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +415,7 @@ def create_agent_app(
 def main():
     """Main entry point for running the agent from command line."""
     import uvicorn
-    from amu_agent.config import AgentConfig
+    from async_agent.config import AgentConfig
 
     logging.basicConfig(
         level=getattr(logging, AgentConfig.log_level.upper()),

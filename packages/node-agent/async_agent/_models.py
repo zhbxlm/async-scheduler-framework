@@ -1,4 +1,4 @@
-"""Pydantic models for amu-agent — extracted from src/models/node.py and src/models/deploy.py.
+"""Pydantic models for async-agent — extracted from src/models/node.py and src/models/deploy.py.
 
 This module contains only the data models needed by the Node Agent,
 with no SQLAlchemy or other framework dependencies.

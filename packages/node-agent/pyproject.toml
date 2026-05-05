@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amu-agent"
+name = "async-agent"
 version = "0.1.0"
 description = "Ray AMU Node Agent — lightweight HTTP service for cluster node management"
 requires-python = ">=3.10"
@@ -34,7 +34,7 @@ dependencies = [
 redis = ["redis>=5.0"]
 
 [project.scripts]
-amu-agent = "amu_agent.server:main"
+async-agent = "async_agent.server:main"
 
 [project.urls]
 Homepage = "https://github.com/baidu/amu"
@@ -42,7 +42,7 @@ Repository = "https://github.com/baidu/amu"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["amu_agent*"]
+include = ["async_agent*"]
 
 [tool.setuptools.package-data]
-amu_agent = ["py.typed"]
+async_agent = ["py.typed"]

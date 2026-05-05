@@ -1,4 +1,4 @@
-# amu-proxy
+# async-proxy
 
 Ray AMU Async Proxy — sidecar for long-running service async wrapping.
 
@@ -13,7 +13,7 @@ Both components store results in Redis so workers can retrieve them via BLPOP.
 ## Installation
 
 ```bash
-pip install amu-proxy
+pip install async-proxy
 ```
 
 ## Usage
@@ -24,19 +24,19 @@ Running the service proxy:
 
 ```bash
 # Basic usage
-amu-proxy
+async-proxy
 
 # With environment variables
 export BACKEND_URL="http://my-service:8080"
 export REDIS_URL="redis://redis-server:6379/0"
 export PROXY_PORT="5000"
-amu-proxy
+async-proxy
 ```
 
 Programmatic usage:
 
 ```python
-from amu_proxy import create_proxy_app
+from async_proxy import create_proxy_app
 from flask import Flask
 
 app = create_proxy_app(
@@ -51,13 +51,13 @@ app.run(host="0.0.0.0", port=5000)
 Running the command proxy:
 
 ```bash
-python -m amu_proxy.async_command_proxy
+python -m async_proxy.async_command_proxy
 ```
 
 Programmatic usage:
 
 ```python
-from amu_proxy import AsyncCommandProxy
+from async_proxy import AsyncCommandProxy
 
 proxy = AsyncCommandProxy()
 

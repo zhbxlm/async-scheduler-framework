@@ -1,4 +1,4 @@
-"""RemoteCodeFetcher — simplified version for amu-agent.
+"""RemoteCodeFetcher — simplified version for async-agent.
 
 Handles download, SHA-256 verification, extraction and caching
 of remote code packages (tar.gz artifacts) used for deployment.

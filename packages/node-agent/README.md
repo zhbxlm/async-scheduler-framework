@@ -1,4 +1,4 @@
-# amu-agent
+# async-agent
 
 Ray AMU Node Agent — lightweight HTTP service for cluster node management.
 
@@ -15,22 +15,22 @@ The Node Agent runs on each cluster machine and handles:
 
 ### Basic installation (no dependencies)
 ```bash
-pip install amu-agent
+pip install async-agent
 ```
 
 ### With Ray support
 ```bash
-pip install amu-agent[ray]
+pip install async-agent[ray]
 ```
 
 ### With Redis support (for ownership protocol)
 ```bash
-pip install amu-agent[redis]
+pip install async-agent[redis]
 ```
 
 ### All features
 ```bash
-pip install amu-agent[all]
+pip install async-agent[all]
 ```
 
 ## Usage
@@ -39,20 +39,20 @@ pip install amu-agent[all]
 
 ```bash
 # Basic usage
-amu-agent
+async-agent
 
 # With environment variables
 export AGENT_NODE_ID="node-001"
 export AGENT_HOST="192.168.1.10"
 export AGENT_PORT="9100"
 export REDIS_URL="redis://redis-server:6379/0"
-amu-agent
+async-agent
 ```
 
 ### Programmatic usage
 
 ```python
-from amu_agent import create_agent_app, AgentConfig
+from async_agent import create_agent_app, AgentConfig
 import redis.asyncio as redis
 
 redis_client = redis.from_url(AgentConfig.redis_url)

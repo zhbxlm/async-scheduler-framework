@@ -2,9 +2,9 @@
 
 Note: User-facing components (agent, proxy, worker) are now available as
 independent packages in the packages/ directory:
-  - amu-agent: Node Agent for cluster node management
-  - amu-proxy: Async Proxy for long-running services
-  - amu-worker: Worker SDK for building Ray workers
+  - async-agent: Node Agent for cluster node management
+  - async-proxy: Async Proxy for long-running services
+  - async-worker: Worker SDK for building Ray workers
 """
 from setuptools import setup, find_packages
 
@@ -33,9 +33,9 @@ setup(
             "fakeredis>=2.23.0",
         ],
         # User-facing packages are now available as independent packages:
-        #   pip install ../packages/node-agent    # or amu-agent
-        #   pip install ../packages/async-proxy   # or amu-proxy
-        #   pip install ../packages/worker-sdk    # or amu-worker
+        #   pip install ../packages/node-agent    # or async-agent
+        #   pip install ../packages/async-proxy   # or async-proxy
+        #   pip install ../packages/worker-sdk    # or async-worker
     },
     entry_points={
         "console_scripts": [

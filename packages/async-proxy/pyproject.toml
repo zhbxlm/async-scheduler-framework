@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amu-proxy"
+name = "async-proxy"
 version = "0.1.0"
 description = "Ray AMU Async Proxy — sidecar for long-running service async wrapping"
 requires-python = ">=3.10"
@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-amu-proxy = "amu_proxy.async_service_proxy:main"
+async-proxy = "async_proxy.async_service_proxy:main"
 
 [project.urls]
 Homepage = "https://github.com/baidu/amu"
@@ -37,7 +37,7 @@ Repository = "https://github.com/baidu/amu"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["amu_proxy*"]
+include = ["async_proxy*"]
 
 [tool.setuptools.package-data]
-amu_proxy = ["py.typed"]
+async_proxy = ["py.typed"]
