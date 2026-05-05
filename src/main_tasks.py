@@ -61,6 +61,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.task_creator = container.task_creator
     app.state.task_reconciler = container.task_reconciler
     app.state.task_completion_node = container.task_completion_node
+    
+    # Cache auth settings for authenticate() - avoids repeated module imports
+    app.state.auth_settings = {
+        'super_admin_key': settings.tenant.super_admin_api_key,
+        'multi_tenant_enabled': settings.tenant.multi_tenant_enabled,
+        'tenant_id_header': settings.tenant.tenant_id_header,
+    }
 
     manager = get_lifecycle_manager()
     if settings.background.reconcile.enabled and container.task_reconciler:

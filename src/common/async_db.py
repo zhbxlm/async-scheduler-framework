@@ -23,13 +23,21 @@ def init_async_engine(url: str, **kwargs) -> None:
     
     Args:
         url: Database URL (must start with aiomysql:// or asyncpg:// for async)
+              Can also be a Pydantic DSN object which will be converted to string.
         **kwargs: Additional engine options
     """
     global _async_engine, _AsyncSessionLocal
     
+    # Convert Pydantic DSN objects to string
+    if hasattr(url, '__str__'):
+        url = str(url)
+    
     # Convert sync URL to async if needed
     if url.startswith("mysql://"):
         url = url.replace("mysql://", "aiomysql://", 1)
+    elif url.startswith("mysql+aiomysql://"):
+        # Keep mysql+aiomysql:// format for SQLAlchemy 2.0
+        pass
     elif url.startswith("postgresql://"):
         url = url.replace("postgresql://", "asyncpg://", 1)
     

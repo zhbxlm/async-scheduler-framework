@@ -18,21 +18,36 @@ async def authenticate(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
 ) -> dict:
-    """Authenticate via API key; return tenant context dict."""
-    from config.settings_pydantic import settings
+    """Authenticate via API key; return tenant context dict.
+    
+    Optimized: settings are cached in app.state during startup to avoid
+    repeated module imports on every request.
+    """
+    # Use cached settings from app.state (set during startup)
+    # Fallback to direct import only if not available (e.g., in tests)
+    app_state = getattr(request.app.state, 'auth_settings', None)
+    if app_state:
+        super_admin_key = app_state.get('super_admin_key')
+        multi_tenant_enabled = app_state.get('multi_tenant_enabled', False)
+        tenant_id_header = app_state.get('tenant_id_header', 'X-Tenant-ID')
+    else:
+        # Fallback for tests or when app.state is not populated
+        from config.settings_pydantic import settings
+        super_admin_key = settings.tenant.super_admin_api_key
+        multi_tenant_enabled = settings.tenant.multi_tenant_enabled
+        tenant_id_header = settings.tenant.tenant_id_header
 
     if not credentials:
         raise HTTPException(status_code=401, detail="Missing API key")
 
     api_key = credentials.credentials
-    tenant_id_header = request.headers.get(settings.tenant.tenant_id_header)
+    tenant_id_from_header = request.headers.get(tenant_id_header)
 
     # ----------------------------------------------------------------
     # Single-tenant mode
     # ----------------------------------------------------------------
-    if not settings.tenant.multi_tenant_enabled:
-        expected = settings.tenant.super_admin_api_key
-        if expected and api_key == expected:
+    if not multi_tenant_enabled:
+        if super_admin_key and api_key == super_admin_key:
             return {
                 "tenant_id": "super_admin",
                 "api_key": api_key,
@@ -49,8 +64,7 @@ async def authenticate(
         raise HTTPException(status_code=503, detail="Auth service unavailable (no redis)")
 
     # Super-admin bypass
-    super_key = settings.tenant.super_admin_api_key
-    if super_key and api_key == super_key:
+    if super_admin_key and api_key == super_admin_key:
         return {
             "tenant_id": "super_admin",
             "api_key": api_key,

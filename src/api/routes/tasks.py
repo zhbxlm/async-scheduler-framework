@@ -4,6 +4,7 @@ aligned with docs/deepwiki-reference/API 参考.md + 任务执行.md
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,8 @@ from src.models.task import (
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +137,24 @@ async def list_tasks(
     "/",
     response_model=TaskCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Submit task",
+    summary="Submit a new task",
+    description="""
+    Create and enqueue a new asynchronous task.
+    
+    **Idempotency**: If `idempotency_key` is provided, duplicate requests with the
+    same key will return the existing task (no new task created).
+    
+    **Priority**: Tasks are processed in priority order (1=highest, 5=lowest).
+    
+    **Queue Position**: The returned `queue_position` indicates the task's
+    position in the queue for wait time estimation.
+    """,
+    responses={
+        201: {"description": "Task created successfully"},
+        409: {"description": "Duplicate task (idempotency_key conflict)"},
+        422: {"description": "Invalid task data"},
+        503: {"description": "Queue capacity exceeded or service unavailable"},
+    },
 )
 async def create_task(
     req: TaskCreate,
@@ -179,11 +199,36 @@ async def create_task(
             **kwargs,
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid task data: {e}",
+        )
+    except DuplicateTaskError as e:
+        # Idempotency key conflict - return existing task info
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+    except QueueCapacityError as e:
+        # Queue at capacity
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Queue capacity exceeded for capability '{req.capability}': {e}. Please retry later.",
+        )
     except Exception as e:
+        # Log the actual error for debugging
+        logger.error(
+            "Task creation failed",
+            extra={
+                "task_id": req.task_id,
+                "capability": req.capability,
+                "error_type": type(e).__name__,
+                "error_detail": str(e),
+            }
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Task creation failed: {e}",
+            detail="Task creation failed unexpectedly. Please retry.",
         )
 
     # Map result to TaskCreateResponse

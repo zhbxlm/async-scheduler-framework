@@ -63,7 +63,8 @@ class ServiceContainer:
         from src.platform.cron_scheduler import CronScheduler
 
         c = cls()
-        c.redis_client = create_redis_client(settings.redis.url or None)
+        redis_url = str(settings.redis.url) if settings.redis.url else None
+        c.redis_client = create_redis_client(redis_url)
 
         # task-api requires MySQL
         if settings.mysql.url:
@@ -145,7 +146,8 @@ class ServiceContainer:
         from src.platform.queue_manager import QueueManager
 
         c = cls()
-        c.redis_client = create_redis_client(settings.redis.url or None)
+        redis_url = str(settings.redis.url) if settings.redis.url else None
+        c.redis_client = create_redis_client(redis_url)
 
         # ops-api does NOT initialize MySQL engine
 
