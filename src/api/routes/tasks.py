@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from src.api.dependencies import DbSession, get_tenant_context, get_db_session
@@ -135,6 +135,7 @@ async def list_tasks(
 async def create_task(
     req: TaskCreate,
     request: Request,
+    db: DbSession,
     ctx=Depends(get_tenant_context),
 ) -> TaskCreateResponse:
     """Create and enqueue a task via TaskCreator."""
@@ -147,10 +148,8 @@ async def create_task(
         )
 
     # Idempotency check (still in DB for consistency)
-    from src.api.dependencies import get_db_session
-    db = next(get_db_session())
+    from src.models.task import TaskRecord
     if req.idempotency_key:
-        from src.models.task import TaskRecord
         existing = (
             db.query(TaskRecord)
             .filter(
@@ -175,7 +174,6 @@ async def create_task(
         "input_data": req.input_data,
         "metadata": req.metadata,
         "callback_url": req.callback_url,
-        "idempotency_key": req.idempotency_key,
         "timeout_seconds": req.timeout_seconds,
         "max_retries": req.max_retries,
         "cron_expr": req.cron_expr,

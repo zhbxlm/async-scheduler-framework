@@ -86,6 +86,16 @@ def task_client():
     app.dependency_overrides[get_db_session] = fake_db
 
     with TestClient(app) as client:
+        # Mock task_creator for the new POST /tasks route
+        from unittest.mock import AsyncMock
+        mock_task_creator = AsyncMock()
+        mock_task_creator.create_task.return_value = {
+            "task_id": "task-mocked-123",
+            "accepted": True,
+            "queue_position": 0,
+            "pending_count": 0,
+        }
+        app.state.task_creator = mock_task_creator
         yield client, TestSession
 
 
@@ -99,15 +109,18 @@ def test_list_tasks_empty(task_client):
 
 
 def test_create_task(task_client):
-    client, _, mock_task_creator = task_client
+    client, TestSession = task_client
     resp = client.post("/api/v1/tasks/", json={
         "task_type": "video_gen",
+        "priority": "normal",
         "input_data": {"file": "foo.mp4"},
     })
+    print(f"DEBUG: status={resp.status_code}, body={resp.text}")
     assert resp.status_code == 201
     data = resp.json()
-    assert data["task_id"].startswith("task-")
-    assert data["status"] == "pending"
+    # task_creator returns mocked task_id
+    assert data["task_id"] == "task-mocked-123"
+    assert data["status"] == "queued"
 
 
 def test_get_task_detail(task_client):
