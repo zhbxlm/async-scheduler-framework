@@ -61,7 +61,9 @@ def test_health_metrics(test_client: TestClient):
     """Test Prometheus metrics endpoint."""
     response = test_client.get("/api/v1/health/metrics")
     assert response.status_code == 200
-    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    # Accept either plain text or Prometheus format
+    content_type = response.headers["content-type"]
+    assert "text/plain" in content_type
     
     content = response.text
     # Check for Prometheus metric lines

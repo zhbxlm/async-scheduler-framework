@@ -17,6 +17,7 @@ from typing import Any
 import redis.asyncio as aioredis
 
 from src.platform import queue_keys as qk
+from src.common.metrics import record_task_creation, record_task_completion
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,18 @@ class QueueManager:
         pos, cnt = result
         # register capability
         await self._r.sadd(_CAPABILITIES_KEY, capability)
+        
+        # Record task creation metric
+        priority_map_reverse = {
+            1: "very_high",
+            2: "high",
+            3: "normal",
+            4: "low",
+            5: "tide"
+        }
+        priority_str = priority_map_reverse.get(priority, "normal")
+        record_task_creation(capability, priority_str)
+        
         return {"accepted": True, "queue_position": int(pos), "pending_count": int(cnt)}
 
     async def dequeue_ready(self, capability: str) -> str | None:

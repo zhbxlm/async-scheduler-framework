@@ -127,29 +127,38 @@ async def readiness_probe(request: Request) -> Dict[str, Any]:
 @router.get("/metrics", response_class=Response)
 async def metrics_prometheus() -> Response:
     """Prometheus metrics endpoint (text format)."""
-    # Simple metrics for now, can be expanded with prometheus_client
+    from src.common.metrics import get_metrics_response, CONTENT_TYPE_LATEST
+    
     process = psutil.Process()
     
-    metrics = []
-    metrics.append(f"# HELP scheduler_uptime_seconds Uptime of scheduler service")
-    metrics.append(f"# TYPE scheduler_uptime_seconds gauge")
-    metrics.append(f"scheduler_uptime_seconds {time.time() - _start_time}")
+    # Combine existing simple metrics with Prometheus metrics
+    simple_metrics = []
+    simple_metrics.append(f"# HELP scheduler_uptime_seconds Uptime of scheduler service")
+    simple_metrics.append(f"# TYPE scheduler_uptime_seconds gauge")
+    simple_metrics.append(f"scheduler_uptime_seconds {time.time() - _start_time}")
     
-    metrics.append(f"# HELP scheduler_request_count Total HTTP requests")
-    metrics.append(f"# TYPE scheduler_request_count counter")
-    metrics.append(f"scheduler_request_count {_request_count}")
+    simple_metrics.append(f"# HELP scheduler_request_count Total HTTP requests")
+    simple_metrics.append(f"# TYPE scheduler_request_count counter")
+    simple_metrics.append(f"scheduler_request_count {_request_count}")
     
-    metrics.append(f"# HELP scheduler_memory_rss_bytes Resident memory usage")
-    metrics.append(f"# TYPE scheduler_memory_rss_bytes gauge")
-    metrics.append(f"scheduler_memory_rss_bytes {process.memory_info().rss}")
+    simple_metrics.append(f"# HELP scheduler_memory_rss_bytes Resident memory usage")
+    simple_metrics.append(f"# TYPE scheduler_memory_rss_bytes gauge")
+    simple_metrics.append(f"scheduler_memory_rss_bytes {process.memory_info().rss}")
     
-    metrics.append(f"# HELP scheduler_cpu_seconds_total CPU time used")
-    metrics.append(f"# TYPE scheduler_cpu_seconds_total counter")
+    simple_metrics.append(f"# HELP scheduler_cpu_seconds_total CPU time used")
+    simple_metrics.append(f"# TYPE scheduler_cpu_seconds_total counter")
     cpu_times = process.cpu_times()
-    metrics.append(f"scheduler_cpu_seconds_total {cpu_times.user + cpu_times.system}")
+    simple_metrics.append(f"scheduler_cpu_seconds_total {cpu_times.user + cpu_times.system}")
     
-    content = "\n".join(metrics)
-    return Response(content=content, media_type="text/plain")
+    # Get Prometheus metrics
+    prometheus_data = get_metrics_response()
+    
+    # Combine both
+    content = "\n".join(simple_metrics) + "\n"
+    if prometheus_data:
+        content += prometheus_data.decode('utf-8')
+    
+    return Response(content=content, media_type=CONTENT_TYPE_LATEST)
 
 
 # Health check endpoints for external services
