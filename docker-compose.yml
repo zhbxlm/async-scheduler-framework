@@ -1,9 +1,9 @@
 # docker-compose.yml — async-scheduler-framework
 # Usage:
-#   docker compose up                    # start all services
-#   docker compose up api task-api       # start specific services
-#   docker compose --profile dev up      # start with dev tools (Jaeger, etc.)
-#   docker compose run --rm test         # run test suite
+#   docker compose up                              # start all services
+#   docker compose up ops-api task-api           # start specific API services
+#   docker compose --profile dev up               # start with dev tools (Jaeger, etc.)
+#   docker compose run --rm test                  # run test suite
 
 version: "3.9"
 
@@ -35,17 +35,17 @@ x-api-common: &api-common
 # ---- Services --------------------------------------------------
 services:
 
-  # Main API (scheduling, registry, etc.)
-  api:
+  # Ops API (port 8000, Redis-only registries, CronScheduler)
+  ops-api:
     <<: *api-common
-    container_name: scheduler-api
+    container_name: scheduler-ops-api
     command: ["python", "-m", "uvicorn", "src.main:app",
               "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${OPS_API_PORT:-8000}:8000"
     environment:
       <<: *common-env
-      BACKGROUND__RECONCILE__ENABLED: "true"
+      BACKGROUND__RECONCILE__ENABLED: "false"
       BACKGROUND__CRON__ENABLED: "true"
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -56,7 +56,27 @@ services:
       start_period: 20s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.scheduler-api.rule=Host(`scheduler.example.com`)"
+      - "traefik.http.routers.scheduler-ops-api.rule=Host(`scheduler.example.com`)"
+
+  # Task API (port 8001, MySQL+Redis, TaskReconciler)
+  task-api:
+    <<: *api-common
+    container_name: scheduler-task-api
+    command: ["python", "-m", "uvicorn", "src.main_tasks:app",
+              "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
+    ports:
+      - "${TASK_API_PORT:-8001}:8001"
+    environment:
+      <<: *common-env
+      BACKGROUND__RECONCILE__ENABLED: "true"
+      BACKGROUND__CRON__ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
 
   # ---- Infrastructure ----------------------------------------

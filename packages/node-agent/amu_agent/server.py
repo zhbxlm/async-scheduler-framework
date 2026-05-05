@@ -7,10 +7,8 @@ Ray cluster join/leave, deployment package management.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -33,6 +31,7 @@ from amu_agent._models import (
     UndeployRequest,
 )
 from amu_agent._remote_fetcher import RemoteCodeFetcher
+from amu_agent.ray_manager import ray_start, ray_stop
 
 logger = logging.getLogger(__name__)
 
@@ -129,55 +128,6 @@ async def release_ownership(redis_client: Any, node_id: str, instance_id: str) -
     key = _OWNER_KEY.format(node_id=node_id)
     result = await redis_client.eval(_LUA_RELEASE, 1, key, instance_id)
     return result in (b"ok", "ok")
-
-
-# ---------------------------------------------------------------------------
-# Ray process manager
-# ---------------------------------------------------------------------------
-
-def ray_start(head_address: str, custom_resources: dict[str, float] | None = None) -> bool:
-    """Start Ray worker and join cluster. Idempotent."""
-    if _ray_is_running():
-        logger.info("ray_start: Ray already running, skip")
-        return True
-    cmd = ["ray", "start", f"--address={head_address}"]
-    if custom_resources:
-        res_str = json.dumps(custom_resources)
-        cmd += [f"--resources={res_str}"]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            logger.error("ray_start failed: %s", result.stderr)
-            return False
-        # Verify
-        verify = subprocess.run(["ray", "status"], capture_output=True, text=True, timeout=10)
-        return verify.returncode == 0
-    except Exception as e:
-        logger.error("ray_start exception: %s", e)
-        return False
-
-
-def ray_stop() -> bool:
-    """Stop local Ray worker. Idempotent."""
-    if not _ray_is_running():
-        return True
-    try:
-        result = subprocess.run(["ray", "stop"], capture_output=True, text=True, timeout=30)
-        return result.returncode == 0
-    except Exception as e:
-        logger.error("ray_stop exception: %s", e)
-        return False
-
-
-def _ray_is_running() -> bool:
-    """Check if Ray is running."""
-    try:
-        r = subprocess.run(
-            ["ray", "status"], capture_output=True, text=True, timeout=5
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
 
 
 # ---------------------------------------------------------------------------

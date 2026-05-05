@@ -27,12 +27,11 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "httpx>=0.26",
     "pydantic>=2.6",
+    "ray>=2.54",
 ]
 
 [project.optional-dependencies]
-ray = ["ray>=2.54"]
 redis = ["redis>=5.0"]
-all = ["ray>=2.54", "redis>=5.0"]
 
 [project.scripts]
 amu-agent = "amu_agent.server:main"

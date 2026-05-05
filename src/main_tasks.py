@@ -1,6 +1,7 @@
-"""Ops API server entry point (port 8000).
+"""Task API server entry point (port 8001).
 
-Handles operational management, Redis-only registries and CronScheduler.
+Handles task submission, query, result retrieval and cancellation.
+Depends on MySQL (TaskRecord ORM) + Redis. Runs TaskReconciler background loop.
 """
 from __future__ import annotations
 
@@ -21,14 +22,9 @@ from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_traci
 from src.common.logging_config import configure_logging
 from src.api.middleware import RequestIDMiddleware
 
-# Structured logging (JSON in production, plain text in dev)
 configure_logging()
+setup_tracing(service_name="scheduler-task-api", service_version="1.0.0")
 
-# Initialise tracing before creating the app (spans start from here)
-setup_tracing(service_name="scheduler-ops-api", service_version="1.0.0")
-
-
-# ── Lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -38,29 +34,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.common.container import ServiceContainer, set_container
     from src.common.lifecycle import (
         get_lifecycle_manager,
-        CronSchedulerResource,
+        TaskReconcilerResource,
     )
 
     # init shared http client pool
     from src.common.http_client import init_http_client
     init_http_client()
 
-    container = await ServiceContainer.build_ops_api(settings)
+    container = await ServiceContainer.build_task_api(settings)
     set_container(container)
 
     # Mount onto app.state so route helpers can access via request.app.state
     app.state.redis = container.redis_client
-    app.state.capability_registry = container.capability_registry
-    app.state.cluster_registry = container.cluster_registry
-    app.state.node_registry = container.node_registry
-    app.state.schedule_registry = container.schedule_registry
     app.state.tenant_registry = container.tenant_registry
-    app.state.dag_loader = container.dag_loader
     app.state.queue_manager = container.queue_manager
+    app.state.task_creator = container.task_creator
+    app.state.task_reconciler = container.task_reconciler
+    app.state.task_completion_node = container.task_completion_node
 
     manager = get_lifecycle_manager()
-    if settings.background.cron.enabled and container.cron_scheduler:
-        manager.register_resource(CronSchedulerResource(container.cron_scheduler))
+    if settings.background.reconcile.enabled and container.task_reconciler:
+        manager.register_resource(TaskReconcilerResource(container.task_reconciler))
     await manager.start_all()
 
     yield
@@ -76,9 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # ── App ───────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Ray Async Ops API",
+    title="Ray Async Task API",
     version="1.0.0",
-    description="Operational management API - Redis-only registries, CronScheduler.",
+    description="Task submission and query API. Requires MySQL + Redis.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -95,26 +89,11 @@ app.add_exception_handler(ExternalServiceError, handle_external_service_error)
 
 # ── Routes ────────────────────────────────────────────────────────────────
 
-from src.api.routes.capabilities import router as capabilities_router
-from src.api.routes.clusters import router as clusters_router
-from src.api.routes.dags import router as dags_router
-from src.api.routes.nodes import router as nodes_router
-from src.api.routes.ops import router as ops_router
-from src.api.routes.schedules import router as schedules_router
-from src.api.routes.tenants import router as tenants_router
+from src.api.routes.tasks import router as tasks_router
 from src.api.routes.health import router as health_router
 
-for _r in (
-    capabilities_router,
-    clusters_router,
-    dags_router,
-    nodes_router,
-    ops_router,
-    schedules_router,
-    tenants_router,
-    health_router,
-):
-    app.include_router(_r)
+app.include_router(tasks_router)
+app.include_router(health_router)
 
 
 # ── Legacy health endpoint ────────────────────────────────────────────────
@@ -126,4 +105,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("src.main_tasks:app", host="0.0.0.0", port=8001, reload=False)
