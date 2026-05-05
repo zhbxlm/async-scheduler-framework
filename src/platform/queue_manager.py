@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_QUEUE_DEPTH = 1000
 _DEFAULT_MAX_CONCURRENT = 8
-_DEFAULT_TTL = 3600
+_DEFAULT_MAX_TTL = 3600
 _DEQUEUE_SCAN_LIMIT = 50
 _CAPABILITIES_KEY = "queue:capabilities:registry"
+_STATS_CACHE_KEY = "queue:stats:cached"
+_STATS_REFRESH_INTERVAL = 10.0  # seconds
 
 # ---------------------------------------------------------------------------
 # Lua scripts
@@ -143,7 +145,7 @@ class QueueManager:
         circuit_breaker: Any | None = None,
         default_max_queue_depth: int = _DEFAULT_MAX_QUEUE_DEPTH,
         default_max_concurrent: int = _DEFAULT_MAX_CONCURRENT,
-        ttl: int = _DEFAULT_TTL,
+        ttl: int = _DEFAULT_MAX_TTL,
         dequeue_scan_limit: int = _DEQUEUE_SCAN_LIMIT,
     ) -> None:
         self._r = redis_client
@@ -160,6 +162,11 @@ class QueueManager:
         self._adjust_script = self._r.register_script(_LUA_ADJUST_CONCURRENT)
         self._acquire_slot_script = self._r.register_script(_LUA_ACQUIRE_SLOT)
         self._recover_script = self._r.register_script(_LUA_RECOVER_CONCURRENT)
+        
+        # Stats cache state
+        self._stats_cache: Dict[str, dict] = {}
+        self._stats_cache_time: float = 0.0
+        self._stats_cache_ttl: float = _STATS_REFRESH_INTERVAL
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,6 +209,9 @@ class QueueManager:
         priority_str = priority_map_reverse.get(priority, "normal")
         record_task_creation(capability, priority_str)
         
+        # Invalidate stats cache after enqueue (batch refresh will repopulate)
+        await self.invalidate_stats_cache()
+        
         return {"accepted": True, "queue_position": int(pos), "pending_count": int(cnt)}
 
     async def dequeue_ready(self, capability: str) -> str | None:
@@ -224,19 +234,21 @@ class QueueManager:
         return bool(removed)
 
     async def complete(self, capability: str, task_id: str) -> bool:
-        """Mark task completed — releases running slot."""
+        """"Mark task completed — releases running slot."""
         keys = [qk.running(capability), qk.stats(capability)]
         await self._complete_script(keys=keys, args=[task_id, "total_completed"])
         if self._cb:
             await self._cb.record_success(capability)
+        await self.invalidate_stats_cache()
         return True
 
     async def fail(self, capability: str, task_id: str) -> bool:
-        """Mark task failed — releases running slot."""
+        """"Mark task failed — releases running slot."""
         keys = [qk.running(capability), qk.stats(capability)]
         await self._complete_script(keys=keys, args=[task_id, "total_failed"])
         if self._cb:
             await self._cb.record_failure(capability)
+        await self.invalidate_stats_cache()
         return True
 
     async def release_running_slot(self, capability: str, task_id: str) -> bool:
@@ -356,6 +368,93 @@ class QueueManager:
         if caps:
             await self._r.sadd(_CAPABILITIES_KEY, *caps)
         return list(caps)
+
+    # ------------------------------------------------------------------
+    # Cached stats API (avoids O(n) capability scans on every call)
+    # ------------------------------------------------------------------
+
+    async def _refresh_stats_cache(self) -> None:
+        """"Refresh the in-memory stats cache from Redis.
+        
+        This is O(1) per capability once we have the capability list,
+        instead of O(n) capabilities on every get_queue_stats call.
+        """
+        capabilities = await self.discover_queue_capabilities()
+        if not capabilities:
+            self._stats_cache = {}
+            return
+        
+        # Batch fetch all capabilities stats in one pipeline
+        pipe = self._r.pipeline()
+        cap_keys: Dict[str, List[str]] = {}
+        for cap in capabilities:
+            cap_keys[cap] = [
+                qk.pending(cap),
+                qk.running(cap),
+                qk.stats(cap),
+            ]
+            pipe.zcard(qk.pending(cap))
+            pipe.zcard(qk.running(cap))
+            pipe.hgetall(qk.stats(cap))
+        
+        results = await pipe.execute()
+        
+        # Parse results into cache
+        new_cache: Dict[str, dict] = {}
+        for i, cap in enumerate(capabilities):
+            pending = int(results[i * 3] or 0)
+            running = int(results[i * 3 + 1] or 0)
+            stats_raw = results[i * 3 + 2] or {}
+            stats = {k.decode(): int(v) for k, v in stats_raw.items()} if stats_raw else {}
+            
+            new_cache[cap] = {
+                "capability": cap,
+                "pending": pending,
+                "running": running,
+                "total_enqueued": stats.get("total_enqueued", 0),
+                "total_dequeued": stats.get("total_dequeued", 0),
+                "total_completed": stats.get("total_completed", 0),
+                "total_failed": stats.get("total_failed", 0),
+            }
+        
+        self._stats_cache = new_cache
+        self._stats_cache_time = time.time()
+        logger.debug("Stats cache refreshed: %d capabilities", len(new_cache))
+
+
+    async def get_queue_stats(self, capability: str) -> dict:
+        """Get cached stats for a capability (preferred over direct Redis queries).
+        
+        Returns cached data if available and not stale.
+        Use this for dashboard/monitoring to avoid O(n) Redis calls.
+        """
+        now = time.time()
+        if not self._stats_cache or (now - self._stats_cache_time) > self._stats_cache_ttl:
+            await self._refresh_stats_cache()
+        
+        return self._stats_cache.get(capability, {
+            "capability": capability,
+            "pending": 0,
+            "running": 0,
+            "total_enqueued": 0,
+            "total_dequeued": 0,
+            "total_completed": 0,
+            "total_failed": 0,
+        })
+
+    async def get_all_queue_stats(self) -> Dict[str, dict]:
+        """Get cached stats for all capabilities.
+        
+        Returns full stats cache, refreshing if stale.
+        """
+        now = time.time()
+        if not self._stats_cache or (now - self._stats_cache_time) > self._stats_cache_ttl:
+            await self._refresh_stats_cache()
+        return self._stats_cache
+
+    async def invalidate_stats_cache(self) -> None:
+        """Invalidate stats cache (call after enqueue/dequeue/complete/fail)."""
+        self._stats_cache_time = 0.0  # Force refresh on next call
 
     # dequeue alias for task_consumer compatibility
     async def dequeue(self, capability: str) -> dict | None:
