@@ -124,9 +124,20 @@ def test_create_task(task_client):
 
 
 def test_get_task_detail(task_client):
-    client, _ = task_client
-    r = client.post("/api/v1/tasks/", json={"task_type": "get_test"})
+    client, TestSession = task_client
+    r = client.post("/api/v1/tasks/", json={"task_type": "get_test", "priority": "normal", "input_data": {}})
     task_id = r.json()["task_id"]
+    # 因为 task_creator 是 mock 的，没有实际写入 DB，需要手动插入一条记录
+    from src.models.task import TaskRecord, TaskStatus
+    with TestSession() as db:
+        task = TaskRecord(
+            task_id=task_id,
+            tenant_id="t1",
+            task_type="get_test",
+            status=TaskStatus.QUEUED,
+        )
+        db.add(task)
+        db.commit()
     resp = client.get(f"/api/v1/tasks/{task_id}")
     assert resp.status_code == 200
     assert resp.json()["task_id"] == task_id

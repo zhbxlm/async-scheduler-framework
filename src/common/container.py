@@ -14,7 +14,8 @@ from typing import Optional, Any
 class ServiceContainer:
     """Assembles and holds all platform service singletons.
 
-    Use ``ServiceContainer.build(settings)`` as the factory.
+    Use ``ServiceContainer.build_task_api(settings)`` for task-api (port 8001)
+    or ``ServiceContainer.build_ops_api(settings)`` for ops-api (port 8000).
     Callers access services via ``get_container()`` or directly
     through ``request.app.state.*`` in route handlers.
     """
@@ -37,10 +38,84 @@ class ServiceContainer:
 
     @classmethod
     async def build(cls, settings) -> "ServiceContainer":
-        """Build all services from configuration.
+        """DEPRECATED: Use `build_task_api` or `build_ops_api` instead.
 
-        This is the single place where service wiring happens.
+        This method is kept for backward compatibility but will be removed.
         """
+        import warnings
+        warnings.warn(
+            "ServiceContainer.build() is deprecated; "
+            "use build_task_api() or build_ops_api() for split deployments.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        # Keep original implementation for now
+        from src.common.redis_client import create_redis_client
+        from src.common.async_db import init_async_engine, get_async_db
+        from src.platform.capability_registry import CapabilityRegistry
+        from src.platform.cluster_registry import ClusterRegistry
+        from src.platform.node_registry import NodeRegistry
+        from src.platform.schedule_registry import ScheduleRegistry
+        from src.platform.tenant_registry import TenantRegistry
+        from src.platform.dag_loader import DagLoader
+        from src.platform.queue_manager import QueueManager
+        from src.platform.task_creator import TaskCreator
+        from src.platform.task_reconciler import TaskReconciler
+        from src.platform.cron_scheduler import CronScheduler
+
+        c = cls()
+        c.redis_client = create_redis_client(settings.redis.url or None)
+
+        if settings.mysql.url:
+            init_async_engine(settings.mysql.url)
+
+        # Registries
+        c.capability_registry = CapabilityRegistry(c.redis_client)
+        c.cluster_registry = ClusterRegistry(c.redis_client)
+        c.node_registry = NodeRegistry(c.redis_client)
+        c.schedule_registry = ScheduleRegistry(c.redis_client)
+        c.tenant_registry = TenantRegistry(c.redis_client)
+
+        # Core platform
+        c.dag_loader = DagLoader(redis_client=c.redis_client)
+        c.queue_manager = QueueManager(c.redis_client)
+
+        db_factory = get_async_db if settings.mysql.url else None
+
+        c.task_creator = TaskCreator(
+            redis_client=c.redis_client,
+            queue_manager=c.queue_manager,
+            db_session_factory=db_factory,
+        )
+
+        rcfg = settings.background.reconcile
+        c.task_reconciler = TaskReconciler(
+            redis_client=c.redis_client,
+            db_session_factory=db_factory,
+            queue_manager=c.queue_manager,
+            interval_seconds=rcfg.interval_seconds,
+            stuck_max_per_tick=rcfg.stuck_max_per_tick,
+            stuck_task_max_age_seconds=rcfg.stuck_task_max_age_seconds,
+            batch_size=rcfg.batch_size,
+        )
+
+        from src.platform.task_completion_node import TaskCompletionNode
+        c.task_completion_node = TaskCompletionNode(
+            db_session_factory=get_async_db if settings.mysql.url else None,
+            redis_client=c.redis_client,
+        )
+
+        ccfg = settings.background.cron
+        cron_interval = getattr(ccfg, "poll_interval", 60)
+
+        c.cron_scheduler = CronScheduler(
+            redis_client=c.redis_client,
+            schedule_repository=c.schedule_registry,
+            task_creator=c.task_creator,
+            poll_interval=float(cron_interval),
+        )
+
+        return c
         from src.common.redis_client import create_redis_client
         from src.common.async_db import init_async_engine, get_async_db
         from src.platform.capability_registry import CapabilityRegistry
