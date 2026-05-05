@@ -6,7 +6,7 @@ Cron schedule CRUD with:
 - list_due() for CronScheduler
 """
 from __future__ import annotations
-import json
+import orjson
 import logging
 import time
 from datetime import datetime, timezone
@@ -75,29 +75,52 @@ class ScheduleRegistry(BaseRedisRegistry):
         return bool(result)
 
     async def list_due(self, as_of: datetime) -> list[Any]:
-        """Return all enabled schedules whose next_fire_at <= as_of."""
+        """Return all enabled schedules whose next_fire_at <= as_of.
+        
+        Optimised: pipeline batch-fetches all schedules in one Redis round-trip
+        instead of O(tenants × schedules) individual GETs.
+        """
         due = []
         tenant_ids = await self.list_all_tenants()
+
+        # Phase 1: collect all schedule IDs across all tenants (no Redis calls)
+        schedule_keys: list[tuple[str, str]] = []  # [(tenant, sid), ...]
         for tenant_id in tenant_ids:
-            schedule_ids = await self.list(tenant_id)
-            for sid in schedule_ids:
-                raw = await self._r.get(self._make_key(tenant_id, sid))
-                if not raw:
-                    continue
-                data = json.loads(raw)
-                if not data.get("enabled", True):
-                    continue
-                nf = data.get("next_fire_at")
-                if not nf:
-                    continue
-                try:
-                    nf_dt = datetime.fromisoformat(nf)
-                    if nf_dt.tzinfo is None:
-                        nf_dt = nf_dt.replace(tzinfo=timezone.utc)
-                    if nf_dt <= as_of:
-                        due.append(_ScheduleProxy(data))
-                except (ValueError, TypeError):
-                    logger.warning("ScheduleRegistry: bad next_fire_at=%s sid=%s", nf, sid)
+            sids = await self.list(tenant_id)
+            for sid in sids:
+                schedule_keys.append((tenant_id, sid))
+
+        if not schedule_keys:
+            return due
+
+        # Phase 2: batch GET all schedules in one pipeline
+        pipe = self._r.pipeline()
+        for tid, sid in schedule_keys:
+            pipe.get(self._make_key(tid, sid))
+        raws = await pipe.execute()
+
+        # Phase 3: parse + filter locally (no more Redis calls)
+        for (tid, sid), raw in zip(schedule_keys, raws):
+            if not raw:
+                continue
+            try:
+                data = orjson.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("ScheduleRegistry: bad JSON for %s:%s", tid, sid)
+                continue
+            if not data.get("enabled", True):
+                continue
+            nf = data.get("next_fire_at")
+            if not nf:
+                continue
+            try:
+                nf_dt = datetime.fromisoformat(nf)
+                if nf_dt.tzinfo is None:
+                    nf_dt = nf_dt.replace(tzinfo=timezone.utc)
+                if nf_dt <= as_of:
+                    due.append(_ScheduleProxy(data))
+            except (ValueError, TypeError):
+                logger.warning("ScheduleRegistry: bad next_fire_at=%s sid=%s", nf, sid)
         return due
 
     async def update_next_fire(self, schedule_id: str, next_fire: datetime) -> None:

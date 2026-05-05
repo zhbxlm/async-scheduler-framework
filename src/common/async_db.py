@@ -1,8 +1,17 @@
-"""Async database session management for FastAPI."""
+"""Async database session management for FastAPI.
+
+Design notes:
+- init_async_engine() returns (engine, session_factory) — no module-level globals
+- engine + session_factory are stored in app.state during lifespan startup
+- get_async_db(session_factory) provides session via injected factory
+- async_dispose_engine(engine) is called during shutdown to cleanup connections
+
+For testing, call init_async_engine() directly and pass the session_factory.
+"""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -14,24 +23,22 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
-_async_engine: Optional[AsyncEngine] = None
-_AsyncSessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
 
+def init_async_engine(url: str, **kwargs) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    """Initialize async SQLAlchemy engine and return (engine, session_factory).
 
-def init_async_engine(url: str, **kwargs) -> None:
-    """Initialize async SQLAlchemy engine.
-    
     Args:
         url: Database URL (must start with aiomysql:// or asyncpg:// for async)
               Can also be a Pydantic DSN object which will be converted to string.
         **kwargs: Additional engine options
+
+    Returns:
+        Tuple of (AsyncEngine, async_sessionmaker) — caller stores these in app.state.
     """
-    global _async_engine, _AsyncSessionLocal
-    
     # Convert Pydantic DSN objects to string
     if hasattr(url, '__str__'):
         url = str(url)
-    
+
     # Convert sync URL to async if needed
     if url.startswith("mysql://"):
         url = url.replace("mysql://", "aiomysql://", 1)
@@ -40,39 +47,34 @@ def init_async_engine(url: str, **kwargs) -> None:
         pass
     elif url.startswith("postgresql://"):
         url = url.replace("postgresql://", "asyncpg://", 1)
-    
+
     # Ensure pool settings for production
     kwargs.setdefault("pool_pre_ping", True)
     kwargs.setdefault("pool_recycle", 3600)
     kwargs.setdefault("pool_size", 20)
     kwargs.setdefault("max_overflow", 10)
-    
-    _async_engine = create_async_engine(url, **kwargs)
-    _AsyncSessionLocal = async_sessionmaker(
-        bind=_async_engine,
+
+    engine = create_async_engine(url, **kwargs)
+    session_factory = async_sessionmaker(
+        bind=engine,
         class_=AsyncSession,
         expire_on_commit=False,
     )
-
-
-def get_async_engine() -> Optional[AsyncEngine]:
-    """Return the async engine, or None if not initialised."""
-    return _async_engine
+    return engine, session_factory
 
 
 @asynccontextmanager
-async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_db(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[AsyncSession, None]:
     """Async context manager for database sessions.
-    
+
     Usage:
-        async with get_async_db() as session:
+        async with get_async_db(session_factory) as session:
             result = await session.execute(query)
             await session.commit()
     """
-    if _AsyncSessionLocal is None:
-        raise RuntimeError("Async session factory not initialized. Call init_async_engine() first.")
-    
-    session: AsyncSession = _AsyncSessionLocal()
+    session: AsyncSession = session_factory()
     try:
         yield session
         await session.commit()
@@ -83,10 +85,6 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
-async def async_dispose_engine() -> None:
+async def async_dispose_engine(engine: AsyncEngine) -> None:
     """Dispose async engine (call during shutdown)."""
-    global _async_engine, _AsyncSessionLocal
-    if _async_engine:
-        await _async_engine.dispose()
-        _async_engine = None
-        _AsyncSessionLocal = None
+    await engine.dispose()

@@ -11,7 +11,7 @@ Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import time
 from typing import Any
@@ -70,6 +70,8 @@ return 'ok'
             ttl_seconds=0,      # nodes don't expire; use heartbeat detection
         )
         self._lease_ttl_ms = lease_ttl_ms
+        # Pre-register Lua script to avoid sending source on every call
+        self._reserve_script = redis_client.register_script(self._LUA_RESERVE)
 
     # ------------------------------------------------------------------
     # Registration & heartbeat
@@ -132,18 +134,31 @@ return 'ok'
 
     @log_errors(log_level="ERROR", raise_exception=False)
     async def list_all(self) -> list[Any]:
-        """Return all registered nodes."""
-        from src.models.node import NodeInfo  # lazy import
-        node_ids = await self._r.smembers(_NODE_INDEX_KEY)
+        """Return all registered nodes.
+        
+        Optimised: pipeline batch-fetches all nodes in one Redis round-trip
+        instead of O(n) individual GETs.
+        """
+        from src.models.node import NodeInfo
+        raw_ids = await self._r.smembers(_NODE_INDEX_KEY)
+        if not raw_ids:
+            return []
+
+        # Decode node IDs and batch GET in one pipeline
+        nids = [n.decode() if isinstance(n, bytes) else n for n in raw_ids]
+        pipe = self._r.pipeline()
+        for nid in nids:
+            pipe.get(self._make_key(_GLOBAL_TENANT, nid))
+        raws = await pipe.execute()
+
         nodes: list[Any] = []
-        for raw_nid in node_ids:
-            nid = raw_nid.decode() if isinstance(raw_nid, bytes) else raw_nid
-            data = await self.get(_GLOBAL_TENANT, nid)
-            if data:
-                try:
-                    nodes.append(NodeInfo.model_validate(data))
-                except Exception:
-                    pass
+        for raw in raws:
+            if not raw:
+                continue
+            try:
+                nodes.append(NodeInfo.model_validate(orjson.loads(raw)))
+            except Exception:
+                pass
         return nodes
 
     # ------------------------------------------------------------------
@@ -181,11 +196,9 @@ return 'ok'
         """Atomically transition node IDLE → RESERVED. Returns True on success."""
         key = self._make_key(_GLOBAL_TENANT, node_id)
         lease_key = _LEASE_KEY.format(node_id=node_id)
-        result = await self._r.eval(
-            self._LUA_RESERVE,
-            2,
-            key, lease_key,
-            cluster_id, str(self._lease_ttl_ms), str(time.time()),
+        result = await self._reserve_script(
+            keys=[key, lease_key],
+            args=[cluster_id, str(self._lease_ttl_ms), str(time.time())],
         )
         if result in (b"ok", "ok"):
             logger.debug("NodeRegistry.reserve_node node=%s cluster=%s OK", node_id, cluster_id)

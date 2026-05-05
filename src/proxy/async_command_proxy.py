@@ -18,7 +18,7 @@ Config (env vars, 3-tier priority):
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import os
 import shlex
@@ -67,7 +67,7 @@ def _result_key(job_id: str) -> str:
 def _write_result(job_id: str, payload: dict) -> None:
     r = _get_redis()
     key = _result_key(job_id)
-    r.lpush(key, json.dumps(payload))
+    r.lpush(key, orjson.dumps(payload))
     r.expire(key, RESULT_TTL)
 
 
@@ -205,7 +205,7 @@ try:
         raw = r.lindex(_result_key(job_id), 0)
         if raw is None:
             return jsonify({"status": "pending", "job_id": job_id})
-        return jsonify(json.loads(raw))
+        return jsonify(orjson.loads(raw))
 
     @app.get("/health")
     def health():
@@ -252,7 +252,7 @@ class AsyncCommandProxy:
         if resp is None:
             return None
         _, raw = resp
-        return json.loads(raw)
+        return orjson.loads(raw)
 
     def cancel(self, job_id: str) -> bool:
         with _lock:

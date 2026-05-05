@@ -10,7 +10,7 @@ Manages tenant CRUD + API key lifecycle:
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 import logging
 import secrets
 from typing import Any
@@ -59,7 +59,7 @@ class TenantRegistry(BaseRedisRegistry):
         """Fetch tenant info dict."""
         data = await self.get(tenant_id, tenant_id)
         if isinstance(data, str):
-            return json.loads(data)
+            return orjson.loads(data)
         return data
 
     async def generate_api_key(self, tenant_id: str) -> str:

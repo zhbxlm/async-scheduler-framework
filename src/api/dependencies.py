@@ -1,8 +1,8 @@
 """FastAPI dependencies — auth, tenant context, DB session."""
 from __future__ import annotations
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated
+from typing import Annotated, AsyncGenerator
 
 from src.api.auth import authenticate
 from src.common.async_db import get_async_db
@@ -24,9 +24,15 @@ async def require_super_admin(ctx=Depends(get_tenant_context)):
     return ctx
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency for async DB session."""
-    async with get_async_db() as session:
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """Dependency for async DB session — fetched from app.state."""
+    session_factory = getattr(request.app.state, "async_session_factory", None)
+    if session_factory is None:
+        raise RuntimeError(
+            "Database not configured. "
+            "Ensure async_session_factory is set in app.state during lifespan startup."
+        )
+    async with get_async_db(session_factory) as session:
         yield session
 
 

@@ -94,6 +94,10 @@ class CircuitBreaker:
         self._threshold = failure_threshold
         self._open_duration = open_duration_seconds
         self._half_open_max = half_open_max
+        # Pre-register Lua scripts to avoid sending source on every call
+        self._lua_failure = redis_client.register_script(_LUA_RECORD_FAILURE)
+        self._lua_success = redis_client.register_script(_LUA_RECORD_SUCCESS)
+        self._lua_check = redis_client.register_script(_LUA_CHECK_STATE)
 
     # ── key helpers ────────────────────────────────────────────────────────
     def _state_key(self, capability: str) -> str:
@@ -108,27 +112,24 @@ class CircuitBreaker:
     # ── public API ─────────────────────────────────────────────────────────
     async def record_failure(self, capability: str) -> str:
         """Record a failure; returns new state ('closed'/'open')."""
-        result = await self._r.eval(
-            _LUA_RECORD_FAILURE, 2,
-            self._state_key(capability), self._count_key(capability),
-            str(self._threshold), str(self._open_duration), str(time.time()),
+        result = await self._lua_failure(
+            keys=[self._state_key(capability), self._count_key(capability)],
+            args=[str(self._threshold), str(self._open_duration), str(time.time())],
         )
         return result.decode() if isinstance(result, bytes) else str(result)
 
     async def record_success(self, capability: str) -> str:
         """Record a success; returns new state ('closed'/'half_open')."""
-        result = await self._r.eval(
-            _LUA_RECORD_SUCCESS, 2,
-            self._state_key(capability), self._count_key(capability),
+        result = await self._lua_success(
+            keys=[self._state_key(capability), self._count_key(capability)],
         )
         return result.decode() if isinstance(result, bytes) else str(result)
 
     async def get_state(self, capability: str) -> str:
         """Return current state, transitioning OPEN→HALF_OPEN if TTL expired."""
-        result = await self._r.eval(
-            _LUA_CHECK_STATE, 2,
-            self._state_key(capability), self._half_open_key(capability),
-            str(self._half_open_max),
+        result = await self._lua_check(
+            keys=[self._state_key(capability), self._half_open_key(capability)],
+            args=[str(self._half_open_max)],
         )
         return result.decode() if isinstance(result, bytes) else str(result)
 

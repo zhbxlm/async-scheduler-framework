@@ -12,7 +12,7 @@ This allows unit-testing without a Ray cluster.
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import time
 from typing import Any

@@ -113,12 +113,18 @@ class TestNodeRegistry:
             r._store[key] = val
 
         async def fake_get(key):
+            def fake_register_script(script):
+                return AsyncMock()
+            r.register_script = fake_register_script
             return r._store.get(key)
 
         async def fake_sadd(key, val):
             r._store.setdefault(key, set()).add(val)
 
         async def fake_smembers(key):
+            def fake_register_script(script):
+                return AsyncMock()
+            r.register_script = fake_register_script
             return r._store.get(key, set())
 
         async def fake_zadd(key, mapping):
@@ -141,6 +147,34 @@ class TestNodeRegistry:
         r.zrem = fake_zrem
         r.delete = fake_delete
         r.zrangebyscore = fake_zrangebyscore
+
+        # Pipeline mock — needed by batch-optimised list_all / list_due
+        class _FakePipeline:
+            def __init__(self):
+                self.commands = []
+            def get(self, key):
+                self.commands.append(('get', key))
+                return self
+            async def execute(self):
+                result = []
+                for cmd, key in self.commands:
+                    if cmd == 'get':
+                        result.append(r._store.get(key))
+                    else:
+                        result.append(None)
+                self.commands = []
+                def fake_register_script(script):
+                    return AsyncMock()
+                r.register_script = fake_register_script
+                return result
+
+        def fake_pipeline():
+            return _FakePipeline()
+        r.pipeline = fake_pipeline
+
+        def fake_register_script(script):
+            return AsyncMock()
+        r.register_script = fake_register_script
         return r
 
     @pytest.mark.asyncio

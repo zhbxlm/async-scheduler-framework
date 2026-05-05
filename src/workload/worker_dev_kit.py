@@ -6,7 +6,7 @@ Provides helpers to run, mock and assert Workers without Ray or Redis:
   - WorkerDevKit: mock capability registration and output assertions
 """
 from __future__ import annotations
-import json
+import orjson
 from typing import Any, Callable, Type
 
 
@@ -102,4 +102,4 @@ class WorkerDevKit:
 
     def pretty_print(self, result: Any) -> None:
         """Pretty-print result as JSON."""
-        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        print(orjson.dumps(result, ensure_ascii=False, indent=2, default=str))

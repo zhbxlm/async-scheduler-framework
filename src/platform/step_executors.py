@@ -119,8 +119,8 @@ class AsyncStepExecutor:
                 # Check result key first (may already be set)
                 raw = await self._r.get(result_key)
                 if raw:
-                    import json
-                    return json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+                    import orjson
+                    return orjson.loads(raw) if isinstance(raw, (str, bytes)) else raw
 
                 # Wait for pubsub message
                 try:
@@ -131,8 +131,8 @@ class AsyncStepExecutor:
                     if msg and msg.get("type") == "message":
                         raw = await self._r.get(result_key)
                         if raw:
-                            import json
-                            return json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+                            import orjson
+                            return orjson.loads(raw) if isinstance(raw, (str, bytes)) else raw
                 except asyncio.TimeoutError:
                     pass
 

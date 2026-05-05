@@ -6,7 +6,7 @@ writes results to Redis so worker can BLPOP and retrieve them.
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import os
 import time
@@ -80,7 +80,7 @@ def _forward_and_store(
             "elapsed": round(time.time() - t0, 3),
         }
 
-    redis_client.lpush(result_key, json.dumps(result))
+    redis_client.lpush(result_key, orjson.dumps(result))
     redis_client.expire(result_key, RESULT_TTL)
 
 
@@ -120,7 +120,7 @@ def create_proxy_app(
         raw = _redis.lindex(result_key, 0)
         if raw is None:
             return jsonify({"status": "pending"}), 202
-        return jsonify(json.loads(raw)), 200
+        return jsonify(orjson.loads(raw)), 200
 
     @app.route("/health", methods=["GET"])
     def health():

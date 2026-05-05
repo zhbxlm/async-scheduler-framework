@@ -213,6 +213,10 @@ class FakePipeline:
         self._commands.append(("zcard", key))
         return self
 
+    def get(self, key: str) -> "FakePipeline":
+        self._commands.append(("get", key))
+        return self
+
     async def execute(self) -> list:
         results = []
         for cmd, *args in self._commands:

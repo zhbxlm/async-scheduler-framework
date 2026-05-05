@@ -10,11 +10,12 @@ Uses a shared SCAN cursor across all three phases to amortize Redis scan cost.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
 from typing import Any
+
+import orjson
 
 from src.common.error_handling import log_errors, ExternalServiceError
 
@@ -128,10 +129,10 @@ class TaskReconciler:
             if not raw:
                 continue
             try:
-                data = json.loads(raw)
+                data = orjson.loads(raw)
                 if isinstance(data, dict):
                     tasks.append(data)
-            except (json.JSONDecodeError, TypeError):
+            except (orjson.JSONDecodeError, TypeError):
                 pass
         return tasks
 
@@ -177,7 +178,7 @@ class TaskReconciler:
                             task_id=task.get("task_id", ""),
                             tenant_id=task.get("tenant_id", ""),
                             status=task.get("status", "unknown"),
-                            output=json.dumps(task.get("output")) if task.get("output") else None,
+                            output=orjson.dumps(task.get("output")).decode() if task.get("output") else None,
                         )
                         session.add(record)
                     except Exception as exc:
@@ -276,10 +277,10 @@ class TaskReconciler:
                 raw = await self._r.get(task_key)
                 if raw:
                     try:
-                        data = json.loads(raw)
+                        data = orjson.loads(raw)
                         data["status"] = "failed"
                         data["error"] = "reconciler: stuck task, lock expired"
-                        await self._r.set(task_key, json.dumps(data))
+                        await self._r.set(task_key, orjson.dumps(data))
                         logger.info(
                             "TaskReconciler: phase2 marked FAILED task_id=%s", tid
                         )

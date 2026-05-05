@@ -21,6 +21,10 @@ class ServiceContainer:
     """
     redis_client: Any = None
 
+    # ── Database (no module-level globals — stored here) ─────────
+    async_engine: Any = None
+    async_session_factory: Any = None
+
     # ── Registries ────────────────────────────────────────────────
     capability_registry: Any = None
     cluster_registry: Any = None
@@ -61,14 +65,19 @@ class ServiceContainer:
         from src.platform.task_reconciler import TaskReconciler
         from src.platform.task_completion_node import TaskCompletionNode
         from src.platform.cron_scheduler import CronScheduler
+        from functools import partial
 
         c = cls()
         redis_url = str(settings.redis.url) if settings.redis.url else None
         c.redis_client = create_redis_client(redis_url)
 
-        # task-api requires MySQL
+        # task-api requires MySQL — init engine and store in container
+        db_factory = None
         if settings.mysql.url:
-            init_async_engine(settings.mysql.url)
+            engine, session_factory = init_async_engine(settings.mysql.url)
+            c.async_engine = engine
+            c.async_session_factory = session_factory
+            db_factory = partial(get_async_db, session_factory)
 
         # Registries (tenant + schedule needed for task-api)
         c.tenant_registry = TenantRegistry(c.redis_client)
@@ -76,8 +85,6 @@ class ServiceContainer:
 
         # Core platform
         c.queue_manager = QueueManager(c.redis_client)
-
-        db_factory = get_async_db if settings.mysql.url else None
 
         c.task_creator = TaskCreator(
             redis_client=c.redis_client,

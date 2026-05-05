@@ -170,7 +170,7 @@ async def task_debug(
     """
     redis = getattr(request.app.state, "redis", None)
     qm = getattr(request.app.state, "queue_manager", None)
-    db_session = getattr(request.app.state, "db_session_factory", None)
+    db_session = getattr(request.app.state, "async_session_factory", None)
     
     result = {"task_id": task_id, "sources": {}}
     

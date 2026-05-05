@@ -6,7 +6,7 @@ Idempotent task creation via idempotency_key to prevent duplicate fires.
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson
 import logging
 import time
 import uuid
@@ -83,7 +83,7 @@ class CronScheduler:
         task_template_raw = getattr(schedule, "task_template", "{}")
 
         try:
-            template = json.loads(task_template_raw) if isinstance(task_template_raw, str) else task_template_raw
+            template = orjson.loads(task_template_raw) if isinstance(task_template_raw, str) else task_template_raw
         except Exception:
             template = {}
 

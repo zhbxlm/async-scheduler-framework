@@ -16,7 +16,7 @@ Security measures implemented:
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 import logging
 import os
 import re

@@ -49,6 +49,7 @@ class TaskExecutor:
         self._dag = dag_engine
         self._callback = callback_fn
         self._lock_ttl_ms = lock_ttl_ms
+        self._lua_lock_renew = redis_client.register_script(_LUA_LOCK_RENEW)
 
     async def execute(self, task_id: str, dag_definition: Any, context: Any) -> dict[str, Any]:
         """Acquire lock, run DAG, release lock, callback."""
@@ -105,8 +106,8 @@ class TaskExecutor:
     async def _renew_lock_loop(self, lock_key: str, lock_val: str) -> None:
         while True:
             await asyncio.sleep(_LOCK_RENEWAL_INTERVAL)
-            result = await self._r.eval(
-                _LUA_LOCK_RENEW, 1, lock_key, lock_val, str(self._lock_ttl_ms)
+            result = await self._lua_lock_renew(
+                keys=[lock_key], args=[lock_val, str(self._lock_ttl_ms)]
             )
             status = result.decode() if isinstance(result, bytes) else str(result)
             if status == "lost":

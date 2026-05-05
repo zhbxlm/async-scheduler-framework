@@ -7,7 +7,7 @@ Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from typing import Any
 
@@ -51,7 +51,7 @@ class ClusterRegistry(BaseRedisRegistry):
             key_prefix="cluster",
             ttl_seconds=0,      # clusters don't expire
         )
-
+        self._lua_update = redis_client.register_script(_LUA_UPDATE_CLUSTER)
     # ------------------------------------------------------------------
     # High-level API
     # ------------------------------------------------------------------
@@ -111,15 +111,15 @@ class ClusterRegistry(BaseRedisRegistry):
             "available_cpus": observed.available_cpus,
             "available_memory_gb": observed.available_memory_gb,
         }
-        await self._r.eval(_LUA_UPDATE_CLUSTER, 1, key, json.dumps(fields))
+        await self._lua_update(keys=[key], args=[orjson.dumps(fields)])
 
     @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def update_status(self, cluster_id: str, status: ClusterStatus) -> None:
         """Update cluster status."""
         key = self._make_key(_GLOBAL_TENANT, cluster_id)
-        await self._r.eval(
-            _LUA_UPDATE_CLUSTER, 1, key,
-            json.dumps({"status": status.value})
+        await self._lua_update(
+            keys=[key],
+            args=[orjson.dumps({"status": status.value})]
         )
 
     @log_errors(log_level="WARNING", raise_exception=False)

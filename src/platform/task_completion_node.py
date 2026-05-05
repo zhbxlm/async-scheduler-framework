@@ -9,7 +9,7 @@ Finalize tasks:
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson
 import logging
 import time
 from typing import Any
@@ -94,7 +94,7 @@ class TaskCompletionNode:
 
                 stmt = select(TaskRecord).where(TaskRecord.task_id == task_id)
                 row = (await session.execute(stmt)).scalar_one_or_none()
-                result_json = json.dumps(result, ensure_ascii=False) if result is not None else None
+                result_json = orjson.dumps(result, ensure_ascii=False) if result is not None else None
                 error_msg = None
                 if status == "failed" and isinstance(result, dict):
                     error_msg = str(result.get("error", ""))
@@ -191,7 +191,7 @@ class TaskCompletionNode:
             return
         delay = min(_MAX_RETRY_DELAY, _BASE_RETRY_DELAY * (2 ** (attempt - 1)))
         next_retry_ts = time.time() + delay
-        event = json.dumps({
+        event = orjson.dumps({
             "task_id": task_id,
             "callback_url": callback_url,
             "payload": payload,
@@ -224,7 +224,7 @@ class TaskCompletionNode:
                 continue
 
             try:
-                event = json.loads(event_str)
+                event = orjson.loads(event_str)
             except json.JSONDecodeError:
                 continue
 

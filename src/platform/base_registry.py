@@ -1,9 +1,12 @@
-"""BaseRedisRegistry — generic Redis registry with CRUD + TTL."""
+"""BaseRedisRegistry — generic Redis registry with CRUD + TTL.
+
+Uses orjson for 2-5x faster serialisation than stdlib json.
+"""
 from __future__ import annotations
-import json
 import logging
 from typing import Generic, TypeVar, Optional, Any
 import redis.asyncio as aioredis
+import orjson
 
 from src.common.error_handling import log_errors, ExternalServiceError
 
@@ -12,12 +15,24 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+def _json_dumps(value: Any) -> bytes:
+    """Fast JSON encode using orjson. Returns bytes (Redis-friendly)."""
+    return orjson.dumps(value)
+
+
+def _json_loads(raw: bytes | str | None) -> Any:
+    """Fast JSON decode using orjson. Handles empty/None input."""
+    if not raw:
+        return None
+    return orjson.loads(raw)
+
+
 class BaseRedisRegistry(Generic[T]):
     """Base registry with Redis storage.
-    
+
     Provides standard CRUD operations with tenant isolation.
     """
-    
+
     def __init__(
         self,
         redis_client: aioredis.Redis,
@@ -39,15 +54,15 @@ class BaseRedisRegistry(Generic[T]):
             data = await self._r.get(key)
             if not data:
                 return None
-            return json.loads(data)
-        except json.JSONDecodeError as e:
+            return _json_loads(data)
+        except orjson.JSONDecodeError as e:
             self._logger.error("JSON decode error for key %s: %s", key, e)
             return None
 
     @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)
     async def set(self, tenant_id: str, item_id: str, value: T) -> bool:
         key = self._make_key(tenant_id, item_id)
-        data = json.dumps(value, ensure_ascii=False)
+        data = _json_dumps(value)
         if self._ttl > 0:
             await self._r.setex(key, self._ttl, data)
         else:

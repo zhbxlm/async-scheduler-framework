@@ -15,10 +15,13 @@ from __future__ import annotations
 import ast as _ast
 import asyncio
 import concurrent.futures
-import json
 import logging
 import time
+from functools import lru_cache
 from typing import Any, Callable, Awaitable
+
+import httpx
+import orjson
 
 _ALLOWED_COMPARE_OPS = (
     _ast.Eq, _ast.NotEq, _ast.Lt, _ast.LtE, _ast.Gt, _ast.GtE,
@@ -41,6 +44,13 @@ def _get_streaming_executor(max_workers: int = 64) -> concurrent.futures.ThreadP
             max_workers=max_workers, thread_name_prefix="dag_streaming"
         )
     return _STREAMING_EXECUTOR
+
+
+@lru_cache(maxsize=256)
+def _parse_condition_cached(expr: str) -> _ast.Expression:
+    """Parse condition expression into AST, cached for reuse.
+    Avoids repeated ast.parse() calls on hot-path DAG executions."""
+    return _ast.parse(expr, mode="eval")
 
 from src.models.dag import (
     DagContext, DagDefinition, DagStatus, DagStep,
@@ -276,7 +286,7 @@ class DagEngine:
                 raise TimeoutError(f"STREAMING: blpop timeout on buffer_key={buffer_key}")
 
             try:
-                chunk = json.loads(raw)
+                chunk = orjson.loads(raw)
             except Exception:
                 chunk = {"__raw__": raw}
 
@@ -324,12 +334,23 @@ class DagEngine:
             logger.error("STREAMING blpop error: %s", e)
             return None
 
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        if not hasattr(self, '_http_client') or self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=30.0)
+        return self._http_client
+
     async def _flask_dispatch(self, url: str, payload: dict) -> dict:
-        import httpx
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        client = await self._get_http_client()
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def close(self) -> None:
+        """Release shared HTTP client resources."""
+        if hasattr(self, '_http_client') and self._http_client is not None:
+            if not self._http_client.is_closed:
+                await self._http_client.aclose()
+            self._http_client = None
 
     def _safe_eval_condition(self, expr: str, ctx: DagContext) -> bool:
         """Evaluate a condition expression safely using AST node walking.
@@ -345,7 +366,7 @@ class DagEngine:
         On any error, returns True (fail-open).
         """
         try:
-            tree = _ast.parse(expr, mode="eval")
+            tree = _parse_condition_cached(expr)
             local_vars = {**ctx.context, **ctx.input_data}
             return bool(self._eval_node(tree.body, local_vars))
         except Exception:

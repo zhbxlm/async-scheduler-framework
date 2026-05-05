@@ -7,10 +7,11 @@ Load DAG definitions from:
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -109,15 +110,15 @@ class DagLoader:
         if not raw:
             return None
         try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
+            return orjson.loads(raw)
+        except orjson.JSONDecodeError:
             return None
 
     async def _cache_in_redis(
         self, dag_id: str, tenant_id: str, data: dict, ttl: int = 259200
     ) -> None:
         key = _REDIS_KEY.format(tenant_id=tenant_id, dag_id=dag_id)
-        await self._r.set(key, json.dumps(data, ensure_ascii=False), ex=ttl)
+        await self._r.set(key, orjson.dumps(data), ex=ttl)
 
     async def _load_from_db(self, dag_id: str, tenant_id: str) -> dict | None:
         """Load from MySQL dag_definitions table."""
@@ -134,7 +135,7 @@ class DagLoader:
                 )
                 row = result.fetchone()
                 if row and row[0]:
-                    return json.loads(row[0])
+                    return orjson.loads(row[0])
         except Exception as exc:
             logger.warning("DagLoader: db load failed dag_id=%s: %s", dag_id, exc)
         return None

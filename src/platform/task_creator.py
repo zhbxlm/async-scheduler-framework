@@ -10,11 +10,13 @@ Used by CronScheduler to fire scheduled tasks.
 """
 from __future__ import annotations
 
-import json
+import json  # stdlib — MySQL TEXT column persistence (orjson returns bytes)
 import logging
 import time
 import uuid
 from typing import Any
+
+import orjson
 
 from src.common.error_handling import log_errors, BusinessError
 
@@ -121,7 +123,7 @@ class TaskCreator:
         # Store in Redis
         task_key = f"task:{task_id}"
         try:
-            await self._r.set(task_key, json.dumps(task_record), ex=86400)  # 24h TTL
+            await self._r.set(task_key, orjson.dumps(task_record), ex=86400)  # 24h TTL
         except Exception as exc:
             logger.warning("TaskCreator: failed to store task in Redis: %s", exc)
             # Continue anyway, queue may still work

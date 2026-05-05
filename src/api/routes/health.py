@@ -99,19 +99,18 @@ async def readiness_probe(request: Request) -> Dict[str, Any]:
         checks["redis"] = "not_configured"
 
     # MySQL check (task-api only)
-    try:
-        from src.common.async_db import get_async_engine
-        engine = get_async_engine()
-        if engine is not None:
+    engine = getattr(request.app.state, "async_engine", None)
+    if engine is not None:
+        try:
             from sqlalchemy import text
             import asyncio
             async with engine.connect() as conn:
                 await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=2.0)
             checks["mysql"] = "ok"
-        # If engine is None, MySQL is not configured (ops-api) — skip
-    except Exception:
-        checks["mysql"] = "unreachable"
-        overall = "not_ready"
+        except Exception:
+            checks["mysql"] = "unreachable"
+            overall = "not_ready"
+    # If engine is None, MySQL is not configured (ops-api) — skip
 
     status_code = 200 if overall == "ready" else 503
     result = {
@@ -191,16 +190,15 @@ async def health_redis(request: Request) -> Dict[str, Any]:
 @router.get("/mysql")
 async def health_mysql(request: Request) -> Dict[str, Any]:
     """MySQL liveness check — executes SELECT 1."""
+    engine = getattr(request.app.state, "async_engine", None)
+    if engine is None:
+        return {
+            "status": "disabled",
+            "service": "mysql",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "note": "MySQL not configured",
+        }
     try:
-        from src.common.async_db import get_async_engine
-        engine = get_async_engine()
-        if engine is None:
-            return {
-                "status": "disabled",
-                "service": "mysql",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "note": "MySQL not configured",
-            }
         from sqlalchemy import text
         import asyncio
         async with engine.connect() as conn:

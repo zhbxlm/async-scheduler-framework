@@ -8,7 +8,7 @@ Ray cluster join/leave, deployment package management.
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson
 import logging
 import os
 import subprocess
@@ -140,7 +140,7 @@ def ray_start(head_address: str, custom_resources: dict[str, float] | None = Non
         return True
     cmd = ["ray", "start", f"--address={head_address}"]
     if custom_resources:
-        res_str = json.dumps(custom_resources)
+        res_str = orjson.dumps(custom_resources)
         cmd += [f"--resources={res_str}"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)

@@ -8,7 +8,7 @@ Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from typing import Any
 
@@ -80,6 +80,7 @@ class CapabilityRegistry(BaseRedisRegistry):
             key_prefix="capability",
             ttl_seconds=0,          # capabilities don't expire
         )
+        self._lua_health = redis_client.register_script(_LUA_UPDATE_HEALTH)
 
     # ------------------------------------------------------------------
     # High-level API (domain methods used by routes)
@@ -160,12 +161,9 @@ class CapabilityRegistry(BaseRedisRegistry):
         """Update health FSM for *name* given a check result."""
         hkey = _HEALTH_KEY.format(name=name)
         capkey = self._make_key(_GLOBAL_TENANT, name)
-        result = await self._r.eval(
-            _LUA_UPDATE_HEALTH,
-            2, hkey, capkey,
-            "1" if success else "0",
-            str(unhealthy_threshold),
-            str(healthy_threshold),
+        result = await self._lua_health(
+            keys=[hkey, capkey],
+            args=["1" if success else "0", str(unhealthy_threshold), str(healthy_threshold)],
         )
         status_str = result.decode() if isinstance(result, bytes) else str(result)
         status = HealthStatus(status_str)

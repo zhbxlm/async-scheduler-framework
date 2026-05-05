@@ -74,6 +74,9 @@ def _make_redis_store():
     r.eval = fake_eval
     r._store = store
     r._sets = sets
+    def fake_register_script(script):
+        return AsyncMock()
+    r.register_script = fake_register_script
     return r
 
 

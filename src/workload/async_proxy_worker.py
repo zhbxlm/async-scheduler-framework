@@ -13,7 +13,7 @@ Subclass minimal contract:
 """
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import os
 from typing import Any
@@ -174,7 +174,7 @@ class AsyncProxyWorker:
 
         _, result_raw = raw
         try:
-            result = json.loads(result_raw)
+            result = orjson.loads(result_raw)
         except (json.JSONDecodeError, TypeError) as exc:
             raise ProxyBackendError(
                 f"Invalid JSON in result: {exc}", job_id=job_id

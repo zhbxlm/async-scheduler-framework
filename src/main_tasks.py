@@ -50,6 +50,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.common.http_client import init_http_client
     init_http_client()
 
+    from src.common.async_db import async_dispose_engine
+
     container = await ServiceContainer.build_task_api(settings)
     set_container(container)
 
@@ -61,6 +63,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.task_creator = container.task_creator
     app.state.task_reconciler = container.task_reconciler
     app.state.task_completion_node = container.task_completion_node
+    
+    # Database engine + session factory (no module-level globals)
+    app.state.async_engine = container.async_engine
+    app.state.async_session_factory = container.async_session_factory
     
     # Cache auth settings for authenticate() - avoids repeated module imports
     app.state.auth_settings = {
@@ -81,6 +87,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── shutdown ──────────────────────────────────────────────────
     manager = get_lifecycle_manager()
     await manager.stop_all()
+    if app.state.async_engine:
+        await async_dispose_engine(app.state.async_engine)
     from src.common.http_client import close_http_client
     await close_http_client()
     shutdown_tracing()

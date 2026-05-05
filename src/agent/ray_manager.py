@@ -1,6 +1,6 @@
 """RayManager — idempotent ray start/stop lifecycle."""
 from __future__ import annotations
-import json
+import orjson
 import logging
 import subprocess
 from typing import Any
@@ -25,7 +25,7 @@ def ray_start(head_address: str, custom_resources: dict | None = None) -> bool:
 
     cmd = ["ray", "start", f"--address={head_address}"]
     if custom_resources:
-        cmd.append(f"--resources={json.dumps(custom_resources)}")
+        cmd.append(f"--resources={orjson.dumps(custom_resources)}")
 
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=_RAY_TIMEOUT, text=True)
