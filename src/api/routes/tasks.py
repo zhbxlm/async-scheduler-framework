@@ -203,13 +203,13 @@ async def create_task(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid task data: {e}",
         )
-    except DuplicateTaskError as e:
+    except DuplicateTaskError as e:  # noqa: F821
         # Idempotency key conflict - return existing task info
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
-    except QueueCapacityError as e:
+    except QueueCapacityError as e:  # noqa: F821
         # Queue at capacity
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -179,7 +179,7 @@ def trace_method(span_name: Optional[str] = None, attributes: Optional[dict] = N
 
 def shutdown_tracing() -> None:
     """Flush and shutdown tracer provider."""
-    global _tracer_provider
+    global _tracer_provider  # noqa: F824  # noqa: F824
     if _tracer_provider is not None:
         try:
             _tracer_provider.shutdown()
