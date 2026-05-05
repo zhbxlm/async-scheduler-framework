@@ -33,11 +33,15 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 # ---------------------------------------------------------------------------
 
 def _to_json(val: Any) -> dict:
-    """Deserialise a stored JSON string or return the value as-is."""
+    """Deserialise a stored JSON string or return the value as-is.
+    
+    Optimised: assumes data was normalised at write time.
+    """
     if val is None:
         return {}
-    if isinstance(val, (dict, list)):
+    if isinstance(val, dict):
         return val
+    # Fallback for legacy data stored as JSON strings
     try:
         return json.loads(val)
     except Exception:

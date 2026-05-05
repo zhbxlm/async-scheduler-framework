@@ -100,6 +100,10 @@ class Settings:
         self.agent = AgentConfig()
         self.background = BackgroundConfig()
         
+        # Import TenantConfig from the existing dataclass module
+        from config._tenant import TenantConfig
+        self.tenant = TenantConfig()
+        
         # Convenience aliases
         self.redis = self.infra.redis
         self.mysql = self.infra.mysql

@@ -4,6 +4,7 @@ aligned with docs/deepwiki-reference/API 参考.md
 from __future__ import annotations
 
 import time
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
@@ -49,6 +50,24 @@ async def ops_overview(request: Request) -> dict:
     if qm is not None:
         caps = await qm.discover_queue_capabilities()
 
+    # Batch-fetch queue snapshots (1 call per cap, but circuit_state needs Redis)
+    # Use pipeline for circuit_state to avoid N+1
+    circuit_states: Dict[str, str] = {}
+    if redis is not None and caps:
+        try:
+            pipe = redis.pipeline()
+            stats_keys = []
+            for cap in caps:
+                sk = qk.stats(cap)
+                stats_keys.append((cap, sk))
+                pipe.hget(sk, "circuit_state")
+            raw_states = await pipe.execute()
+            for (cap, _sk), raw in zip(stats_keys, raw_states):
+                if raw:
+                    circuit_states[cap] = raw.decode() if isinstance(raw, bytes) else raw
+        except Exception:
+            pass
+
     capabilities_stats = {}
     total_pending = 0
     total_running = 0
@@ -62,19 +81,10 @@ async def ops_overview(request: Request) -> dict:
                 pending = snapshot.get("pending", 0)
                 running = snapshot.get("running", 0)
                 max_concurrent = snapshot.get("max_concurrent", 8)
-                circuit_state = "closed"
+                circuit_state = circuit_states.get(cap, "closed")
 
-                # Try to get circuit_state from redis stats hash
-                if redis is not None:
-                    try:
-                        stats_key = qk.stats(cap)
-                        circuit_raw = await redis.hget(stats_key, "circuit_state")
-                        if circuit_raw:
-                            circuit_state = circuit_raw.decode() if isinstance(circuit_raw, bytes) else circuit_raw
-                            if circuit_state == "open":
-                                any_open = True
-                    except Exception:
-                        pass
+                if circuit_state == "open":
+                    any_open = True
 
                 utilization = round(running / max_concurrent, 2) if max_concurrent > 0 else 0.0
 

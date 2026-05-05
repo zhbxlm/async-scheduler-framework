@@ -76,20 +76,52 @@ async def health_detailed() -> Dict[str, Any]:
 
 
 @router.get("/ready")
-async def readiness_probe() -> Dict[str, Any]:
-    """Readiness probe for Kubernetes/load balancers."""
-    # Add service-specific readiness checks here
-    # e.g., check Redis, MySQL connections
+async def readiness_probe(request: Request) -> Dict[str, Any]:
+    """Readiness probe for Kubernetes/load balancers.
     
-    return {
-        "status": "ready",
+    Checks Redis and MySQL connectivity (if configured).
+    Returns 503 if any required dependency is unreachable.
+    """
+    checks: Dict[str, str] = {"api": "ok"}
+    overall = "ready"
+
+    # Redis check
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        try:
+            import asyncio
+            await asyncio.wait_for(redis_client.ping(), timeout=2.0)
+            checks["redis"] = "ok"
+        except Exception:
+            checks["redis"] = "unreachable"
+            overall = "not_ready"
+    else:
+        checks["redis"] = "not_configured"
+
+    # MySQL check (task-api only)
+    try:
+        from src.common.async_db import get_async_engine
+        engine = get_async_engine()
+        if engine is not None:
+            from sqlalchemy import text
+            import asyncio
+            async with engine.connect() as conn:
+                await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=2.0)
+            checks["mysql"] = "ok"
+        # If engine is None, MySQL is not configured (ops-api) — skip
+    except Exception:
+        checks["mysql"] = "unreachable"
+        overall = "not_ready"
+
+    status_code = 200 if overall == "ready" else 503
+    result = {
+        "status": overall,
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "checks": {
-            "api": "ok",
-            # "redis": "ok" if redis_ok else "degraded",
-            # "mysql": "ok" if mysql_ok else "degraded",
-        }
+        "checks": checks,
     }
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result)
+    return result
 
 
 @router.get("/metrics", response_class=Response)

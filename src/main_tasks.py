@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.common.error_handling import BusinessError
 
     # Fail‑fast: MySQL must be configured for task‑api
-    if not settings.mysql_url:
+    if not settings.mysql.url:
         raise BusinessError(
             "task‑api requires MySQL; set MYSQL_URL environment variable",
             error_code="CONFIG_MYSQL_MISSING",

@@ -169,6 +169,31 @@ class AgentConfig(BaseSettings):
     owner_ttl_seconds: int = Field(default=30, description="Ownership TTL")
 
 
+class TenantConfig(BaseSettings):
+    """Multi-tenancy configuration."""
+    model_config = SettingsConfigDict(
+        env_prefix="TENANT_",
+        case_sensitive=False,
+    )
+    
+    multi_tenant_enabled: bool = Field(
+        default=False,
+        description="Enable multi-tenant mode",
+    )
+    super_admin_api_key: str = Field(
+        default="",
+        description="Super admin API key (also reads RAY_ASYNC_API_KEY env var)",
+    )
+    tenant_id_header: str = Field(
+        default="X-Tenant-Id",
+        description="HTTP header for tenant identification",
+    )
+    api_key_header: str = Field(
+        default="X-API-Key",
+        description="HTTP header for API key",
+    )
+
+
 class AppSettings(BaseSettings):
     """Main application settings."""
     model_config = SettingsConfigDict(
@@ -196,6 +221,7 @@ class AppSettings(BaseSettings):
     task: TaskConfig = Field(default_factory=TaskConfig)
     background: BackgroundConfig = Field(default_factory=BackgroundConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    tenant: TenantConfig = Field(default_factory=TenantConfig)
     
     @property
     def is_development(self) -> bool:
