@@ -85,6 +85,7 @@ def make_fake_redis(latency_ms: float = 0.1) -> AsyncMock:
     r.zadd = AsyncMock(side_effect=_delayed)
     r.zrangebyscore = AsyncMock(return_value=[])
     r.hset = AsyncMock(side_effect=_delayed)
+    r.register_script = lambda script: AsyncMock()
     r.hget = AsyncMock(side_effect=_delayed)
     r.eval = AsyncMock(side_effect=_delayed)
     r.exists = AsyncMock(return_value=0)

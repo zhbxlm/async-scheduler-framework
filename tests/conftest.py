@@ -81,6 +81,7 @@ async def redis_client():
     mock_client.sadd = AsyncMock(return_value=1)
     mock_client.smembers = AsyncMock(return_value=set())
     mock_client.pipeline.return_value = AsyncMock()
+    mock_client.register_script = lambda script: AsyncMock()
     
     yield mock_client
 
