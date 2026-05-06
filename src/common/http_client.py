@@ -23,7 +23,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_client: Optional[object] = None  # httpx.AsyncClient
+_client: Optional[object] = None       # httpx.AsyncClient (app-level, managed)
+_fallback_client: Optional[object] = None  # httpx.AsyncClient (test/script fallback)
 
 
 def init_http_client(
@@ -53,7 +54,7 @@ def init_http_client(
 
 async def close_http_client() -> None:
     """Close the shared HTTP client and release connections."""
-    global _client
+    global _client, _fallback_client
     if _client is not None:
         try:
             await _client.aclose()
@@ -62,19 +63,30 @@ async def close_http_client() -> None:
             logger.warning("HTTP client close error: %s", e)
         finally:
             _client = None
+    if _fallback_client is not None:
+        try:
+            await _fallback_client.aclose()
+        except Exception:
+            pass
+        finally:
+            _fallback_client = None
 
 
 def get_http_client():
     """Return the shared httpx.AsyncClient.
 
-    Falls back to a new per-call client if not initialised (e.g. in tests).
+    Falls back to a cached per-process client if not initialised (e.g. in tests).
+    The fallback client is closed by close_http_client() at shutdown.
     """
+    global _fallback_client
     if _client is not None:
         return _client
-    # Lazy fallback for tests / scripts
+    # Lazy fallback for tests / scripts — cached so it isn't recreated every call
     try:
         import httpx
-        return httpx.AsyncClient()
+        if _fallback_client is None or _fallback_client.is_closed:
+            _fallback_client = httpx.AsyncClient()
+        return _fallback_client
     except ImportError:
         raise RuntimeError(
             "httpx not installed. Run: pip install httpx"
