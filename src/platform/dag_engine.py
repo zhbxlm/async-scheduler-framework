@@ -270,7 +270,7 @@ class DagEngine:
         # Small yield to let the producer thread start up
         await asyncio.sleep(0)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         executor = _get_streaming_executor(self._streaming_executor_max_workers)
         result: dict[str, Any] = {}
 

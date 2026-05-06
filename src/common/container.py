@@ -6,6 +6,8 @@ this container — it ensures singleton lifecycle and testability.
 """
 from __future__ import annotations
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Optional, Any
 

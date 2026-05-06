@@ -114,17 +114,16 @@ class TaskReconciler:
     @log_errors(log_level="WARNING", raise_exception=False)
     async def _loop(self) -> None:
         while self._running:
+            if await self._try_become_leader():
+                task_batch = await self._scan_task_batch()
+                if task_batch:
+                    await asyncio.gather(
+                        self._phase1_double_write(task_batch),
+                        self._phase2_stuck_recovery(task_batch),
+                        self._phase3_lost_callback(task_batch),
+                        return_exceptions=True,
+                    )
             await asyncio.sleep(self._interval)
-            if not await self._try_become_leader():
-                continue  # not leader, skip tick
-            task_batch = await self._scan_task_batch()
-            if task_batch:
-                await asyncio.gather(
-                    self._phase1_double_write(task_batch),
-                    self._phase2_stuck_recovery(task_batch),
-                    self._phase3_lost_callback(task_batch),
-                    return_exceptions=True,
-                )
 
     async def _scan_task_batch(self) -> list[dict]:
         """SCAN Redis for task:* keys and return parsed task dicts."""

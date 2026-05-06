@@ -473,6 +473,22 @@ class FakePipeline:
         self._client = client
         self._commands: list[tuple] = []
 
+    def hset(self, key: str, field: str, value: str) -> "FakePipeline":
+        self._commands.append(("hset", key, field, value))
+        return self
+
+    def hdel(self, key: str, field: str) -> "FakePipeline":
+        self._commands.append(("hdel", key, field))
+        return self
+
+    def sadd(self, key: str, member: str) -> "FakePipeline":
+        self._commands.append(("sadd", key, member))
+        return self
+
+    def srem(self, key: str, member: str) -> "FakePipeline":
+        self._commands.append(("srem", key, member))
+        return self
+
     def llen(self, key: str) -> "FakePipeline":
         self._commands.append(("llen", key))
         return self
