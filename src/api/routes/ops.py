@@ -3,6 +3,7 @@ aligned with docs/deepwiki-reference/API 参考.md
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from src.api.auth import authenticate
 from src.platform import queue_keys as qk
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
 
 
@@ -45,10 +47,30 @@ async def ops_overview(request: Request, _auth: dict = Depends(authenticate)) ->
         except Exception:
             pass
 
+    # Get tenant info from auth
+    tenant_id = _auth.get("tenant_id", "default")
+    is_super_admin = _auth.get("is_super_admin", False)
+    
     # Get capabilities
     caps = []
     if qm is not None:
-        caps = await qm.discover_queue_capabilities()
+        all_caps = await qm.discover_queue_capabilities()
+        
+        # Filter capabilities based on tenant
+        if is_super_admin:
+            # Super admin sees all capabilities
+            caps = all_caps
+        else:
+            # Regular tenant: only capabilities they have access to
+            # For now, we need to implement tenant-capability mapping
+            # This is a placeholder - in production, this should query
+            # tenant_capabilities from tenant registry or separate store
+            caps = all_caps  # TODO: Implement proper tenant-capability filtering
+            logger.warning(
+                "Tenant filtering not fully implemented for ops_overview. "
+                "Tenant %s sees all %d capabilities",
+                tenant_id, len(caps)
+            )
 
     # Batch-fetch queue snapshots (1 call per cap, but circuit_state needs Redis)
     # Use pipeline for circuit_state to avoid N+1

@@ -75,6 +75,14 @@ class TaskConsumer:
         self._running = False
         for t in list(self._tasks):
             t.cancel()
+        
+        # Shutdown task executor
+        if self._executor is not None and hasattr(self._executor, 'shutdown'):
+            try:
+                await self._executor.shutdown()
+                logger.debug("TaskConsumer: shutdown task executor")
+            except Exception as e:
+                logger.warning("TaskConsumer: failed to shutdown executor: %s", e)
 
     async def _poll_loop(self) -> None:
         while self._running:

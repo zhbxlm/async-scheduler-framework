@@ -145,6 +145,15 @@ class TaskExecutor:
             deadline = a.get_event_loop().time() + timeout
             while self._active_tasks and a.get_event_loop().time() < deadline:
                 await a.sleep(0.5)
+        
+        # Close DagEngine if provided
+        if self._dag is not None and hasattr(self._dag, 'close'):
+            try:
+                await self._dag.close()
+                logger.debug("TaskExecutor: closed DagEngine")
+            except Exception as e:
+                logger.warning("TaskExecutor: failed to close DagEngine: %s", e)
+        
         logger.info("TaskExecutor: drain complete")
 
     async def _release_lock(self, lock_key: str, lock_val: str) -> None:
