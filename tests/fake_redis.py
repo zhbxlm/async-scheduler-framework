@@ -159,7 +159,8 @@ class FullFakeAsyncRedis:
     async def get(self, key: str) -> str | None:
         return self._strings.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False, xx: bool = False) -> bool:
+    async def set(self, key: str, value: str, ex: int | None = None, px: int | None = None,
+                   nx: bool = False, xx: bool = False) -> bool:
         if nx and key in self._strings:
             return False
         if xx and key not in self._strings:
@@ -167,6 +168,8 @@ class FullFakeAsyncRedis:
         self._strings[key] = value
         if ex is not None:
             self._expiry[key] = ex
+        elif px is not None:
+            self._expiry[key] = max(1, px // 1000)
         return True
 
     async def expire(self, key: str, seconds: int) -> int:
@@ -174,6 +177,23 @@ class FullFakeAsyncRedis:
             self._expiry[key] = seconds
             return 1
         return 0
+
+    async def setex(self, key: str, seconds: int, value: str) -> bool:
+        self._strings[key] = value
+        self._expiry[key] = seconds
+        return True
+
+    async def scan_iter(self, pattern: str = "*"):
+        """Async generator yielding matching keys (simplified glob match)."""
+        import fnmatch
+        all_keys: list[str] = []
+        for store in (self.lists, self.zsets, self.sets, self.hashes, self._strings):
+            all_keys.extend(store.keys())
+        seen: set[str] = set()
+        for k in all_keys:
+            if k not in seen and fnmatch.fnmatch(k, pattern):
+                seen.add(k)
+                yield k
 
     async def pexpire(self, key: str, milliseconds: int) -> int:
         """Set TTL in milliseconds (stored as seconds for in-memory simplicity)."""
@@ -251,28 +271,40 @@ class FullFakeAsyncRedis:
         return FakePipeline(self)
 
     def register_script(self, script: str):
-        """Return a callable that simulates Redis Lua script execution.
+        """Return a callable simulating Redis Lua script execution.
 
-        Supports three Lua patterns used in this codebase:
-
-        1. Acquire-slot  (script contains 'INCR'): increment counter if below limit
-        2. Release-slot  (script contains 'DECR'): decrement counter
-        3. Leader-renew  (script contains 'EXPIRE' and 'GET' but not 'INCR'/'DECR'):
-           GET key → compare with ARGV[0] → if match, EXPIRE and return 1, else 0
+        Pattern detection (by script content keywords):
+        1. INCR  → acquire-slot: increment counter if below limit
+        2. DECR  → release-slot: decrement counter
+        3. EXPIRE+GET (no INCR/DECR/DEL) → leader-renew: compare+expire
+        4. DEL   → lock-release (CAS): GET → compare → DEL if match
+        5. PEXPIRE → lock-renew: GET → compare → PEXPIRE if match, return 'ok'/'lost'
+        6. cjson → JSON Lua: stub returns 1 (toggle/advance scripts)
+        7. HGET/HSET/ZADD/ZCARD/ZRANGEBYSCORE → queue Lua: Python implementation
         """
         redis_ref = self
-        is_acquire = "INCR" in script
-        is_release = "DECR" in script and "INCR" not in script
-        is_leader_renew = "EXPIRE" in script and "GET" in script and not is_acquire and not is_release
+        is_acquire  = "INCR" in script and "DECR" not in script
+        is_release_slot = "DECR" in script and "INCR" not in script
+        is_leader_renew = "EXPIRE" in script and "GET" in script and "DEL" not in script and "PEXPIRE" not in script and not is_acquire and not is_release_slot
+        is_lock_release = "DEL" in script and "GET" in script and "PEXPIRE" not in script and not is_acquire
+        is_lock_renew   = "PEXPIRE" in script and "GET" in script
+        is_json_lua     = "cjson" in script
+        is_enqueue      = "ZADD" in script and "ZCARD" in script and "EXPIRE" in script
+        is_dequeue      = "ZRANGEBYSCORE" in script and "ZADD" in script and "ZREM" in script
+        is_complete     = "ZREM" in script and "HINCRBY" in script
+        is_cancel       = "ZREM" in script and "HINCRBY" not in script and "ZADD" not in script and "HSET" not in script
+        is_adjust       = "HSET" in script and "HGET" in script and "max_concurrent" in script and "ZCARD" not in script and "ZADD" not in script
+        is_acquire_slot = "ZADD" in script and "HGET" in script and "max_concurrent" in script
+        is_recover      = "max_concurrent_baseline" in script
         _CONC_KEY = "global:consumer:concurrency"
 
         async def _script(keys=None, args=None):
             keys = keys or []
             args = args or []
-            key = keys[0] if keys else _CONC_KEY
 
+            # --- leader-renew (CronScheduler / TaskReconciler) ---
             if is_leader_renew:
-                # Pattern: GET key; if value == ARGV[0], EXPIRE key ARGV[1], return 1 else 0
+                key = keys[0] if keys else ""
                 current = redis_ref._strings.get(key)
                 expected = args[0] if args else None
                 if current is not None and current == expected:
@@ -281,6 +313,143 @@ class FullFakeAsyncRedis:
                     return 1
                 return 0
 
+            # --- lock-release CAS (TaskExecutor) ---
+            if is_lock_release:
+                key = keys[0] if keys else ""
+                current = redis_ref._strings.get(key)
+                expected = args[0] if args else None
+                if current == expected:
+                    redis_ref._strings.pop(key, None)
+                    return 1
+                return 0
+
+            # --- lock-renew (TaskExecutor _renew_lock_loop) ---
+            if is_lock_renew:
+                key = keys[0] if keys else ""
+                current = redis_ref._strings.get(key)
+                expected = args[0] if args else None
+                if current == expected:
+                    ttl_ms = int(args[1]) if len(args) > 1 else 30000
+                    redis_ref._expiry[key] = max(1, ttl_ms // 1000)
+                    return b"ok"
+                return b"lost"
+
+            # --- JSON Lua stubs (ScheduleRegistry toggle/advance) ---
+            if is_json_lua:
+                return 1  # simulate success
+
+            # --- QueueManager: enqueue ---
+            if is_enqueue:
+                pending_key, stats_key, config_key, running_key = keys[0], keys[1], keys[2], keys[3]
+                task_id = args[0]
+                score = float(args[1])
+                default_depth = int(args[2])
+                ttl = int(args[3])
+                bucket = redis_ref.zsets.setdefault(pending_key, {})
+                cfg = redis_ref.hashes.get(config_key, {})
+                max_depth = int(cfg.get("max_queue_depth", default_depth))
+                cur = len(bucket)
+                if cur >= max_depth:
+                    return [-1, cur]
+                bucket[task_id] = score
+                h = redis_ref.hashes.setdefault(stats_key, {})
+                h["total_enqueued"] = str(int(h.get("total_enqueued", "0")) + 1)
+                for k in (pending_key, stats_key, config_key):
+                    redis_ref._expiry[k] = ttl
+                cnt = len(bucket)
+                return [cur + 1, cnt]
+
+            # --- QueueManager: dequeue_ready ---
+            if is_dequeue:
+                pending_key, running_key, stats_key, config_key = keys[0], keys[1], keys[2], keys[3]
+                default_mc = int(args[0])
+                now_ms = int(args[1])
+                scan_limit = int(args[2])
+                cfg = redis_ref.hashes.get(config_key, {})
+                max_concurrent = int(cfg.get("max_concurrent", default_mc))
+                running_bucket = redis_ref.zsets.get(running_key, {})
+                if len(running_bucket) >= max_concurrent:
+                    return None
+                pending_bucket = redis_ref.zsets.get(pending_key, {})
+                sorted_items = sorted(pending_bucket.items(), key=lambda x: x[1])
+                for tid, sc in sorted_items[:scan_limit]:
+                    ts = int(sc) % 10_000_000_000_000
+                    if ts <= now_ms:
+                        del pending_bucket[tid]
+                        redis_ref.zsets.setdefault(running_key, {})[tid] = float(now_ms)
+                        h = redis_ref.hashes.setdefault(stats_key, {})
+                        h["total_dequeued"] = str(int(h.get("total_dequeued", "0")) + 1)
+                        return tid.encode() if isinstance(tid, str) else tid
+                return None
+
+            # --- QueueManager: complete/fail ---
+            if is_complete:
+                running_key, stats_key = keys[0], keys[1]
+                task_id = args[0]
+                counter = args[1] if len(args) > 1 else "total_completed"
+                rb = redis_ref.zsets.get(running_key, {})
+                rb.pop(task_id, None)
+                h = redis_ref.hashes.setdefault(stats_key, {})
+                h[counter] = str(int(h.get(counter, "0")) + 1)
+                return 1
+
+            # --- QueueManager: cancel ---
+            if is_cancel:
+                pending_key, running_key = keys[0], keys[1]
+                task_id = args[0]
+                pb = redis_ref.zsets.get(pending_key, {})
+                if task_id in pb:
+                    del pb[task_id]
+                    return 1
+                rb = redis_ref.zsets.get(running_key, {})
+                if task_id in rb:
+                    del rb[task_id]
+                    return 1
+                return 0
+
+            # --- QueueManager: adjust_concurrent ---
+            if is_adjust:
+                config_key = keys[0]
+                delta = int(args[0])
+                default_val = int(args[1]) if len(args) > 1 else 8
+                h = redis_ref.hashes.setdefault(config_key, {})
+                cur = int(h.get("max_concurrent", default_val))
+                new_val = max(1, cur + delta)
+                h["max_concurrent"] = str(new_val)
+                return new_val
+
+            # --- QueueManager: acquire_slot ---
+            if is_acquire_slot:
+                running_key, config_key = keys[0], keys[1]
+                slot_id = args[0]
+                default_mc = int(args[1])
+                now_ts = float(args[2])
+                ttl = int(args[3]) if len(args) > 3 else 3600
+                cfg = redis_ref.hashes.get(config_key, {})
+                max_concurrent = int(cfg.get("max_concurrent", default_mc))
+                rb = redis_ref.zsets.setdefault(running_key, {})
+                if len(rb) >= max_concurrent:
+                    return -1
+                rb[slot_id] = now_ts
+                for k in (running_key, config_key):
+                    redis_ref._expiry[k] = ttl
+                return 1
+
+            # --- QueueManager: recover_concurrent ---
+            if is_recover:
+                config_key = keys[0]
+                default_baseline = int(args[0]) if args else 8
+                h = redis_ref.hashes.setdefault(config_key, {})
+                baseline = int(h.get("max_concurrent_baseline", default_baseline))
+                cur = int(h.get("max_concurrent", baseline))
+                if cur < baseline:
+                    new_val = cur + 1
+                    h["max_concurrent"] = str(new_val)
+                    return new_val
+                return cur
+
+            # --- slot acquire/release (TaskConsumer global concurrency) ---
+            key = keys[0] if keys else _CONC_KEY
             current = int(redis_ref._strings.get(key, "0"))
             if is_acquire:
                 limit = int(args[0]) if args else 1
@@ -289,7 +458,6 @@ class FullFakeAsyncRedis:
                     return 1
                 return 0
             else:
-                # Release: decrement if > 0
                 if current > 0:
                     redis_ref._strings[key] = str(current - 1)
                     return current - 1

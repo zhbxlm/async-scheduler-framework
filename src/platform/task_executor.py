@@ -30,15 +30,6 @@ else
     return 0
 end
 """
-
-_LUA_LOCK_RELEASE = """
--- Atomic lock release: only delete if value matches
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-else
-    return 0
-end
-"""
 _LUA_LOCK_RENEW = """
 local key = KEYS[1]
 local val = ARGV[1]
@@ -69,10 +60,7 @@ class TaskExecutor:
         self._lua_lock_renew = redis_client.register_script(_LUA_LOCK_RENEW)
         self._lua_lock_release = redis_client.register_script(_LUA_LOCK_RELEASE)
         self._draining = False
-        self._active_tasks = set()
-        self._lua_lock_release = redis_client.register_script(_LUA_LOCK_RELEASE)
-        self._draining = False
-        self._active_tasks = set()
+        self._active_tasks: set[str] = set()
 
     async def execute(self, task_id: str, dag_definition: Any, context: Any) -> dict[str, Any]:
         """Acquire lock, run DAG, release lock, callback."""
@@ -84,6 +72,7 @@ class TaskExecutor:
         if not acquired:
             raise RuntimeError(f"TaskExecutor: failed to acquire lock for task_id={task_id}")
 
+        self._active_tasks.add(task_id)
         renewal_task = asyncio.create_task(
             self._renew_lock_loop(lock_key, lock_val)
         )
@@ -110,6 +99,7 @@ class TaskExecutor:
             result = {"status": "failed", "error": str(e)}
             logger.error("TaskExecutor: task_id=%s failed: %s", task_id, e)
         finally:
+            self._active_tasks.discard(task_id)
             renewal_task.cancel()
             try:
                 await renewal_task
@@ -137,22 +127,21 @@ class TaskExecutor:
                 logger.warning("TaskExecutor: lock lost for key=%s", lock_key)
                 break
 
-    async def shutdown(self, timeout=30.0):
+    async def shutdown(self, timeout: float = 30.0) -> None:
         self._draining = True
         if self._active_tasks:
-            import asyncio as a
-            deadline = a.get_event_loop().time() + timeout
-            while self._active_tasks and a.get_event_loop().time() < deadline:
-                await a.sleep(0.5)
-        
+            deadline = asyncio.get_running_loop().time() + timeout
+            while self._active_tasks and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.5)
+
         # Close DagEngine if provided
-        if self._dag is not None and hasattr(self._dag, 'close'):
+        if self._dag is not None and hasattr(self._dag, "close"):
             try:
                 await self._dag.close()
                 logger.debug("TaskExecutor: closed DagEngine")
             except Exception as e:
                 logger.warning("TaskExecutor: failed to close DagEngine: %s", e)
-        
+
         logger.info("TaskExecutor: drain complete")
 
     async def _release_lock(self, lock_key: str, lock_val: str) -> None:

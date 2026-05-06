@@ -202,16 +202,12 @@ class QueueManager:
         # register capability
         await self._r.sadd(_CAPABILITIES_KEY, capability)
         
-        # Record task creation metric
-        priority_map_reverse = {
-            1: "very_high",
-            2: "high",
-            3: "normal",
-            4: "low",
-            5: "tide"
-        }
-        priority_str = priority_map_reverse.get(priority, "normal")
-        record_task_creation(capability, priority_str)
+        # Record task creation metric (best-effort)
+        priority_str = {1: "very_high", 2: "high", 3: "normal", 4: "low", 5: "tide"}.get(priority, "normal")
+        try:
+            record_task_creation(capability, priority_str)
+        except Exception:
+            pass
         
         # Invalidate stats cache after enqueue (batch refresh will repopulate)
         await self.invalidate_stats_cache()

@@ -4,6 +4,7 @@ Cron schedule CRUD with:
 - Atomic toggle (Lua CAS)
 - Atomic next_fire_at advance
 - list_due() for CronScheduler
+- schedule_id → tenant_id reverse index for O(1) update_next_fire
 """
 from __future__ import annotations
 import json
@@ -14,6 +15,8 @@ from typing import Any
 from src.platform.base_registry import BaseRedisRegistry
 
 logger = logging.getLogger(__name__)
+
+_SCHEDULE_TENANT_IDX = "schedules:sid_to_tenant"  # hash: schedule_id → tenant_id
 
 _LUA_TOGGLE = """
 local key = KEYS[1]
@@ -47,6 +50,13 @@ class ScheduleRegistry(BaseRedisRegistry):
         super().__init__(redis_client, "schedules", ttl_seconds)
         self._toggle_script = redis_client.register_script(_LUA_TOGGLE)
         self._advance_script = redis_client.register_script(_LUA_ADVANCE_NEXT_FIRE)
+
+    async def set(self, tenant_id: str, schedule_id: str, value: Any) -> bool:
+        """Register schedule and update reverse index (schedule_id → tenant_id)."""
+        result = await super().set(tenant_id, schedule_id, value)
+        if result:
+            await self._r.hset(_SCHEDULE_TENANT_IDX, schedule_id, tenant_id)
+        return result
 
     async def toggle(self, tenant_id: str, schedule_id: str, enabled: bool) -> bool:
         """Atomically enable/disable a schedule."""
@@ -123,12 +133,26 @@ class ScheduleRegistry(BaseRedisRegistry):
         return due
 
     async def update_next_fire(self, schedule_id: str, next_fire: datetime) -> None:
-        """Scan all tenants to find and update the schedule."""
+        """Update next_fire_at for a schedule using reverse index for O(1) lookup.
+
+        Falls back to tenant scan if the reverse index entry is missing.
+        """
+        # Fast path: reverse index lookup O(1)
+        tenant_id = await self._r.hget(_SCHEDULE_TENANT_IDX, schedule_id)
+        if tenant_id:
+            if isinstance(tenant_id, bytes):
+                tenant_id = tenant_id.decode()
+            await self.advance_next_fire(tenant_id, schedule_id, next_fire)
+            return
+
+        # Fallback: linear scan (for schedules registered before index existed)
         tenant_ids = await self.list_all_tenants()
-        for tenant_id in tenant_ids:
-            schedule_ids = await self.list(tenant_id)
+        for tid in tenant_ids:
+            schedule_ids = await self.list(tid)
             if schedule_id in schedule_ids:
-                await self.advance_next_fire(tenant_id, schedule_id, next_fire)
+                await self.advance_next_fire(tid, schedule_id, next_fire)
+                # Back-fill the reverse index
+                await self._r.hset(_SCHEDULE_TENANT_IDX, schedule_id, tid)
                 return
 
 
