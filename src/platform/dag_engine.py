@@ -274,19 +274,46 @@ class DagEngine:
         executor = _get_streaming_executor(self._streaming_executor_max_workers)
         result: dict[str, Any] = {}
 
+        # Global timeout for the entire streaming loop
+        stream_timeout = step.timeout_seconds or 3600
+        deadline = loop.time() + stream_timeout
+        chunks_received = 0
+        max_chunks = getattr(step, "streaming_max_chunks", 100_000)  # safety cap
+
         while True:
+            # Check global deadline before each blpop
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                if self._redis:
+                    await self._redis.delete(buffer_key)
+                raise TimeoutError(
+                    f"STREAMING step '{step.step_name}' exceeded timeout "
+                    f"({stream_timeout}s) after {chunks_received} chunks"
+                )
+
+            # Check chunk count safety cap
+            if chunks_received >= max_chunks:
+                if self._redis:
+                    await self._redis.delete(buffer_key)
+                raise RuntimeError(
+                    f"STREAMING step '{step.step_name}' exceeded max_chunks={max_chunks}"
+                )
+
+            blpop_timeout = min(30, int(remaining) + 1)
             # Prefer async_blpop (e.g. MockRedis / aioredis) to avoid thread blocking
             if hasattr(self._redis, "async_blpop"):
-                item = await self._redis.async_blpop(buffer_key, timeout=30)
+                item = await self._redis.async_blpop(buffer_key, timeout=blpop_timeout)
             else:
                 # Sync redis — run in thread pool
                 item = await loop.run_in_executor(
                     executor,
-                    lambda bk=buffer_key: self._redis_blpop_sync(bk, timeout=30),
+                    lambda bk=buffer_key, t=blpop_timeout: self._redis_blpop_sync(bk, timeout=t),
                 )
             raw = item[1] if item else None
             if raw is None:
                 raise TimeoutError(f"STREAMING: blpop timeout on buffer_key={buffer_key}")
+
+            chunks_received += 1
 
             try:
                 chunk = orjson.loads(raw)
@@ -303,6 +330,10 @@ class DagEngine:
                         result[dst] = summary[src]
                 if trigger.flush_on_complete and self._redis:
                     await self._redis.delete(buffer_key)
+                logger.debug(
+                    "STREAMING step '%s' completed: %d chunks in %.1fs",
+                    step.step_name, chunks_received, stream_timeout - (deadline - loop.time())
+                )
                 break
 
             # Non-sentinel chunk — dispatch each downstream step
