@@ -18,17 +18,14 @@ logger = logging.getLogger(__name__)
 
 class SystemError(Exception):
     """Internal system error (should be logged and fixed)."""
-    pass
 
 
 class BusinessError(Exception):
     """Business logic error (user input validation, constraints)."""
-    pass
 
 
 class ExternalServiceError(Exception):
     """External service failure (Redis, DB, third-party API)."""
-    pass
 
 
 # ---------------------------------------------------------------------------

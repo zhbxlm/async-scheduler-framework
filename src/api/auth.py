@@ -51,7 +51,7 @@ async def authenticate(
         raise HTTPException(status_code=401, detail="Missing API key")
 
     api_key = credentials.credentials
-    tenant_id_from_header = request.headers.get(tenant_id_header)
+    _ = request.headers.get(tenant_id_header)  # noqa: F841
 
     # ----------------------------------------------------------------
     # Single-tenant mode

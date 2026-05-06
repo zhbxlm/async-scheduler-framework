@@ -5,21 +5,17 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
 
-from src.api.dependencies import DbSession, get_tenant_context, get_db_session
+from src.api.dependencies import DbSession, get_tenant_context
 from src.models.task import (
     TaskCancelResponse,
     TaskCreate,
     TaskCreateResponse,
     TaskInfo,
     TaskListResponse,
-    TaskPriority,
     TaskRecord,
     TaskResultResponse,
     TaskStatus,
@@ -28,7 +24,6 @@ from src.models.task import (
 from src.services.task_validation import (
     validate_task_artifact,
     validate_task_scheduling,
-    fix_lua_cjson_empty_tables,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])

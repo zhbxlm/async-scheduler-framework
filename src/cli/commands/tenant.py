@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="tenants", path="/ops/v1/tenants")
 def tenant():
     """Manage tenants."""
-    pass

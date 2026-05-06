@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="capabilities", path="/ops/v1/capabilities")
 def capability():
     """Manage capabilities."""
-    pass

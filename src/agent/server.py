@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import orjson
 import logging
-import os
 import subprocess
 import time
 import uuid
@@ -18,7 +17,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 
 from src.models.node import (
     DrainRequest,
@@ -217,7 +215,7 @@ async def heartbeat_task(
 
             # Update NodeRegistry
             if node_registry is not None:
-                node_info = state.to_node_info()
+                _ = state.to_node_info()  # noqa: F841 — kept for side-effect pattern
                 await node_registry.heartbeat(
                     state.node_id,
                     resources=state.resources.model_dump(),

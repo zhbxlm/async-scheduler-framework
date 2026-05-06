@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 import psutil
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from src.common.error_handling import log_errors
 

@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="schedules", path="/ops/v1/schedules")
 def schedule():
     """Manage schedules."""
-    pass

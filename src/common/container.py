@@ -70,7 +70,6 @@ class ServiceContainer:
         from src.platform.task_completion_node import TaskCompletionNode
         from src.platform.cron_scheduler import CronScheduler
         from src.services.compensation import CompensationService
-        from src.common.transaction import AtomicWriteCoordinator
         from functools import partial
 
         c = cls()

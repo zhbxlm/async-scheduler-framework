@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="nodes", path="/ops/v1/nodes")
 def node():
     """Manage nodes."""
-    pass

@@ -8,13 +8,12 @@ from __future__ import annotations
 import asyncio
 import orjson
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from croniter import croniter
-from src.common.error_handling import log_errors, ExternalServiceError
+from src.common.error_handling import log_errors
 
 logger = logging.getLogger(__name__)
 

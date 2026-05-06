@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="dags", path="/api/v1/dags")
 def dag():
     """Manage dags."""
-    pass

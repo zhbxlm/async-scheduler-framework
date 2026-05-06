@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-from typing import Optional, Dict, Any
 from contextlib import contextmanager
 from functools import wraps
 
@@ -204,7 +203,7 @@ class MetricsCollector:
                 pending = snapshot.get('pending', {}).get('size', 0)
                 running = snapshot.get('running', {}).get('size', 0)
                 update_queue_metrics(capability, pending, running)
-        except Exception as e:
+        except Exception:
             # Don't let metrics collection break the system
             pass
     

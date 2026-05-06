@@ -17,7 +17,6 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-import time
 from functools import lru_cache
 from typing import Any, Callable, Awaitable
 
@@ -179,7 +178,6 @@ class DagEngine:
                                 logger.warning("MAP step=%s idx=%d failed (continue): %s", step.step_name, idx, e)
                                 return {"__map_error__": str(e), "_map_index": idx}
                             raise
-
                 sub_tasks = [asyncio.create_task(_map_one(item, i)) for i, item in enumerate(items)]
                 map_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
@@ -199,7 +197,7 @@ class DagEngine:
             elif step.step_kind == StepKind.STREAMING and step.streaming_trigger:
                 try:
                     result = await self._run_streaming_step(step, ctx, dispatch, input_data)
-                except Exception as e:
+                except Exception:
                     # Clean up Redis buffer on failure
                     if self._redis and step.streaming_trigger:
                         bk = step.streaming_trigger.buffer_key.replace("{task_id}", ctx.task_id)
@@ -225,7 +223,7 @@ class DagEngine:
                             flask_url = (step.flask.url if step.flask else "") or ""
                             result = await self._flask_dispatch(flask_url, input_data)
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt < step.retry_policy.max_retries:
                             await asyncio.sleep(step.retry_policy.retry_delay_seconds)
                             continue
@@ -468,7 +466,6 @@ class DagEngine:
 
     def _topo_sort(self, steps: list[DagStep]) -> list[list[str]]:
         """Return topological levels (waves) for parallel execution."""
-        step_map = {s.step_name: s for s in steps}
         in_degree = {s.step_name: len(s.depends_on) for s in steps}
         adj: dict[str, list[str]] = {s.step_name: [] for s in steps}
         for s in steps:

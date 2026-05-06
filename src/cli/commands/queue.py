@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="queues", path="/ops/v1/queue")
 def queue():
     """Manage queues."""
-    pass

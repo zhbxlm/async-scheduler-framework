@@ -5,7 +5,6 @@ The CLI connects to task-api (port 8001) by default since most operations
 (capability, node, cluster, schedule management) are routed to the same
 URL for simplicity — in a split deployment, point --api-url at the
 appropriate service."""
-import os
 import click
 from src.cli.client import ApiClient
 

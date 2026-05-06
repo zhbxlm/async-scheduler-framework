@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="tasks", path="/api/v1/tasks")
 def task():
     """Manage tasks."""
-    pass

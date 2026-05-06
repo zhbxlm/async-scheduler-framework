@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 import redis.asyncio as aioredis
 from redis.asyncio.sentinel import Sentinel
@@ -227,7 +227,7 @@ class RedisHA:
                 script_obj = self._client.register_script(script)
                 
                 # Wrap the script call with our retry logic
-                original_call = script_obj.__call__
+                # script_obj.__call__ kept via register_script wrapping
                 
                 async def wrapped_script(keys=None, args=None, client=None):
                     # Convert keys/args to appropriate format for eval

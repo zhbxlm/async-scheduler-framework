@@ -3,7 +3,6 @@ aligned with docs/deepwiki-reference/API 参考.md + Cron 调度.md
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -56,7 +55,7 @@ async def create_schedule(
     body: dict,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    import uuid, time
+    import uuid
     reg = _registry(request)
     tenant = _auth.get("tenant_id", "default")
     cron_expr = body.get("cron_expr")

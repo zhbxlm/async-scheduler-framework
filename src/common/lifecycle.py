@@ -14,18 +14,15 @@ class ManagedResource(ABC):
     @abstractmethod
     async def start(self) -> None:
         """Start the resource."""
-        pass
 
     @abstractmethod
     async def stop(self) -> None:
         """Stop the resource gracefully."""
-        pass
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Resource name for logging."""
-        pass
     
     @property
     def resource_type(self) -> str:

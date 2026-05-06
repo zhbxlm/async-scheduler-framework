@@ -124,7 +124,7 @@ class DagLoader:
         """Load from MySQL dag_definitions table."""
         try:
             async with self._db() as session:
-                from sqlalchemy import select, text
+                from sqlalchemy import text
                 # Flexible: try raw text query if model isn't imported
                 result = await session.execute(
                     text(

@@ -18,7 +18,7 @@ from typing import Any
 
 import orjson
 
-from src.common.error_handling import log_errors, BusinessError
+from src.common.error_handling import log_errors
 from src.common.transaction import AtomicWriteCoordinator
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,6 @@ aligned with docs/deepwiki-reference/API 参考.md + 调度与资源管理.md
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Any
 
 from src.api.auth import authenticate
 

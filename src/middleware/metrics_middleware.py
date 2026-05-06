@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match
 
@@ -34,7 +34,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             status_code = str(response.status_code)
-        except Exception as e:
+        except Exception:
             status_code = "500"
             raise
         finally:

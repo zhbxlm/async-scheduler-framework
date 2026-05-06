@@ -11,7 +11,7 @@ import orjson
 import logging
 from typing import Any
 
-from src.models.cluster import ClusterInfo, ClusterResources, ClusterStatus, ObservedResources
+from src.models.cluster import ClusterInfo, ClusterStatus, ObservedResources
 from src.platform.base_registry import BaseRedisRegistry
 from src.common.error_handling import log_errors, ExternalServiceError
 

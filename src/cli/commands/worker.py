@@ -10,7 +10,6 @@ import click
 @click.group()
 def worker():
     """Manage workers. (Deprecated — use node-agent instead.)"""
-    pass
 
 
 @worker.command("list")

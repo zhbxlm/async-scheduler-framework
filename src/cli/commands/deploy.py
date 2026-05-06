@@ -10,7 +10,6 @@ import click
 @click.group()
 def deploy():
     """Manage deploys. (Deprecated — use node-agent instead.)"""
-    pass
 
 
 @deploy.command("list")

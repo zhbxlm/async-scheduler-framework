@@ -5,7 +5,7 @@ Returns a RedisHA wrapper with retry, circuit breaker, and graceful degradation.
 from __future__ import annotations
 import os
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

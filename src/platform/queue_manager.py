@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import redis.asyncio as aioredis
 
 from src.platform import queue_keys as qk
-from src.common.metrics import record_task_creation, record_task_completion
+from src.common.metrics import record_task_creation
 
 logger = logging.getLogger(__name__)
 

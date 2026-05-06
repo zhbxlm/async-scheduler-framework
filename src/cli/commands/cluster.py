@@ -8,4 +8,3 @@ from src.cli.base import CrudCommandGroup
 @click.group(cls=CrudCommandGroup, resource="clusters", path="/ops/v1/clusters")
 def cluster():
     """Manage clusters."""
-    pass

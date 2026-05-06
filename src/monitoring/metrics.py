@@ -10,15 +10,13 @@ Exposes metrics for:
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Optional
+from typing import Optional
 
 from prometheus_client import (
     Counter,
     Gauge,
     Histogram,
-    Summary,
     generate_latest,
-    REGISTRY,
     CollectorRegistry,
 )
 

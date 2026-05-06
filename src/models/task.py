@@ -6,8 +6,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Index, Integer, String, Text
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import DateTime, Enum as SAEnum, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 

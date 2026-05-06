@@ -17,7 +17,7 @@ from typing import Any
 
 import json
 
-from src.common.error_handling import log_errors, ExternalServiceError
+from src.common.error_handling import log_errors
 
 logger = logging.getLogger(__name__)
 

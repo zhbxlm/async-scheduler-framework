@@ -11,12 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.task import TaskRecord, TaskStatus
 from src.common.transaction import TxStatus, TxRecord

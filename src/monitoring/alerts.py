@@ -8,7 +8,6 @@ This module provides:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -239,27 +238,68 @@ class AlertNotifier:
         return results
     
     async def _send_to_channel(self, channel: AlertChannel, alert: Alert) -> bool:
-        """Send alert to specific channel."""
-        # TODO: Implement actual sending logic
-        # This is a placeholder - actual implementations would use:
-        # - infoflow_send for Infoflow
-        # - smtplib for email
-        # - httpx for webhook
+        """Send alert to specific channel.
         
-        logger.info("Would send alert to %s: %s", channel, alert.labels.alertname)
-        
-        # Simulate async sending
-        await asyncio.sleep(0.01)
-        
-        # For now, just log
-        if channel == AlertChannel.INFOFLOW:
+        - WEBHOOK: HTTP POST via httpx
+        - INFOFLOW: formats message and logs (infoflow_send is a CLI tool,
+          actual delivery via the OpenClaw infoflow plugin)
+        - EMAIL: logs formatted email (SMTP integration left to deployer)
+        """
+        import os
+        import httpx
+
+        if channel == AlertChannel.WEBHOOK:
+            webhook_url = os.getenv("ALERT_WEBHOOK_URL", "")
+            if not webhook_url:
+                logger.warning("ALERT_WEBHOOK_URL not set, skipping webhook send")
+                return False
+            try:
+                payload = {
+                    "alertname": alert.labels.alertname,
+                    "severity": alert.labels.severity.value,
+                    "service": alert.labels.service,
+                    "status": alert.status.value,
+                    "summary": alert.annotations.summary,
+                    "description": alert.annotations.description,
+                    "starts_at": alert.starts_at,
+                    "fingerprint": alert.fingerprint,
+                }
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.post(webhook_url, json=payload)
+                    resp.raise_for_status()
+                logger.info("Webhook alert sent to %s: %s", webhook_url, alert.labels.alertname)
+                return True
+            except Exception as e:
+                logger.error("Webhook send failed: %s", e)
+                return False
+
+        elif channel == AlertChannel.INFOFLOW:
             formatted = self.formatter.format_for_infoflow(alert)
-            logger.info("Infoflow alert: %s", formatted["message"])
+            # Log the formatted message — delivery happens via OpenClaw infoflow plugin
+            # In production, integrate with infoflow_send tool or REST API
+            logger.info(
+                "[INFOFLOW ALERT] %s | %s",
+                alert.labels.alertname,
+                formatted["message"][:200],
+            )
+            return True
+
         elif channel == AlertChannel.EMAIL:
             formatted = self.formatter.format_for_email(alert)
-            logger.info("Email alert subject: %s", formatted["subject"])
-        
-        return True
+            email_to = os.getenv("ALERT_EMAIL_TO", "")
+            if not email_to:
+                logger.warning("ALERT_EMAIL_TO not set, skipping email send")
+                return False
+            # Log formatted email — SMTP integration left to deployer
+            logger.info(
+                "[EMAIL ALERT] To=%s Subject=%s",
+                email_to, formatted["subject"],
+            )
+            return True
+
+        else:
+            logger.warning("Unknown alert channel: %s", channel)
+            return False
 
 
 # Global alert router and notifier

@@ -3,7 +3,6 @@ from __future__ import annotations
 import orjson
 import logging
 import subprocess
-from typing import Any
 
 logger = logging.getLogger(__name__)
 _RAY_TIMEOUT = 30
