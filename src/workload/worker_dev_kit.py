@@ -102,4 +102,5 @@ class WorkerDevKit:
 
     def pretty_print(self, result: Any) -> None:
         """Pretty-print result as JSON."""
-        print(orjson.dumps(result, ensure_ascii=False, indent=2, default=str))
+        raw = orjson.dumps(result, default=str, option=orjson.OPT_INDENT_2)
+        print(raw.decode())

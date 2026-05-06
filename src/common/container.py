@@ -33,6 +33,7 @@ class ServiceContainer:
     tenant_registry: Any = None
 
     # ── Platform services ─────────────────────────────────────────
+    circuit_breaker: Any = None
     dag_loader: Any = None
     queue_manager: Any = None
     task_creator: Any = None
@@ -84,7 +85,14 @@ class ServiceContainer:
         c.schedule_registry = ScheduleRegistry(c.redis_client)
 
         # Core platform
-        c.queue_manager = QueueManager(c.redis_client)
+        from src.platform.circuit_breaker import CircuitBreaker
+        c.circuit_breaker = CircuitBreaker(
+            redis_client=c.redis_client,
+            key_prefix="queue:cb",
+        )
+        c.queue_manager = QueueManager(
+            c.redis_client, circuit_breaker=c.circuit_breaker
+        )
 
         c.task_creator = TaskCreator(
             redis_client=c.redis_client,
@@ -166,8 +174,15 @@ class ServiceContainer:
         c.tenant_registry = TenantRegistry(c.redis_client)
 
         # Core platform
+        from src.platform.circuit_breaker import CircuitBreaker
+        c.circuit_breaker = CircuitBreaker(
+            redis_client=c.redis_client,
+            key_prefix="queue:cb",
+        )
         c.dag_loader = DagLoader(redis_client=c.redis_client)
-        c.queue_manager = QueueManager(c.redis_client)
+        c.queue_manager = QueueManager(
+            c.redis_client, circuit_breaker=c.circuit_breaker
+        )
 
         # Not initialized for ops-api:
         # c.task_creator = None (requires MySQL)

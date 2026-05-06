@@ -176,10 +176,14 @@ class QueueManager:
         self,
         capability: str,
         task_id: str,
-        priority: int = 3,          # 1–5; 1=highest
+        priority: int = 3,
         execute_after_ms: int = 0,
     ) -> dict:
         """Enqueue task. Returns accepted/position/pending_count."""
+        if self._cb is not None and not await self._cb.allow_request(capability):
+            raise RuntimeError(
+                f"Circuit breaker open for capability '{capability}' — enqueue rejected"
+            )
         now_ms = int(time.time() * 1000)
         ts = execute_after_ms if execute_after_ms > now_ms else now_ms
         score = priority * 10_000_000_000_000 + ts
@@ -216,6 +220,8 @@ class QueueManager:
 
     async def dequeue_ready(self, capability: str) -> str | None:
         """Dequeue next ready task (execute_after_ms <= now)."""
+        if self._cb is not None and not await self._cb.allow_request(capability):
+            return None
         now_ms = int(time.time() * 1000)
         keys = [qk.pending(capability), qk.running(capability),
                 qk.stats(capability), qk.config(capability)]

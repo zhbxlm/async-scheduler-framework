@@ -24,6 +24,9 @@ setup(
         "PyYAML>=6.0.0",
         "croniter>=2.0.0",
         "python-dotenv>=1.0.0",
+        "orjson>=3.9.0",
+        "psutil>=5.9.0",
+        "requests>=2.28.0",
     ],
     extras_require={
         "ray": ["ray[default]>=2.9.0"],
@@ -31,6 +34,8 @@ setup(
             "pytest>=7.4.0",
             "pytest-asyncio>=0.21.0",
             "fakeredis>=2.23.0",
+            "ruff>=0.1.0",
+            "mypy>=1.6.0",
         ],
         # User-facing packages are now available as independent packages:
         #   pip install ../packages/node-agent    # or async-agent
