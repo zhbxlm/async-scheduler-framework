@@ -219,16 +219,22 @@ class TaskReconciler:
 
         now = time.time()
         stuck_count = 0
+        
         # Batch EXISTS check for execution locks
         pipe = self._r.pipeline()
         for t in running_tasks:
             tid = t.get("task_id", "")
             pipe.exists(_LOCK_KEY_TEMPLATE.format(task_id=tid))
         lock_results = await pipe.execute()
-
+        
+        # Collect tasks for batch processing
+        requeue_tasks = []  # Tasks to requeue with incremented attempt
+        fail_tasks = []     # Tasks to mark as failed (max retries exceeded)
+        
         for task, lock_exists in zip(running_tasks, lock_results):
             if stuck_count >= self._stuck_max_per_tick:
                 break
+            
             tid = task.get("task_id", "")
             if not tid:
                 continue
@@ -250,7 +256,7 @@ class TaskReconciler:
             attempt = task.get("attempt", 0)
 
             if self._qm and attempt < max_retries:
-                # Collect tasks for batch processing
+                # Collect for batch requeue
                 requeue_tasks.append({
                     "task_id": tid,
                     "attempt": attempt,
@@ -259,25 +265,79 @@ class TaskReconciler:
                     "max_retries": max_retries,
                 })
             else:
-                # Mark FAILED in Redis
+                # Mark as failed (max retries exceeded)
                 fail_tasks.append(tid)
-            else:
-                # Mark FAILED in Redis
-                task_key = f"task:{tid}"
-                raw = await self._r.get(task_key)
-                if raw:
-                    try:
-                        data = json.loads(raw)
-                        data["status"] = "failed"
-                        data["error"] = "reconciler: stuck task, lock expired"
-                        await self._r.set(task_key, json.dumps(data))
-                        logger.info(
-                            "TaskReconciler: phase2 marked FAILED task_id=%s", tid
-                        )
-                    except Exception as exc:
-                        logger.warning("TaskReconciler: phase2 update error task_id=%s: %s", tid, exc)
-
+            
             stuck_count += 1
+        
+        # ── Batch Database Updates ──
+        if self._db is not None and requeue_tasks:
+            try:
+                from sqlalchemy import update
+                from src.models.task import TaskRecord
+                
+                task_ids = [t["task_id"] for t in requeue_tasks]
+                
+                async with self._db() as session:
+                    # Batch update attempt counter
+                    stmt = (
+                        update(TaskRecord)
+                        .where(TaskRecord.task_id.in_(task_ids))
+                        .values(attempt=TaskRecord.attempt + 1)
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                    
+                    logger.info(
+                        "TaskReconciler: batch updated %d tasks (attempt+1)",
+                        len(task_ids)
+                    )
+                    
+            except Exception as exc:
+                logger.warning(
+                    "TaskReconciler: batch update failed: %s", exc
+                )
+        
+        # ── Batch Requeue Operations ──
+        current_time_ms = int(time.time() * 1000)
+        for task_info in requeue_tasks:
+            tid = task_info["task_id"]
+            attempt = task_info["attempt"]
+            capability = task_info["capability"]
+            priority_rank = task_info["priority_rank"]
+            
+            delay_ms = min(600_000, 10_000 * (2 ** attempt))
+            
+            if capability:
+                await self._qm.enqueue(
+                    capability,
+                    tid,
+                    priority=priority_rank,
+                    execute_after_ms=current_time_ms + delay_ms,
+                )
+                logger.info(
+                    "TaskReconciler: phase2 requeued task_id=%s attempt=%d", 
+                    tid, attempt
+                )
+        
+        # ── Batch Fail Operations ──
+        for tid in fail_tasks:
+            task_key = f"task:{tid}"
+            raw = await self._r.get(task_key)
+            if raw:
+                try:
+                    data = json.loads(raw)
+                    data["status"] = "failed"
+                    data["error"] = "reconciler: stuck task, lock expired"
+                    await self._r.set(task_key, json.dumps(data))
+                    logger.info(
+                        "TaskReconciler: phase2 marked FAILED task_id=%s", tid
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "TaskReconciler: phase2 update error task_id=%s: %s", 
+                        tid, exc
+                    )
 
     # ------------------------------------------------------------------
     # Phase 3: Lost callback recovery
