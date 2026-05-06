@@ -5,7 +5,7 @@ Returns a RedisHA wrapper with retry, circuit breaker, and graceful degradation.
 from __future__ import annotations
 import os
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ async def create_redis_client(
     decode_responses: bool = True,
     max_connections: int = 50,
     use_ha: bool = True,
-) -> "RedisHA | aioredis.Redis":
+) -> Any:
     """Create a Redis client with optional HA features.
     
     Args:
