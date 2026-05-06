@@ -43,6 +43,7 @@ class TaskConsumer:
         poll_interval: float = 1.0,
         max_concurrent: int = 8,
         stale_threshold_seconds: float = 300.0,
+        redis_client: Any = None,
     ) -> None:
         self._queue = queue_manager
         self._executor = task_executor
