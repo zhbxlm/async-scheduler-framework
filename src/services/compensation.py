@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -157,7 +158,7 @@ class CompensationService:
                     TaskStatus.RUNNING,
                     TaskStatus.SCHEDULED,
                 ]),
-                TaskRecord.updated_at >= time.time() - 86400,  # 24 hours
+                TaskRecord.updated_at >= datetime.now(timezone.utc) - timedelta(hours=24),
             ).limit(self._batch_size)
             
             result = await session.execute(stmt)

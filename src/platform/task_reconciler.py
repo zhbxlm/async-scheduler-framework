@@ -56,6 +56,7 @@ class TaskReconciler:
         batch_size: int = 100,
         instance_id: str | None = None,
         leader_ttl: int = _LEADER_TTL,
+        compensation_service: Any | None = None,
     ) -> None:
         self._r = redis_client
         self._db = db_session_factory
@@ -66,6 +67,7 @@ class TaskReconciler:
         self._batch_size = batch_size
         self._instance_id = instance_id or str(uuid.uuid4())
         self._leader_ttl = leader_ttl
+        self._compensation = compensation_service
         self._lua_renew_leader = redis_client.register_script(_LUA_RENEW_LEADER) if redis_client else None
         self._running = False
         self._scan_cursor: int = 0
@@ -209,6 +211,26 @@ class TaskReconciler:
                         )
                 await session.commit()
                 logger.info("TaskReconciler: phase1 compensated %d tasks", len(missing))
+
+                # Notify CompensationService so it can also repair Redis-side
+                if self._compensation:
+                    for task in missing:
+                        from src.common.transaction import TxRecord, TxStatus
+                        tx = TxRecord(
+                            tx_id=f"reconciler-{task.get('task_id', 'unknown')[:8]}",
+                            task_id=task.get("task_id", ""),
+                            operation="create_task",
+                            status=TxStatus.FAILED,
+                            mysql_written=True,
+                            redis_written=False,
+                            last_error="detected by reconciler phase1",
+                        )
+                        try:
+                            await self._compensation.enqueue(tx)
+                        except Exception as comp_err:
+                            logger.warning(
+                                "TaskReconciler: compensation enqueue failed: %s", comp_err
+                            )
         except Exception as exc:
             logger.error("TaskReconciler: phase1 error: %s", exc)
 

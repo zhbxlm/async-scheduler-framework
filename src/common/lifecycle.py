@@ -217,3 +217,22 @@ class CronSchedulerResource(ManagedResource):
     async def stop(self) -> None:
         if hasattr(self._scheduler, 'stop'):
             await self._scheduler.stop()
+
+
+class CompensationServiceResource(ManagedResource):
+    """Adapter for CompensationService."""
+
+    def __init__(self, service: Any) -> None:
+        self._service = service
+
+    @property
+    def name(self) -> str:
+        return "CompensationService"
+
+    async def start(self) -> None:
+        if hasattr(self._service, 'start'):
+            await self._service.start()
+
+    async def stop(self) -> None:
+        if hasattr(self._service, 'stop'):
+            await self._service.stop()

@@ -42,6 +42,7 @@ class ServiceContainer:
     task_reconciler: Any = None
     task_completion_node: Any = None
     cron_scheduler: Any = None
+    compensation_service: Any = None
 
 
     @classmethod
@@ -68,6 +69,8 @@ class ServiceContainer:
         from src.platform.task_reconciler import TaskReconciler
         from src.platform.task_completion_node import TaskCompletionNode
         from src.platform.cron_scheduler import CronScheduler
+        from src.services.compensation import CompensationService
+        from src.common.transaction import AtomicWriteCoordinator
         from functools import partial
 
         c = cls()
@@ -101,6 +104,16 @@ class ServiceContainer:
             db_session_factory=db_factory,
         )
 
+        # CompensationService — repairs Redis/MySQL inconsistencies
+        # Must be created before TaskReconciler so reconciler can reference it
+        c.compensation_service = CompensationService(
+            mysql_session_factory=db_factory,
+            redis_client=c.redis_client,
+            scan_interval_seconds=getattr(
+                settings.background, 'compensation_interval', 60
+            ),
+        )
+
         rcfg = settings.background.reconcile
         c.task_reconciler = TaskReconciler(
             redis_client=c.redis_client,
@@ -110,6 +123,7 @@ class ServiceContainer:
             stuck_max_per_tick=rcfg.stuck_max_per_tick,
             stuck_task_max_age_seconds=rcfg.stuck_task_max_age_seconds,
             batch_size=rcfg.batch_size,
+            compensation_service=c.compensation_service,
         )
 
         c.task_completion_node = TaskCompletionNode(
@@ -193,13 +207,18 @@ class ServiceContainer:
         return c
 
     async def close(self) -> None:
-        """Close all connections (Redis, etc.)."""
+        """Close all connections and stop background services."""
         from src.common.redis_client import close_redis_client
-        
+
+        # Stop background services first
+        if self.compensation_service:
+            await self.compensation_service.stop()
+            self.compensation_service = None
+
         if self.redis_client:
             await close_redis_client(self.redis_client)
             self.redis_client = None
-        
+
         # Note: Database connections are managed by SQLAlchemy's connection pool
         # and will be closed automatically when the engine is disposed.
 

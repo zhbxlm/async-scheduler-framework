@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_lifecycle_manager,
         TaskReconcilerResource,
         CronSchedulerResource,
+        CompensationServiceResource,
     )
     from src.common.error_handling import BusinessError
 
@@ -81,6 +82,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         manager.register_resource(TaskReconcilerResource(container.task_reconciler))
     if settings.background.cron.enabled and container.cron_scheduler:
         manager.register_resource(CronSchedulerResource(container.cron_scheduler))
+    if container.compensation_service:
+        manager.register_resource(CompensationServiceResource(container.compensation_service))
     await manager.start_all()
 
     yield
