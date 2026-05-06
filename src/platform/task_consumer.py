@@ -52,8 +52,12 @@ class TaskConsumer:
         self._max_concurrent = max_concurrent
         self._stale_threshold = stale_threshold_seconds
         self._global_conc_limit = max_concurrent
-        self._lua_acquire_slot = redis_client.register_script(_LUA_ACQUIRE_SLOT)
-        self._lua_release_slot = redis_client.register_script(_LUA_RELEASE_SLOT)
+        if redis_client is not None:
+            self._lua_acquire_slot = redis_client.register_script(_LUA_ACQUIRE_SLOT)
+            self._lua_release_slot = redis_client.register_script(_LUA_RELEASE_SLOT)
+        else:
+            self._lua_acquire_slot = None
+            self._lua_release_slot = None
         self._running = False
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._use_global_conc = redis_client is not None
@@ -185,4 +189,9 @@ class TaskConsumer:
         except Exception as e:
             logger.error("TaskConsumer: task_id=%s failed: %s", task_id, e)
         finally:
+            if self._use_global_conc and self._lua_release_slot is not None:
+                try:
+                    await self._lua_release_slot(keys=[_GLOBAL_CONC_KEY])
+                except Exception as e:
+                    logger.warning("TaskConsumer: failed to release global slot: %s", e)
             self._semaphore.release()

@@ -197,6 +197,37 @@ class FullFakeAsyncRedis:
     def pipeline(self) -> "FakePipeline":
         return FakePipeline(self)
 
+    def register_script(self, script: str):
+        """Return a callable that simulates Redis Lua script execution.
+
+        Detects acquire vs release based on whether 'INCR' appears in the script:
+        - Acquire (INCR pattern): increment counter if below limit; args[0] = limit
+        - Release (DECR pattern): decrement counter unconditionally
+        """
+        redis_ref = self
+        is_acquire = "INCR" in script
+        _CONC_KEY = "global:consumer:concurrency"
+
+        async def _script(keys=None, args=None):
+            keys = keys or []
+            args = args or []
+            key = keys[0] if keys else _CONC_KEY
+            current = int(redis_ref._strings.get(key, "0"))
+            if is_acquire:
+                limit = int(args[0]) if args else 1
+                if current < limit:
+                    redis_ref._strings[key] = str(current + 1)
+                    return 1
+                return 0
+            else:
+                # Release: decrement if > 0
+                if current > 0:
+                    redis_ref._strings[key] = str(current - 1)
+                    return current - 1
+                return 0
+
+        return _script
+
 
 class FakePipeline:
     """Minimal pipeline that collects commands and executes them sequentially."""
