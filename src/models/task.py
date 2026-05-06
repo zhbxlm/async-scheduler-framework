@@ -105,6 +105,8 @@ class TaskRecord(Base):
         Index("ix_tasks_status_updated", "status", "updated_at"),
         # Cron: find scheduled tasks due for execution
         Index("ix_tasks_scheduled_at", "scheduled_at"),
+        # DAG queries: find all tasks for a DAG
+        Index("ix_tasks_dag_id", "dag_id"),
     )
 
 

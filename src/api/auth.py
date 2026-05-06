@@ -11,6 +11,16 @@ from typing import Optional
 from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+
+def mask_api_key(api_key: str) -> str:
+    """Mask API key for safe logging."""
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "****"
+    return api_key[:4] + "***" + api_key[-4:]
+
+
 security = HTTPBearer(auto_error=False)
 
 
@@ -50,7 +60,7 @@ async def authenticate(
         if super_admin_key and api_key == super_admin_key:
             return {
                 "tenant_id": "super_admin",
-                "api_key": api_key,
+                "api_key": mask_api_key(api_key),
                 "is_super_admin": True,
                 "quota": None,
             }
@@ -67,7 +77,7 @@ async def authenticate(
     if super_admin_key and api_key == super_admin_key:
         return {
             "tenant_id": "super_admin",
-            "api_key": api_key,
+            "api_key": mask_api_key(api_key),
             "is_super_admin": True,
             "quota": None,
         }
