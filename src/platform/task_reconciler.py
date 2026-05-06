@@ -69,15 +69,26 @@ class TaskReconciler:
         self._lua_renew_leader = redis_client.register_script(_LUA_RENEW_LEADER) if redis_client else None
         self._running = False
         self._scan_cursor: int = 0
+        self._loop_task: asyncio.Task | None = None
 
     @log_errors(log_level="INFO", raise_exception=False)
     async def start(self) -> None:
+        if self._running:
+            return
         self._running = True
+        self._loop_task = asyncio.create_task(self._loop())
         logger.info("TaskReconciler started interval=%.1fs", self._interval)
-        asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
         self._running = False
+        if self._loop_task:
+            try:
+                await asyncio.wait_for(self._loop_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("TaskReconciler: stop timeout")
+            except Exception as exc:
+                logger.warning("TaskReconciler: stop error: %s", exc)
+            self._loop_task = None
 
     # ------------------------------------------------------------------
     # Main loop
