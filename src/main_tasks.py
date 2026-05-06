@@ -21,6 +21,7 @@ from src.common.error_handling import (
 from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
 from src.common.logging_config import configure_logging
 from src.api.middleware import RequestIDMiddleware
+from src.middleware.metrics_middleware import MetricsMiddleware
 
 configure_logging()
 setup_tracing(service_name="scheduler-task-api", service_version="1.0.0")
@@ -107,6 +108,7 @@ app = FastAPI(
 )
 
 instrument_fastapi(app)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
 app.add_exception_handler(SystemError, handle_system_error)

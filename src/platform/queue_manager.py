@@ -405,7 +405,7 @@ class QueueManager:
         
         results = await pipe.execute()
         
-        # Parse results into cache
+        # Parse results into cache and update Prometheus metrics
         new_cache: Dict[str, dict] = {}
         for i, cap in enumerate(capabilities):
             pending = int(results[i * 3] or 0)
@@ -422,6 +422,14 @@ class QueueManager:
                 "total_completed": stats.get("total_completed", 0),
                 "total_failed": stats.get("total_failed", 0),
             }
+            
+            # Update Prometheus metrics (best-effort)
+            try:
+                from src.monitoring.metrics import update_queue_metrics
+                max_conc = stats.get("max_concurrent", 0)
+                update_queue_metrics(cap, pending, running, max_conc)
+            except Exception:
+                pass
         
         self._stats_cache = new_cache
         self._stats_cache_time = time.time()

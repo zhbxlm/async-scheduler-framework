@@ -21,6 +21,7 @@ from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_traci
 from src.common.logging_config import configure_logging
 from src.api.middleware import RequestIDMiddleware
 from src.middleware.rate_limit import RateLimitMiddleware
+from src.middleware.metrics_middleware import MetricsMiddleware
 
 # Structured logging (JSON in production, plain text in dev)
 configure_logging()
@@ -82,6 +83,7 @@ app = FastAPI(
 )
 
 instrument_fastapi(app)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
 app.add_exception_handler(SystemError, handle_system_error)
