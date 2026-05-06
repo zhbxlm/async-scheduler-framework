@@ -118,9 +118,11 @@ app.add_exception_handler(ExternalServiceError, handle_external_service_error)
 
 from src.api.routes.tasks import router as tasks_router
 from src.api.routes.health import router as health_router
+from src.api.routes.metrics import router as metrics_router
 
 app.include_router(tasks_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(metrics_router)
 
 
 # ── Legacy health endpoint ────────────────────────────────────────────────

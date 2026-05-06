@@ -99,6 +99,7 @@ from src.api.routes.ops import router as ops_router
 from src.api.routes.schedules import router as schedules_router
 from src.api.routes.tenants import router as tenants_router
 from src.api.routes.health import router as health_router
+from src.api.routes.metrics import router as metrics_router
 
 for _r in (
     capabilities_router,
@@ -108,6 +109,7 @@ for _r in (
     ops_router,
     schedules_router,
     tenants_router,
+    metrics_router,
 ):
     app.include_router(_r)
 

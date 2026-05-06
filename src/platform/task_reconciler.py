@@ -250,37 +250,17 @@ class TaskReconciler:
             attempt = task.get("attempt", 0)
 
             if self._qm and attempt < max_retries:
-                # Requeue with exponential backoff delay
-                # Increment attempt counter in database atomically
-                if self._db is not None:
-                    try:
-                        from sqlalchemy import update
-                        from src.models.task import TaskRecord
-                        async with self._db() as db_session:
-                            stmt = (
-                                update(TaskRecord)
-                                .where(TaskRecord.task_id == tid)
-                                .values(attempt=TaskRecord.attempt + 1)
-                            )
-                            await db_session.execute(stmt)
-                            await db_session.commit()
-                    except Exception as exc:
-                        logger.warning(
-                            "TaskReconciler: phase2 increment attempt failed task_id=%s: %s",
-                            tid, exc,
-                        )
-                delay_ms = min(600_000, 10_000 * (2 ** attempt))
-                capability = task.get("capability", task.get("task_type", ""))
-                if capability:
-                    await self._qm.enqueue(
-                        capability,
-                        tid,
-                        priority=task.get("priority_rank", 3),
-                        execute_after_ms=int(time.time() * 1000) + delay_ms,
-                    )
-                    logger.info(
-                        "TaskReconciler: phase2 requeued task_id=%s attempt=%d", tid, attempt
-                    )
+                # Collect tasks for batch processing
+                requeue_tasks.append({
+                    "task_id": tid,
+                    "attempt": attempt,
+                    "capability": task.get("capability", task.get("task_type", "")),
+                    "priority_rank": task.get("priority_rank", 3),
+                    "max_retries": max_retries,
+                })
+            else:
+                # Mark FAILED in Redis
+                fail_tasks.append(tid)
             else:
                 # Mark FAILED in Redis
                 task_key = f"task:{tid}"
