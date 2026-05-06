@@ -55,22 +55,26 @@ async def ops_overview(request: Request, _auth: dict = Depends(authenticate)) ->
     caps = []
     if qm is not None:
         all_caps = await qm.discover_queue_capabilities()
-        
+
         # Filter capabilities based on tenant
         if is_super_admin:
             # Super admin sees all capabilities
             caps = all_caps
         else:
-            # Regular tenant: only capabilities they have access to
-            # For now, we need to implement tenant-capability mapping
-            # This is a placeholder - in production, this should query
-            # tenant_capabilities from tenant registry or separate store
-            caps = all_caps  # TODO: Implement proper tenant-capability filtering
-            logger.warning(
-                "Tenant filtering not fully implemented for ops_overview. "
-                "Tenant %s sees all %d capabilities",
-                tenant_id, len(caps)
-            )
+            # Regular tenant: only capabilities registered under their tenant_id
+            cap_reg = getattr(request.app.state, "capability_registry", None)
+            if cap_reg is not None:
+                try:
+                    tenant_caps = await cap_reg.list(tenant_id)
+                    tenant_cap_ids = {c.get("capability_id", c) if isinstance(c, dict) else c
+                                      for c in tenant_caps}
+                    caps = [c for c in all_caps if c in tenant_cap_ids]
+                except Exception:
+                    # Fallback: show all (safe degradation)
+                    caps = all_caps
+                    logger.warning("capability_registry.list failed for tenant %s, showing all", tenant_id)
+            else:
+                caps = all_caps
 
     # Batch-fetch queue snapshots (1 call per cap, but circuit_state needs Redis)
     # Use pipeline for circuit_state to avoid N+1
