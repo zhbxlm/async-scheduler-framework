@@ -60,9 +60,30 @@ class FullFakeAsyncRedis:
             bucket[member] = score
         return len(mapping)
 
-    async def zrangebyscore(self, key: str, min_score: float, max_score: float):
+    async def zrangebyscore(
+        self,
+        key: str,
+        min_score,
+        max_score,
+        start: int = 0,
+        num: int = -1,
+        withscores: bool = False,
+    ):
         bucket = self.zsets.get(key, {})
-        return [m for m, s in bucket.items() if min_score <= s <= max_score]
+        min_v = float("-inf") if min_score in ("-inf", b"-inf") else float(min_score)
+        max_v = float("+inf") if max_score in ("+inf", b"+inf") else float(max_score)
+        items = sorted(
+            [(m, s) for m, s in bucket.items() if min_v <= s <= max_v],
+            key=lambda x: x[1],
+        )
+        # pagination
+        if start:
+            items = items[start:]
+        if num >= 0:
+            items = items[:num]
+        if withscores:
+            return items  # list of (member, score)
+        return [m for m, _ in items]
 
     async def zrem(self, key: str, member: str) -> int:
         bucket = self.zsets.get(key, {})
@@ -194,24 +215,72 @@ class FullFakeAsyncRedis:
         self._strings.clear()
         self._expiry.clear()
 
+    async def scan(self, cursor: int, match: str = "*", count: int = 100):
+        """Return (next_cursor, [matching_keys]).
+
+        Simplification: always returns all matching keys in one call (cursor always 0 out).
+        Supports '*' glob patterns by converting to prefix/suffix matching.
+        """
+        import fnmatch
+        all_keys: list[str] = []
+        for store in (self.lists, self.zsets, self.sets, self.hashes, self._strings):
+            all_keys.extend(store.keys())
+        # Deduplicate
+        seen: set[str] = set()
+        unique: list[str] = []
+        for k in all_keys:
+            if k not in seen:
+                seen.add(k)
+                unique.append(k)
+        matched = [k for k in unique if fnmatch.fnmatch(k, match)]
+        return 0, matched  # cursor=0 means full cycle done
+
+    async def incrby(self, key: str, amount: int = 1) -> int:
+        current = int(self._strings.get(key, "0"))
+        new_val = current + amount
+        self._strings[key] = str(new_val)
+        return new_val
+
+    async def incr(self, key: str) -> int:
+        return await self.incrby(key, 1)
+
+    async def decr(self, key: str) -> int:
+        return await self.incrby(key, -1)
+
     def pipeline(self) -> "FakePipeline":
         return FakePipeline(self)
 
     def register_script(self, script: str):
         """Return a callable that simulates Redis Lua script execution.
 
-        Detects acquire vs release based on whether 'INCR' appears in the script:
-        - Acquire (INCR pattern): increment counter if below limit; args[0] = limit
-        - Release (DECR pattern): decrement counter unconditionally
+        Supports three Lua patterns used in this codebase:
+
+        1. Acquire-slot  (script contains 'INCR'): increment counter if below limit
+        2. Release-slot  (script contains 'DECR'): decrement counter
+        3. Leader-renew  (script contains 'EXPIRE' and 'GET' but not 'INCR'/'DECR'):
+           GET key → compare with ARGV[0] → if match, EXPIRE and return 1, else 0
         """
         redis_ref = self
         is_acquire = "INCR" in script
+        is_release = "DECR" in script and "INCR" not in script
+        is_leader_renew = "EXPIRE" in script and "GET" in script and not is_acquire and not is_release
         _CONC_KEY = "global:consumer:concurrency"
 
         async def _script(keys=None, args=None):
             keys = keys or []
             args = args or []
             key = keys[0] if keys else _CONC_KEY
+
+            if is_leader_renew:
+                # Pattern: GET key; if value == ARGV[0], EXPIRE key ARGV[1], return 1 else 0
+                current = redis_ref._strings.get(key)
+                expected = args[0] if args else None
+                if current is not None and current == expected:
+                    ttl = int(args[1]) if len(args) > 1 else 60
+                    redis_ref._expiry[key] = ttl
+                    return 1
+                return 0
+
             current = int(redis_ref._strings.get(key, "0"))
             if is_acquire:
                 limit = int(args[0]) if args else 1
@@ -248,9 +317,29 @@ class FakePipeline:
         self._commands.append(("get", key))
         return self
 
+    def set(self, key: str, value: str, **kwargs) -> "FakePipeline":
+        self._commands.append(("set", key, value, kwargs))
+        return self
+
+    def exists(self, key: str) -> "FakePipeline":
+        self._commands.append(("exists", key))
+        return self
+
+    def zadd(self, key: str, mapping: dict) -> "FakePipeline":
+        self._commands.append(("zadd", key, mapping))
+        return self
+
     async def execute(self) -> list:
         results = []
         for cmd, *args in self._commands:
-            method = getattr(self._client, cmd)
-            results.append(await method(*args))
+            if cmd == "set":
+                key, value, kwargs = args
+                method = getattr(self._client, "set")
+                results.append(await method(key, value, **kwargs))
+            elif cmd == "zadd":
+                key, mapping = args
+                results.append(await self._client.zadd(key, mapping))
+            else:
+                method = getattr(self._client, cmd)
+                results.append(await method(*args))
         return results

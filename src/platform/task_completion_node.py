@@ -24,11 +24,6 @@ _MAX_DURABLE_ATTEMPTS = 8
 _BASE_RETRY_DELAY = 10    # seconds
 _MAX_RETRY_DELAY = 600    # seconds
 _DLQ_TTL = 30 * 86400     # 30 days
-_MAX_INLINE_RETRIES = 3
-_MAX_DURABLE_ATTEMPTS = 8
-_BASE_RETRY_DELAY = 10    # seconds
-_MAX_RETRY_DELAY = 600    # seconds
-_DLQ_TTL = 30 * 86400     # 30 days
 
 
 class TaskCompletionNode:

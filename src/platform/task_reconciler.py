@@ -201,7 +201,7 @@ class TaskReconciler:
                             task_id=task.get("task_id", ""),
                             tenant_id=task.get("tenant_id", ""),
                             status=task.get("status", "unknown"),
-                            output=json.dumps(task.get("output")) if task.get("output") else None,
+                            output_data=json.dumps(task.get("output")) if task.get("output") else None,
                         )
                         session.add(record)
                     except Exception as exc:

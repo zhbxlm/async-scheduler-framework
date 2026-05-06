@@ -72,7 +72,7 @@ class ResourceDetector:
             try:
                 with open("/proc/meminfo") as f:
                     lines = f.read().splitlines()
-                info = {l.split(":")[0].strip(): int(l.split(":")[1].strip().split()[0]) for l in lines if ":" in l}
+                info = {line.split(":")[0].strip(): int(line.split(":")[1].strip().split()[0]) for line in lines if ":" in line}
                 total_mb = info.get("MemTotal", 0) // 1024
             except Exception:
                 total_mb = 0
@@ -82,7 +82,7 @@ class ResourceDetector:
         try:
             with open("/proc/meminfo") as f:
                 lines = f.read().splitlines()
-            info = {l.split(":")[0].strip(): int(l.split(":")[1].strip().split()[0]) for l in lines if ":" in l}
+            info = {line.split(":")[0].strip(): int(line.split(":")[1].strip().split()[0]) for line in lines if ":" in line}
             avail_mb = info.get("MemAvailable", 0) // 1024
         except Exception:
             pass

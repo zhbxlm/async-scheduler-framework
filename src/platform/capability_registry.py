@@ -146,7 +146,7 @@ class CapabilityRegistry(BaseRedisRegistry):
         results = await pipe.execute()
         
         caps: list[CapabilityInfo] = []
-        for raw_name, data in zip(names, results):
+        for raw_name, data in zip(names, results, strict=False):
             if not data:
                 continue
             name = raw_name.decode() if isinstance(raw_name, bytes) else raw_name

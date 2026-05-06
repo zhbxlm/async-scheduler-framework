@@ -144,7 +144,7 @@ async def handle_system_error(request, exc: SystemError):
         content={
             "error": "internal_server_error",
             "message": "An internal server error occurred",
-            "request_id": request.state.get("request_id", ""),
+            "request_id": getattr(request.state, "request_id", ""),
         },
     )
 
@@ -156,7 +156,7 @@ async def handle_business_error(request, exc: BusinessError):
         content={
             "error": "business_error",
             "message": str(exc),
-            "request_id": request.state.get("request_id", ""),
+            "request_id": getattr(request.state, "request_id", ""),
         },
     )
 
@@ -171,6 +171,6 @@ async def handle_external_service_error(request, exc: ExternalServiceError):
         content={
             "error": "service_unavailable",
             "message": "A dependent service is temporarily unavailable",
-            "request_id": request.state.get("request_id", ""),
+            "request_id": getattr(request.state, "request_id", ""),
         },
     )
