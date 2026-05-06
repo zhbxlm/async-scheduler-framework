@@ -20,6 +20,7 @@ from src.common.error_handling import (
 from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
 from src.common.logging_config import configure_logging
 from src.api.middleware import RequestIDMiddleware
+from src.middleware.rate_limit import RateLimitMiddleware
 
 # Structured logging (JSON in production, plain text in dev)
 configure_logging()

@@ -25,6 +25,11 @@ from src.models.task import (
     TaskStatus,
     TaskSummary,
 )
+from src.services.task_validation import (
+    validate_task_artifact,
+    validate_task_scheduling,
+    fix_lua_cjson_empty_tables,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -163,6 +168,16 @@ async def create_task(
     ctx=Depends(get_tenant_context),
 ) -> TaskCreateResponse:
     """Create and enqueue a task via TaskCreator (owns idempotency)."""
+    # Validate task data using service layer
+    try:
+        validate_task_artifact(req.artifact_url, req.artifact_sha256)
+        validate_task_scheduling(req.scheduled_at, req.delay_seconds)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid task data: {e}",
+        )
+    
     tenant_id = ctx.tenant_id or req.tenant_id or "default"
     task_creator = getattr(request.app.state, "task_creator", None)
     if task_creator is None:

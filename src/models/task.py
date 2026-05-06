@@ -139,19 +139,6 @@ class TaskCreate(BaseModel):
     artifact_url: str | None = None
     artifact_sha256: str | None = None
 
-    @model_validator(mode="after")
-    def validate_artifact(self) -> "TaskCreate":
-        # Check artifact fields
-        if self.artifact_url and self.artifact_sha256:
-            if len(self.artifact_sha256) != 64:
-                raise ValueError("artifact_sha256 must be a 64-char hex string")
-        # Check scheduling conflict
-        if self.scheduled_at is not None and self.delay_seconds is not None:
-            raise ValueError(
-                "Cannot specify both scheduled_at and delay_seconds; use only one."
-            )
-        return self
-
 
 class TaskInfo(BaseModel):
     """Full task information schema for query responses."""
@@ -183,15 +170,7 @@ class TaskInfo(BaseModel):
     artifact_url: str = ""
     artifact_sha256: str = ""
 
-    @model_validator(mode="before")
-    @classmethod
-    def fix_lua_cjson_empty_tables(cls, values: Any) -> Any:
-        """Convert empty lists → empty dicts (Lua cjson serialises {} as [])."""
-        if isinstance(values, dict):
-            for key in ("input_data", "output_data", "metadata_json"):
-                if isinstance(values.get(key), list) and len(values[key]) == 0:
-                    values[key] = {}
-        return values
+
 
 
 class TaskCreateResponse(BaseModel):

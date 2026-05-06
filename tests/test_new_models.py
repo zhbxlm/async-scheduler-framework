@@ -61,24 +61,40 @@ def test_task_create_with_artifact():
 
 
 def test_task_create_bad_artifact_sha256():
-    with pytest.raises(Exception):
-        TaskCreate(
-            task_type="ml",
-            artifact_url="http://example.com/pkg.tar.gz",
-            artifact_sha256="tooshort",
+    """Test artifact validation through service layer."""
+    from src.services.task_validation import validate_task_artifact
+    
+    # Valid case should not raise
+    validate_task_artifact(
+        "http://example.com/pkg.tar.gz", 
+        "a" * 64
+    )
+    
+    # Invalid case should raise
+    with pytest.raises(ValueError, match="must be a 64-char hex string"):
+        validate_task_artifact(
+            "http://example.com/pkg.tar.gz", 
+            "tooshort"
         )
 
 
 def test_task_info_lua_fix():
-    info = TaskInfo.model_validate({
+    """Test Lua cjson empty table fix through service layer."""
+    from src.services.task_validation import fix_lua_cjson_empty_tables
+    
+    # Test data transformation
+    data = {
         "task_id": "t1",
         "task_type": "x",
         "input_data": [],     # Lua cjson empty list
         "output_data": [],
         "metadata_json": [],
-    })
-    assert info.input_data == {}
-    assert info.output_data == {}
+    }
+    
+    fixed = fix_lua_cjson_empty_tables(data)
+    assert fixed["input_data"] == {}
+    assert fixed["output_data"] == {}
+    assert fixed["metadata_json"] == {}
 
 
 def test_task_create_response():

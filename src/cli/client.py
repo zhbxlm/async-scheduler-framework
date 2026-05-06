@@ -1,5 +1,6 @@
 """HTTP client for CLI."""
 import os
+import time
 from typing import Any
 
 import click
@@ -25,27 +26,75 @@ class ApiClient:
         return self._request("DELETE", path, **kwargs)
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
+        """Send HTTP request with retry and backoff logic."""
         url = f"{self._base}{path}"
         headers = kwargs.pop("headers", {})
         if self._key:
             headers["Authorization"] = f"Bearer {self._key}"
-        try:
-            resp = self._client.request(method, url, headers=headers, **kwargs)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
+        
+        # Retry configuration
+        max_retries = 3
+        base_delay = 1.0  # seconds
+        max_delay = 10.0  # seconds
+        
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):  # +1 for initial attempt
+            try:
+                resp = self._client.request(method, url, headers=headers, **kwargs)
+                resp.raise_for_status()
+                
+                # Success - return response
+                if resp.content:
+                    return resp.json()
+                return None
+                
+            except httpx.HTTPStatusError as e:
+                # Don't retry on 4xx client errors (except 429 rate limit)
+                status_code = e.response.status_code
+                if 400 <= status_code < 500 and status_code != 429:
+                    detail = ""
+                    try:
+                        detail = e.response.text[:200]
+                    except Exception:
+                        pass
+                    msg = f"{method} {path} failed: {status_code}"
+                    if detail:
+                        msg += f" — {detail}"
+                    raise click.ClickException(msg)
+                
+                last_exception = e
+                
+            except httpx.RequestError as e:
+                # Network errors - retry with backoff
+                last_exception = e
+                
+            # Calculate backoff delay (exponential with jitter)
+            if attempt < max_retries:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                jitter = delay * 0.1  # 10% jitter
+                delay = delay + (jitter * (hash(f"{time.time()}") % 100) / 100)
+                
+                click.echo(
+                    f"Request failed (attempt {attempt + 1}/{max_retries + 1}), "
+                    f"retrying in {delay:.1f}s...",
+                    err=True
+                )
+                time.sleep(delay)
+            
+        # All retries exhausted
+        if isinstance(last_exception, httpx.HTTPStatusError):
             detail = ""
             try:
-                detail = e.response.text[:200]
+                detail = last_exception.response.text[:200]
             except Exception:
                 pass
-            msg = f"{method} {path} failed: {e.response.status_code}"
+            msg = f"{method} {path} failed after {max_retries + 1} attempts: {last_exception.response.status_code}"
             if detail:
                 msg += f" — {detail}"
             raise click.ClickException(msg)
-        except httpx.RequestError as e:
+        else:
             raise click.ClickException(
-                f"Cannot reach API at {self._base}: {e}"
+                f"Cannot reach API at {self._base} after {max_retries + 1} attempts: {last_exception}"
             )
-        if resp.content:
-            return resp.json()
         return None
