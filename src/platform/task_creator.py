@@ -1,10 +1,10 @@
-"""TaskCreator — adapts task creation requests for QueueManager and CronScheduler.
+"""TaskCreator — adapts task creation requests for QueueManager.
 
 Provides create_task method that:
-1. Generates task_id if not provided via idempotency_key
-2. Stores task metadata in Redis (task:{task_id})
-3. Enqueues via QueueManager
-4. Optionally persists to MySQL (if db_session_factory provided)
+1. MySQL-first atomic write (durable)
+2. Redis sync (fast path, best-effort)
+3. Compensation service for Redis failures
+4. Enqueues via QueueManager
 
 Used by CronScheduler to fire scheduled tasks.
 """
@@ -19,6 +19,7 @@ from typing import Any
 import orjson
 
 from src.common.error_handling import log_errors, BusinessError
+from src.common.transaction import AtomicWriteCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,20 @@ class TaskCreator:
         queue_manager: Any,
         *,
         db_session_factory: Any | None = None,
+        coordinator: AtomicWriteCoordinator | None = None,
     ) -> None:
         self._r = redis_client
         self._qm = queue_manager
         self._db = db_session_factory
+        self._coordinator = coordinator
+        
+        # Create coordinator if not provided
+        if self._db and not self._coordinator:
+            self._coordinator = AtomicWriteCoordinator(
+                mysql_session_factory=self._db,
+                redis_client=self._r,
+                enable_logging=True,
+            )
 
     @log_errors(log_level="ERROR", raise_exception=True)
     async def create_task(
@@ -120,13 +131,68 @@ class TaskCreator:
             **kwargs,
         }
 
-        # Store in Redis
-        task_key = f"task:{task_id}"
-        try:
-            await self._r.set(task_key, orjson.dumps(task_record), ex=86400)  # 24h TTL
-        except Exception as exc:
-            logger.warning("TaskCreator: failed to store task in Redis: %s", exc)
-            # Continue anyway, queue may still work
+        # ── MySQL-first atomic write (if DB configured) ──────────
+        if self._db and kwargs.get("persist_to_db", True) and self._coordinator:
+            try:
+                from src.models.task import TaskRecord, TaskStatus, TaskPriority
+                import hashlib
+                
+                # MySQL write function
+                async def mysql_write():
+                    async with self._db() as session:
+                        record = TaskRecord(
+                            task_id=task_id,
+                            tenant_id=tenant_id,
+                            task_type=capability,
+                            status=TaskStatus.QUEUED,
+                            priority=TaskPriority(kwargs.get("priority", "normal")),
+                            input_data=json.dumps(kwargs.get("input_data", {})),
+                            metadata_json=json.dumps(kwargs.get("metadata", {})),
+                            callback_url=kwargs.get("callback_url"),
+                            idempotency_key=kwargs.get("idempotency_key"),
+                            timeout_seconds=kwargs.get("timeout_seconds", 3600),
+                            max_retries=kwargs.get("max_retries", 3),
+                            scheduled_at=kwargs.get("scheduled_at"),
+                            cron_expr=kwargs.get("cron_expr"),
+                        )
+                        session.add(record)
+                        await session.commit()
+                
+                # Redis write function
+                async def redis_write():
+                    task_key = f"task:{task_id}"
+                    await self._r.set(task_key, orjson.dumps(task_record), ex=86400)
+                
+                # Execute atomic write
+                tx = await self._coordinator.write_atomic(
+                    task_id=task_id,
+                    operation="create_task",
+                    mysql_write_fn=mysql_write,
+                    redis_write_fn=redis_write,
+                    payload={"tenant_id": tenant_id, "capability": capability},
+                )
+                
+                if tx.status != "committed":
+                    # Redis write failed but MySQL succeeded
+                    # Continue anyway - compensation service will fix it
+                    logger.warning(
+                        "TaskCreator: Redis sync failed for %s (MySQL OK), compensation enqueued",
+                        task_id
+                    )
+                
+            except Exception as exc:
+                # MySQL or coordinator failed - abort
+                logger.error("TaskCreator: atomic write failed for %s: %s", task_id, exc)
+                raise
+                
+        else:
+            # Fallback: old Redis-only mode
+            task_key = f"task:{task_id}"
+            try:
+                await self._r.set(task_key, orjson.dumps(task_record), ex=86400)  # 24h TTL
+            except Exception as exc:
+                logger.warning("TaskCreator: failed to store task in Redis: %s", exc)
+                # Continue anyway, queue may still work
 
         # Enqueue
         result = await self._qm.enqueue(
@@ -135,13 +201,6 @@ class TaskCreator:
             priority=priority,
             execute_after_ms=execute_after_ms,
         )
-
-        # Optionally persist to MySQL
-        if self._db and kwargs.get("persist_to_db", True):
-            try:
-                await self._persist_to_db(task_id, tenant_id, capability, kwargs)
-            except Exception as exc:
-                logger.warning("TaskCreator: DB persistence failed: %s", exc)
 
         return {
             "task_id": task_id,
@@ -165,35 +224,3 @@ class TaskCreator:
             )
             return result.scalar_one_or_none()
 
-    async def _persist_to_db(
-        self,
-        task_id: str,
-        tenant_id: str,
-        task_type: str,
-        template: dict[str, Any],
-    ) -> None:
-        """Persist task record to MySQL (if configured)."""
-        if not self._db:
-            return
-
-        from src.models.task import TaskRecord, TaskStatus, TaskPriority
-
-        async with self._db() as session:
-            record = TaskRecord(
-                task_id=task_id,
-                tenant_id=tenant_id,
-                task_type=task_type,
-                status=TaskStatus.QUEUED,
-                priority=TaskPriority(template.get("priority", "normal")),
-                input_data=json.dumps(template.get("input_data", {})),
-                metadata_json=json.dumps(template.get("metadata", {})),
-                callback_url=template.get("callback_url"),
-                idempotency_key=template.get("idempotency_key"),
-                timeout_seconds=template.get("timeout_seconds", 3600),
-                max_retries=template.get("max_retries", 3),
-                scheduled_at=template.get("scheduled_at"),
-                cron_expr=template.get("cron_expr"),
-            )
-            session.add(record)
-            await session.commit()
-            logger.debug("TaskCreator: persisted task %s to DB", task_id)

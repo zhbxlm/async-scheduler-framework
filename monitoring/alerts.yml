@@ -1,106 +1,227 @@
 groups:
-  - name: scheduler_alerts
+  # ──────────────────────────────────────────────────────────────
+  # Service Availability
+  # ──────────────────────────────────────────────────────────────
+  - name: service_availability
     rules:
-      # 服务不可用
       - alert: ServiceDown
         expr: up{service=~"task-api|ops-api"} == 0
         for: 1m
         labels:
           severity: critical
-          service: '{{ $labels.service }}'
         annotations:
           summary: "{{ $labels.service }} is down"
-          description: "Service {{ $labels.service }} has been down for more than 1 minute"
+          description: "Service {{ $labels.service }} ({{ $labels.instance }}) has been unreachable for >1m"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#service-down"
 
-      # 队列积压
-      - alert: QueueBacklogHigh
-        expr: scheduler_queue_pending_tasks > 100
+      - alert: HighHttpErrorRate
+        expr: |
+          rate(scheduler_http_requests_total{status_code=~"5.."}[5m])
+          / rate(scheduler_http_requests_total[5m]) > 0.01
         for: 5m
         labels:
           severity: warning
-          service: 'task-api'
         annotations:
-          summary: "High queue backlog for {{ $labels.capability }}"
-          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks"
+          summary: "High HTTP 5xx rate on {{ $labels.service }}"
+          description: "HTTP error rate is {{ $value | humanizePercentage }} (threshold 1%)"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#http-errors"
+
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            rate(scheduler_http_request_duration_seconds_bucket[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency on {{ $labels.service }}"
+          description: "p99 HTTP latency is {{ $value | humanizeDuration }} (threshold 2s)"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#high-latency"
+
+  # ──────────────────────────────────────────────────────────────
+  # Queue Health
+  # ──────────────────────────────────────────────────────────────
+  - name: queue_health
+    rules:
+      - alert: QueueBacklogHigh
+        expr: scheduler_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High queue backlog: {{ $labels.capability }}"
+          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks (threshold 100)"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#queue-backlog"
 
       - alert: QueueBacklogCritical
-        expr: scheduler_queue_pending_tasks > 500
+        expr: scheduler_queue_depth > 500
         for: 2m
         labels:
           severity: critical
-          service: 'task-api'
         annotations:
-          summary: "Critical queue backlog for {{ $labels.capability }}"
-          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks (critical)"
+          summary: "Critical queue backlog: {{ $labels.capability }}"
+          description: "Queue {{ $labels.capability }} has {{ $value }} pending tasks (critical threshold 500)"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#queue-backlog"
 
-      # 高失败率
+      - alert: QueueStalled
+        expr: |
+          increase(scheduler_tasks_completed_total[10m]) == 0
+          and scheduler_queue_depth > 10
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue stalled: {{ $labels.capability }}"
+          description: "No tasks completed in 10m but {{ $value }} tasks are pending"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#queue-stalled"
+
+  # ──────────────────────────────────────────────────────────────
+  # Task Execution
+  # ──────────────────────────────────────────────────────────────
+  - name: task_execution
+    rules:
       - alert: HighTaskFailureRate
         expr: |
           rate(scheduler_tasks_completed_total{status="failure"}[5m])
-          / ignoring(status)
+          / ignoring(status) group_left
           rate(scheduler_tasks_completed_total[5m]) > 0.05
         for: 5m
         labels:
           severity: critical
-          service: 'task-api'
         annotations:
-          summary: "High failure rate for {{ $labels.capability }} tasks"
-          description: "Task failure rate for {{ $labels.capability }} is {{ $value | humanizePercentage }}"
+          summary: "High task failure rate: {{ $labels.task_type }}"
+          description: "Task failure rate is {{ $value | humanizePercentage }} (threshold 5%)"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#high-failure-rate"
 
-      # 慢任务
-      - alert: SlowTasks
+      - alert: SlowTaskExecution
         expr: |
-          histogram_quantile(0.95, 
+          histogram_quantile(0.95,
             rate(scheduler_task_execution_duration_seconds_bucket[5m])
           ) > 30
         for: 5m
         labels:
           severity: warning
-          service: 'task-api'
         annotations:
-          summary: "Slow tasks detected for {{ $labels.capability }}"
-          description: "95th percentile task execution for {{ $labels.capability }} > 30s"
+          summary: "Slow task execution: {{ $labels.task_type }}"
+          description: "p95 task execution time is {{ $value | humanizeDuration }} (threshold 30s)"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#slow-tasks"
 
-      # Redis 连接问题
-      - alert: RedisConnectionError
+      - alert: TaskExecutionTimeout
+        expr: |
+          histogram_quantile(0.95,
+            rate(scheduler_task_execution_duration_seconds_bucket[5m])
+          ) > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Task execution timeout: {{ $labels.task_type }}"
+          description: "p95 task execution time is {{ $value | humanizeDuration }} (timeout threshold 120s)"
+
+  # ──────────────────────────────────────────────────────────────
+  # Redis HA Health
+  # ──────────────────────────────────────────────────────────────
+  - name: redis_ha
+    rules:
+      - alert: RedisConnectionLost
         expr: redis_up == 0
         for: 1m
         labels:
           severity: critical
-          service: 'task-api'
         annotations:
           summary: "Redis connection lost"
-          description: "Cannot connect to Redis for 1 minute"
+          description: "Cannot connect to Redis for >1m. RedisHA degradation mode may be active."
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#redis-connection"
 
-      # 高内存使用
-      - alert: HighMemoryUsage
-        expr: |
-          scheduler_memory_rss_bytes / 1024 / 1024 > 512  # > 512MB
+      - alert: RedisCircuitBreakerOpen
+        expr: scheduler_redis_circuit_breaker_state == 2  # 2=OPEN
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis circuit breaker OPEN"
+          description: "Redis HA circuit breaker has opened (too many failures). Service degraded."
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#circuit-breaker"
+
+      - alert: RedisDegradationModeActive
+        expr: scheduler_redis_degradation_mode == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis degradation mode active"
+          description: "RedisHA is running in degradation mode. Write operations are queued in memory."
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#degradation-mode"
+
+      - alert: RedisDegradationQueueLarge
+        expr: scheduler_redis_degradation_queue_size > 100
         for: 5m
         labels:
           severity: warning
-          service: '{{ $labels.service }}'
         annotations:
-          summary: "High memory usage for {{ $labels.service }}"
-          description: "{{ $labels.service }} is using {{ $value | humanize }}MB of memory"
+          summary: "Redis degradation queue growing"
+          description: "{{ $value }} operations queued in Redis degradation buffer (threshold 100)"
+
+      - alert: RedisHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(scheduler_redis_latency_seconds_bucket[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis latency"
+          description: "p95 Redis operation latency is {{ $value | humanizeDuration }} (threshold 100ms)"
+
+  # ──────────────────────────────────────────────────────────────
+  # Database Health
+  # ──────────────────────────────────────────────────────────────
+  - name: database_health
+    rules:
+      - alert: DBConnectionPoolExhausted
+        expr: scheduler_db_connections{state="idle"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DB connection pool exhausted"
+          description: "No idle database connections available for >2m"
+          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#db-pool"
+
+      - alert: DBSlowQueries
+        expr: |
+          histogram_quantile(0.95,
+            rate(scheduler_db_query_duration_seconds_bucket[5m])
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow DB queries detected"
+          description: "p95 DB query time is {{ $value | humanizeDuration }} (threshold 1s)"
+
+  # ──────────────────────────────────────────────────────────────
+  # System Resources
+  # ──────────────────────────────────────────────────────────────
+  - name: system_resources
+    rules:
+      - alert: HighMemoryUsage
+        expr: scheduler_memory_rss_bytes / 1024 / 1024 > 512
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage: {{ $labels.service }}"
+          description: "{{ $labels.service }} is using {{ $value | humanize }}MB RSS (threshold 512MB)"
           runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#memory-usage"
 
-      # 高错误率（HTTP 5xx）
-      - alert: HighHttpErrorRate
-        expr: |
-          rate(http_requests_total{status=~"5.."}[5m])
-          / rate(http_requests_total[5m]) > 0.01
-        for: 5m
+      - alert: CriticalMemoryUsage
+        expr: scheduler_memory_rss_bytes / 1024 / 1024 > 1024
+        for: 2m
         labels:
-          severity: warning
-          service: '{{ $labels.service }}'
+          severity: critical
         annotations:
-          summary: "High HTTP error rate for {{ $labels.service }}"
-          description: "HTTP error rate is {{ $value | humanizePercentage }}"
-          runbook_url: "https://github.com/zhbxlm/async-scheduler-framework/blob/main/docs/MONITORING.md#http-errors"
+          summary: "Critical memory usage: {{ $labels.service }}"
+          description: "{{ $labels.service }} is using {{ $value | humanize }}MB RSS (critical threshold 1GB)"

@@ -102,6 +102,7 @@ from src.api.routes.schedules import router as schedules_router
 from src.api.routes.tenants import router as tenants_router
 from src.api.routes.health import router as health_router
 from src.api.routes.metrics import router as metrics_router
+from src.api.routes.alerts import router as alerts_router
 
 for _r in (
     capabilities_router,
@@ -112,6 +113,7 @@ for _r in (
     schedules_router,
     tenants_router,
     metrics_router,
+    alerts_router,
 ):
     app.include_router(_r)
 

@@ -72,7 +72,7 @@ class ServiceContainer:
 
         c = cls()
         redis_url = str(settings.redis.url) if settings.redis.url else None
-        c.redis_client = create_redis_client(redis_url)
+        c.redis_client = await create_redis_client(redis_url)
 
         # task-api requires MySQL — init engine and store in container
         db_factory = None
@@ -163,7 +163,7 @@ class ServiceContainer:
 
         c = cls()
         redis_url = str(settings.redis.url) if settings.redis.url else None
-        c.redis_client = create_redis_client(redis_url)
+        c.redis_client = await create_redis_client(redis_url)
 
         # ops-api does NOT initialize MySQL engine
 
@@ -191,6 +191,17 @@ class ServiceContainer:
         # c.cron_scheduler = None (requires TaskCreator → MySQL, now in task-api)
 
         return c
+
+    async def close(self) -> None:
+        """Close all connections (Redis, etc.)."""
+        from src.common.redis_client import close_redis_client
+        
+        if self.redis_client:
+            await close_redis_client(self.redis_client)
+            self.redis_client = None
+        
+        # Note: Database connections are managed by SQLAlchemy's connection pool
+        # and will be closed automatically when the engine is disposed.
 
 
 # ── Global singleton ──────────────────────────────────────────────────────

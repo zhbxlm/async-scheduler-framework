@@ -165,6 +165,54 @@ RECONCILER_STUCK_TASKS = Gauge(
     registry=get_metrics_registry(),
 )
 
+# -------------------------------------------------------------------
+# Redis HA Metrics
+# -------------------------------------------------------------------
+
+REDIS_CIRCUIT_BREAKER_STATE = Gauge(
+    "scheduler_redis_circuit_breaker_state",
+    "Redis circuit breaker state: 0=CLOSED, 1=HALF_OPEN, 2=OPEN",
+    registry=get_metrics_registry(),
+)
+
+REDIS_DEGRADATION_MODE = Gauge(
+    "scheduler_redis_degradation_mode",
+    "Whether Redis HA is in degradation mode (0=normal, 1=degraded)",
+    registry=get_metrics_registry(),
+)
+
+REDIS_DEGRADATION_QUEUE_SIZE = Gauge(
+    "scheduler_redis_degradation_queue_size",
+    "Number of operations queued in Redis degradation buffer",
+    registry=get_metrics_registry(),
+)
+
+REDIS_RETRY_TOTAL = Counter(
+    "scheduler_redis_retries_total",
+    "Total Redis operation retries",
+    ["operation"],
+    registry=get_metrics_registry(),
+)
+
+REDIS_CIRCUIT_BREAKER_TRIPS = Counter(
+    "scheduler_redis_circuit_breaker_trips_total",
+    "Total number of times the circuit breaker opened",
+    registry=get_metrics_registry(),
+)
+
+_CB_STATE_MAP = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+
+
+def update_redis_ha_metrics(
+    circuit_state: str,
+    degradation_mode: bool,
+    degradation_queue_size: int,
+) -> None:
+    """Update Redis HA health metrics."""
+    REDIS_CIRCUIT_BREAKER_STATE.set(_CB_STATE_MAP.get(circuit_state, 0))
+    REDIS_DEGRADATION_MODE.set(1 if degradation_mode else 0)
+    REDIS_DEGRADATION_QUEUE_SIZE.set(degradation_queue_size)
+
 
 # -------------------------------------------------------------------
 # Utility Functions

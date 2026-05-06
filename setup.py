@@ -1,10 +1,6 @@
 """Package setup for ray-async — aligned with src/ layout.
 
-Note: User-facing components (agent, proxy, worker) are now available as
-independent packages in the packages/ directory:
-  - async-agent: Node Agent for cluster node management
-  - async-proxy: Async Proxy for long-running services
-  - async-worker: Worker SDK for building Ray workers
+All components (agent, proxy, worker) are now integrated into the main package.
 """
 from setuptools import setup, find_packages
 
@@ -37,10 +33,7 @@ setup(
             "ruff>=0.1.0",
             "mypy>=1.6.0",
         ],
-        # User-facing packages are now available as independent packages:
-        #   pip install ../packages/node-agent    # or async-agent
-        #   pip install ../packages/async-proxy   # or async-proxy
-        #   pip install ../packages/worker-sdk    # or async-worker
+        # All components are now integrated into the main package
     },
     entry_points={
         "console_scripts": [

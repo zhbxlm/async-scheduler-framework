@@ -1,73 +1,100 @@
 global:
-  smtp_smarthost: 'localhost:25'
+  resolve_timeout: 5m
+  smtp_smarthost: '${SMTP_HOST:-localhost:25}'
   smtp_from: 'alertmanager@async-scheduler.local'
-  smtp_auth_username: ''
-  smtp_auth_password: ''
+  smtp_auth_username: '${SMTP_USERNAME:-}'
+  smtp_auth_password: '${SMTP_PASSWORD:-}'
 
+# Alert routing tree
 route:
   group_by: ['alertname', 'severity', 'service']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 12h
-  receiver: 'webhook'
-  
+  receiver: 'default-webhook'
+
   routes:
+    # P0: Service completely down → immediate notify, repeat every 5m
     - match:
         severity: critical
-      receiver: 'critical-webhook'
+        alertname: ServiceDown
+      receiver: 'critical-ops'
       group_wait: 10s
       repeat_interval: 5m
-    
+      continue: false
+
+    # P0: Redis HA circuit breaker open
     - match:
-        severity: warning  
-      receiver: 'warning-webhook'
+        severity: critical
+        alertname: RedisCircuitBreakerOpen
+      receiver: 'critical-ops'
+      group_wait: 10s
+      repeat_interval: 5m
+      continue: false
+
+    # P0: All other critical alerts
+    - match:
+        severity: critical
+      receiver: 'critical-ops'
+      group_wait: 15s
+      repeat_interval: 10m
+
+    # P1: Warning alerts → standard notify
+    - match:
+        severity: warning
+      receiver: 'warning-ops'
       repeat_interval: 30m
 
+    # P2: Info → webhook only, no repeat
+    - match:
+        severity: info
+      receiver: 'default-webhook'
+      repeat_interval: 6h
+
 receivers:
-  - name: 'webhook'
+  # Default webhook (all alerts)
+  - name: 'default-webhook'
     webhook_configs:
-      - url: 'http://webhook:5000/webhook'
+      - url: '${WEBHOOK_URL:-http://localhost:8000/alerts/webhook}'
+        send_resolved: true
+        max_alerts: 50
+
+  # Critical alerts: webhook + email + infoflow
+  - name: 'critical-ops'
+    webhook_configs:
+      - url: '${WEBHOOK_URL:-http://localhost:8000/alerts/webhook}'
+        send_resolved: true
+    email_configs:
+      - to: '${ALERT_EMAIL_TO:-ops@example.com}'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL][{{ .Status | toUpper }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
+        html: |
+          <h2>🔴 Critical Alert: {{ .GroupLabels.alertname }}</h2>
+          {{ range .Alerts }}
+          <p><b>Service:</b> {{ .Labels.service }}</p>
+          <p><b>Summary:</b> {{ .Annotations.summary }}</p>
+          <p><b>Description:</b> {{ .Annotations.description }}</p>
+          <p><b>Started:</b> {{ .StartsAt }}</p>
+          {{ if .Annotations.runbook_url }}<p><a href="{{ .Annotations.runbook_url }}">📖 Runbook</a></p>{{ end }}
+          {{ end }}
+
+  # Warning alerts: webhook only
+  - name: 'warning-ops'
+    webhook_configs:
+      - url: '${WEBHOOK_URL:-http://localhost:8000/alerts/webhook}'
         send_resolved: true
 
-  - name: 'critical-webhook'
-    webhook_configs:
-      - url: 'http://webhook:5000/webhook/critical'
-        send_resolved: true
-
-  - name: 'warning-webhook'
-    webhook_configs:
-      - url: 'http://webhook:5000/webhook/warning'
-        send_resolved: true
-
-  # Example email configuration (commented out)
-  # - name: 'email'
-  #   email_configs:
-  #     - to: 'admin@example.com'
-  #       from: 'alertmanager@async-scheduler.local'
-  #       smarthost: 'smtp.example.com:587'
-  #       auth_username: 'alertmanager@example.com'
-  #       auth_password: 'password'
-  #       headers:
-  #         Subject: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
-
-  # Example slack configuration (commented out)
-  # - name: 'slack'
-  #   slack_configs:
-  #     - api_url: 'https://hooks.slack.com/services/XXX/XXX/XXX'
-  #       channel: '#alerts'
-  #       title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
-  #       text: |-
-  #         {{ range .Alerts }}
-  #         *Alert:* {{ .Annotations.summary }}
-  #         *Description:* {{ .Annotations.description }}
-  #         *Details:*
-  #         {{ range .Labels.SortedPairs }} • {{ .Name }}: {{ .Value }}
-  #         {{ end }}
-  #         {{ end }}
-
+# Inhibition rules: suppress warning when critical fires for same service
 inhibit_rules:
   - source_match:
       severity: 'critical'
     target_match:
       severity: 'warning'
     equal: ['alertname', 'service']
+
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: '.+'
+    equal: ['service']
