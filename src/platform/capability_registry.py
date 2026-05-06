@@ -132,14 +132,31 @@ class CapabilityRegistry(BaseRedisRegistry):
 
     @log_errors(log_level="ERROR", raise_exception=False)
     async def list_all(self) -> list[CapabilityInfo]:
-        """Return all registered capabilities."""
+        """Return all registered capabilities (pipelined for performance)."""
         names = await self._r.smembers(_CAP_INDEX)
-        caps: list[CapabilityInfo] = []
+        if not names:
+            return []
+        
+        # Batch all GETs in a single pipeline
+        pipe = self._r.pipeline()
         for raw_name in names:
             name = raw_name.decode() if isinstance(raw_name, bytes) else raw_name
-            cap = await self.get_capability(name)
-            if cap:
-                caps.append(cap)
+            key = self._make_key(_GLOBAL_TENANT, name)
+            pipe.get(key)
+        results = await pipe.execute()
+        
+        caps: list[CapabilityInfo] = []
+        for raw_name, data in zip(names, results):
+            if not data:
+                continue
+            name = raw_name.decode() if isinstance(raw_name, bytes) else raw_name
+            try:
+                parsed = orjson.loads(data)
+                caps.append(CapabilityInfo.model_validate(parsed))
+            except Exception as exc:
+                logger.warning(
+                    "CapabilityRegistry.list_all: skip %s: %s", name, exc
+                )
         return caps
 
     @log_errors(log_level="ERROR", raise_exception=True, exception_type=ExternalServiceError)

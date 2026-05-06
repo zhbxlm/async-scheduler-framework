@@ -320,24 +320,34 @@ class TaskReconciler:
                     tid, attempt
                 )
         
-        # ── Batch Fail Operations ──
-        for tid in fail_tasks:
-            task_key = f"task:{tid}"
-            raw = await self._r.get(task_key)
-            if raw:
-                try:
-                    data = json.loads(raw)
-                    data["status"] = "failed"
-                    data["error"] = "reconciler: stuck task, lock expired"
-                    await self._r.set(task_key, json.dumps(data))
-                    logger.info(
-                        "TaskReconciler: phase2 marked FAILED task_id=%s", tid
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "TaskReconciler: phase2 update error task_id=%s: %s", 
-                        tid, exc
-                    )
+        # ── Batch Fail Operations (pipelined GETs) ──
+        if fail_tasks:
+            fail_keys = [f"task:{tid}" for tid in fail_tasks]
+            
+            # Pipeline all GETs
+            pipe = self._r.pipeline()
+            for key in fail_keys:
+                pipe.get(key)
+            raw_results = await pipe.execute()
+            
+            # Write-back with another pipeline
+            write_pipe = self._r.pipeline()
+            for tid, key, raw in zip(fail_tasks, fail_keys, raw_results):
+                if raw:
+                    try:
+                        data = json.loads(raw)
+                        data["status"] = "failed"
+                        data["error"] = "reconciler: stuck task, lock expired"
+                        write_pipe.set(key, json.dumps(data))
+                        logger.info(
+                            "TaskReconciler: phase2 marked FAILED task_id=%s", tid
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "TaskReconciler: phase2 update error task_id=%s: %s",
+                            tid, exc
+                        )
+            await write_pipe.execute()
 
     # ------------------------------------------------------------------
     # Phase 3: Lost callback recovery
