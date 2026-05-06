@@ -16,6 +16,7 @@ import ast as _ast
 import asyncio
 import concurrent.futures
 import logging
+import threading
 import time
 from functools import lru_cache
 from typing import Any, Callable, Awaitable
@@ -76,6 +77,7 @@ class DagEngine:
         self._redis = redis
         self._streaming_executor_max_workers = streaming_executor_max_workers
         self._current_steps: list = []  # for get_ready_nodes
+        self._http_client: httpx.AsyncClient | None = None
 
     async def execute(
         self,
@@ -168,7 +170,10 @@ class DagEngine:
                                     timeout=step.timeout_seconds,
                                 )
                             else:
-                                return await dispatch(step.capability, step.step_name, item_input)
+                                return await asyncio.wait_for(
+                                    dispatch(step.capability, step.step_name, item_input),
+                                    timeout=step.timeout_seconds or 300.0,
+                                )
                         except Exception as e:
                             if step.map_error_policy == MapErrorPolicy.CONTINUE:
                                 logger.warning("MAP step=%s idx=%d failed (continue): %s", step.step_name, idx, e)
@@ -305,9 +310,12 @@ class DagEngine:
             # Non-sentinel chunk — dispatch each downstream step
             for ds_name in trigger.downstream_steps:
                 try:
-                    ds_result = await dispatch(
-                        step.capability, ds_name,
-                        {"chunk": chunk, **enriched},
+                    ds_result = await asyncio.wait_for(
+                        dispatch(
+                            step.capability, ds_name,
+                            {"chunk": chunk, **enriched},
+                        ),
+                        timeout=step.timeout_seconds or 120.0,
                     )
                     acc_key = f"_streaming_results_{ds_name}"
                     if acc_key not in ctx.context:
@@ -335,8 +343,12 @@ class DagEngine:
             return None
 
     async def _get_http_client(self) -> httpx.AsyncClient:
-        if not hasattr(self, '_http_client') or self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(timeout=30.0)
+        if not hasattr(self, '_http_client_lock'):
+            self._http_client_lock = threading.Lock()
+        if self._http_client is None or self._http_client.is_closed:
+            with self._http_client_lock:
+                if self._http_client is None or self._http_client.is_closed:
+                    self._http_client = httpx.AsyncClient(timeout=30.0)
         return self._http_client
 
     async def _flask_dispatch(self, url: str, payload: dict) -> dict:
@@ -346,7 +358,11 @@ class DagEngine:
         return resp.json()
 
     async def close(self) -> None:
-        """Release shared HTTP client resources."""
+        """Release shared HTTP client and streaming executor resources."""
+        global _STREAMING_EXECUTOR
+        if _STREAMING_EXECUTOR is not None:
+            _STREAMING_EXECUTOR.shutdown(wait=False)
+            _STREAMING_EXECUTOR = None
         if hasattr(self, '_http_client') and self._http_client is not None:
             if not self._http_client.is_closed:
                 await self._http_client.aclose()

@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Any
 
+from src.platform.circuit_breaker import CircuitBreaker
+
 
 @dataclass
 class ServiceContainer:
@@ -85,7 +87,6 @@ class ServiceContainer:
         c.schedule_registry = ScheduleRegistry(c.redis_client)
 
         # Core platform
-        from src.platform.circuit_breaker import CircuitBreaker
         c.circuit_breaker = CircuitBreaker(
             redis_client=c.redis_client,
             key_prefix="queue:cb",
@@ -174,7 +175,6 @@ class ServiceContainer:
         c.tenant_registry = TenantRegistry(c.redis_client)
 
         # Core platform
-        from src.platform.circuit_breaker import CircuitBreaker
         c.circuit_breaker = CircuitBreaker(
             redis_client=c.redis_client,
             key_prefix="queue:cb",

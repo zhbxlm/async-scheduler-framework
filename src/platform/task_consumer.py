@@ -123,19 +123,24 @@ class TaskConsumer:
         acquired = False
         try:
             # Non-blocking check: if semaphore is exhausted, skip immediately
-            acquired = (self._semaphore._value > 0) or True
-            if not acquired:
+            if self._semaphore._value <= 0:
                 return False
             # Global concurrency check (P1 fix)
             if self._use_global_conc:
-                while True:
-                    ok = await self._lua_acquire_slot(
-                        keys=[_GLOBAL_CONC_KEY],
-                        args=[str(self._global_conc_limit)]
-                    )
+                deadline = asyncio.get_event_loop().time() + 30.0
+                while asyncio.get_event_loop().time() < deadline:
+                    try:
+                        ok = await self._lua_acquire_slot(
+                            keys=[_GLOBAL_CONC_KEY],
+                            args=[str(self._global_conc_limit)]
+                        )
+                    except asyncio.CancelledError:
+                        raise
                     if ok == 1:
                         break
                     await asyncio.sleep(0.5)
+                else:
+                    return False
             await self._semaphore.acquire()
             acquired = True
 

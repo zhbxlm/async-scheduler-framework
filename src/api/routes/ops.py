@@ -32,7 +32,7 @@ async def ops_health(request: Request) -> dict:
 
 
 @router.get("/overview", summary="System overview with capability stats", include_in_schema=True)
-async def ops_overview(request: Request) -> dict:
+async def ops_overview(request: Request, _auth: dict = Depends(authenticate)) -> dict:
     """Return system-wide health summary with per-capability statistics."""
     redis = getattr(request.app.state, "redis", None)
     qm = getattr(request.app.state, "queue_manager", None)
