@@ -17,6 +17,7 @@ from src.services.operator_queries import OperatorQueryService
 from src.services.operator_dashboard import OperatorDashboardService
 from src.services.recovery_explainer import RecoveryExplainerService
 from src.services.operator_ux import OperatorUXService
+from src.services.callback_replay_policy import CallbackReplayPolicyService
 from src.services.replay_policy import ReplayPolicyService
 from src.services.run_centric_queries import RunCentricQueryService
 
@@ -249,6 +250,10 @@ async def ack_dead_letter(outbox_id: int, request: Request, _auth: dict = Depend
 async def replay_dead_letter(outbox_id: int, request: Request, _auth: dict = Depends(authenticate), reason: str | None = None) -> dict:
     db_factory = getattr(request.app.state, "async_session_factory", None)
     actor = _auth.get("tenant_id", "operator")
+    actor_role = _auth.get("role", "operator")
+    policy = await CallbackReplayPolicyService(session_factory=db_factory).check_callback_replay_allowed(outbox_id, reason=reason, actor_role=actor_role)
+    if not policy["allowed"]:
+        return {"ok": False, "outbox_id": outbox_id, "error": "replay not allowed", "reasons": policy["reasons"]}
     ok = await CallbackOpsService(db_factory).replay_dead_letter(outbox_id, actor=actor, reason=reason)
     return {"ok": ok, "outbox_id": outbox_id}
 
