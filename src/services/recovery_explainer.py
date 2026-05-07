@@ -45,7 +45,7 @@ class RecoveryExplainerService:
                             "attempt": task.attempt,
                             "max_retries": task.max_retries,
                         }
-                        if status_val == "running" and not explanation["lock"]["present"]:
+                        if status_val == "running" and self._redis is not None and not explanation["lock"]["present"]:
                             explanation["reasons"].append("task marked running but lease missing")
                             explanation["recommended_action"] = "replay_or_repair"
                         elif status_val in ("failed", "completed"):

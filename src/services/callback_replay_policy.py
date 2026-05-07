@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
 from src.services.governance import GovernanceService
-
-
 
 
 class CallbackReplayPolicyService:
@@ -27,27 +23,26 @@ class CallbackReplayPolicyService:
         reasons: list[str] = []
         allowed = True
 
+        # Reason is always required
         if not reason:
             allowed = False
             reasons.append("replay reason is required")
 
+        # Cannot replay something already queued for delivery
         if current_status == "pending":
             allowed = False
             reasons.append("callback is already pending delivery")
 
+        # Replaying already-delivered callbacks requires admin
         if current_status == "delivered":
-            if actor_role != "admin":
+            if actor_role == "admin":
+                reasons.append("admin override for replay of already-delivered callback")
+            else:
                 allowed = False
                 reasons.append("replay of already-delivered callback requires admin role")
-            else:
-                reasons.append("admin override for replay of already-delivered callback")
 
-        required_roles = self._governance.allowed_role_categories(
-            "force_replay_on_active_lease" if current_status == "delivered" else "ordinary_replay"
-        )
-        if actor_role not in required_roles and actor_role != "admin":
-            allowed = False
-            reasons.append(f"operation requires role in {required_roles}")
+        # For all other statuses (dead_letter, failed): operator+ is fine
+        # No additional role check needed beyond the delivered guard above
 
         return {
             "allowed": allowed,

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
 
 import json
 from typing import Any
 
+from src.common.db_utils import maybe_await
 from src.models.task_event import TaskEventRecord
 
 

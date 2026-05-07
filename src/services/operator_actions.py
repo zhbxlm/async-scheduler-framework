@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
 
 import json
 from typing import Any
 
+from src.common.db_utils import maybe_await
 from src.models.operator_action import OperatorActionRecord
 from src.services.task_timeline import TaskTimelineService
 from src.common.metrics import OPERATOR_ACTIONS_TOTAL

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
 
 from dataclasses import dataclass
 import json
@@ -9,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.common.db_utils import maybe_await
 from src.models.task import (
     TaskRecord,
     TaskStatus,
