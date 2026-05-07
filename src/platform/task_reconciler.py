@@ -20,6 +20,7 @@ from typing import Any
 import json
 
 from src.common.error_handling import log_errors
+from src.models.task import TaskStatus
 from src.common.ttl_constants import CALLBACK_RETRY_PAYLOAD_TTL
 
 logger = logging.getLogger(__name__)
@@ -451,8 +452,9 @@ class TaskReconciler:
             for tid, key, raw in zip(fail_tasks, fail_keys, raw_results):
                 if raw:
                     try:
+                        from src.platform.task_state_machine import TaskStateMachine, TaskEvent
                         data = json.loads(raw)
-                        data["status"] = "failed"
+                        data["status"] = TaskStateMachine.transition(TaskStatus.RUNNING, TaskEvent.STALE_FAIL).current.value
                         data["error"] = "reconciler: stuck task, lock expired"
                         write_pipe.set(key, json.dumps(data))
                         logger.info(

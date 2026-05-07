@@ -97,7 +97,16 @@ class TaskCompletionNode:
                     if error_msg:
                         error_msg = error_msg[:2000]  # truncate to 2000 chars
                 if row:
-                    update_values = {"status": status, "output_data": result_json}
+                    from src.platform.task_state_machine import TaskStateMachine, TaskEvent, InvalidTaskTransition
+                    current_status = row.status
+                    target_status = status
+                    if target_status == "completed":
+                        next_status = TaskStateMachine.transition(current_status, TaskEvent.COMPLETE).current
+                    elif target_status == "failed":
+                        next_status = TaskStateMachine.transition(current_status, TaskEvent.FAIL).current
+                    else:
+                        next_status = target_status
+                    update_values = {"status": next_status, "output_data": result_json}
                     if error_msg:
                         update_values["error_message"] = error_msg
                     await session.execute(

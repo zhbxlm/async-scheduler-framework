@@ -25,6 +25,7 @@ from src.services.task_validation import (
     validate_task_artifact,
     validate_task_scheduling,
 )
+from src.platform.task_state_machine import TaskStateMachine, TaskEvent, InvalidTaskTransition
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -242,10 +243,11 @@ async def create_task(
         )
 
     # Map result to TaskCreateResponse
+    transition = TaskStateMachine.transition(TaskStatus.PENDING, TaskEvent.ENQUEUE)
     return TaskCreateResponse(
         task_id=result["task_id"],
         tenant_id=tenant_id,
-        status=TaskStatus.QUEUED,
+        status=transition.current,
         cluster_id="",  # Not yet assigned
         estimated_wait_seconds=0,
         queue_position=result.get("queue_position", -1),
@@ -324,6 +326,9 @@ async def cancel_task(
     if prior in terminal:
         return TaskCancelResponse(task_id=task_id, cancelled=False, prior_status=prior)
 
-    task.status = TaskStatus.CANCELLED
+    try:
+        task.status = TaskStateMachine.transition(prior, TaskEvent.CANCEL).current
+    except InvalidTaskTransition:
+        return TaskCancelResponse(task_id=task_id, cancelled=False, prior_status=prior)
     db.commit()
     return TaskCancelResponse(task_id=task_id, cancelled=True, prior_status=prior)
