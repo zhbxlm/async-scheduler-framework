@@ -2,6 +2,22 @@
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# ─────────────────────────────────────────────────────────────
+# Root package: "all-in-one" install for development / monorepo
+#
+# For production / microservice deployments, build individual
+# sub-packages from packages/<name>/pyproject.toml instead:
+#
+#   packages/core     → async-scheduler-core     (models, monitoring, common)
+#   packages/platform → async-scheduler-platform (platform, services, workload, middleware)
+#   packages/api      → async-scheduler-api      (api)
+#   packages/agent    → async-scheduler-agent    (agent)
+#   packages/sdk      → async-scheduler-sdk      (sdk, cli)
+#   packages/proxy    → async-scheduler-proxy    (proxy)
+#
+# Build all sub-packages:
+#   scripts/build_packages.sh
+# ─────────────────────────────────────────────────────────────
 [project]
 name = "ray-async"
 version = "0.1.0"

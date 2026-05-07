@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown."""
     # ── startup ──────────────────────────────────────────────────
     from config.settings_pydantic import settings
-    from src.common.container import ServiceContainer, set_container
+    from src.platform.container import ServiceContainer, set_container
     from src.common.lifecycle import get_lifecycle_manager
 
     # init shared http client pool

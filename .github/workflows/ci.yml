@@ -123,10 +123,23 @@ jobs:
       with:
         python-version: '3.10'
     
-    - name: Build main package
+    - name: Install build tools
+      run: pip install build
+
+    - name: Build root (all-in-one) package
+      run: python -m build
+
+    - name: Build sub-packages
       run: |
-        pip install build
-        python -m build
+        chmod +x scripts/build_packages.sh
+        ./scripts/build_packages.sh
+
+    - name: List built artifacts
+      run: |
+        echo "=== Root package ==="
+        ls dist/*.whl dist/*.tar.gz 2>/dev/null || true
+        echo "=== Sub-packages ==="
+        find dist/packages -name '*.whl' | sort
     
     - name: Build documentation
       run: |
@@ -140,6 +153,7 @@ jobs:
         path: |
           dist/*.whl
           dist/*.tar.gz
+          dist/packages/**/*.whl
     
     - name: Upload documentation
       uses: actions/upload-artifact@v4

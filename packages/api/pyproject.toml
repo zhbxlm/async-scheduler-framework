@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "async-scheduler-api"
+version = "0.1.0"
+description = "FastAPI REST + metrics endpoints for async-scheduler"
+requires-python = ">=3.10"
+dependencies = [
+    "async-scheduler-platform==0.1.0",
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "httpx>=0.25",
+    "pydantic>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["../../"]
+include = ["src.api*"]
+
+[tool.setuptools.package-dir]
+"" = "../.."

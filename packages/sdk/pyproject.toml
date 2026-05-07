@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "async-scheduler-sdk"
+version = "0.1.0"
+description = "Python SDK and CLI client for async-scheduler"
+requires-python = ">=3.10"
+dependencies = [
+    "async-scheduler-core==0.1.0",
+    "httpx>=0.25",
+    "click>=8.1",
+]
+
+[project.scripts]
+scheduler = "src.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["../../"]
+include = ["src.sdk*", "src.cli*"]
+
+[tool.setuptools.package-dir]
+"" = "../.."

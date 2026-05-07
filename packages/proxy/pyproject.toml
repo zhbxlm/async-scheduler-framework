@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "async-scheduler-proxy"
+version = "0.1.0"
+description = "Async command/service proxy layer for async-scheduler"
+requires-python = ">=3.10"
+dependencies = [
+    "async-scheduler-core==0.1.0",
+    "redis>=5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["../../"]
+include = ["src.proxy*"]
+
+[tool.setuptools.package-dir]
+"" = "../.."
