@@ -415,14 +415,13 @@ class TaskReconciler:
             if not callback_url:
                 continue
 
-            # Check if already in retry queue to avoid duplicates
-            retry_members = await self._r.zrangebyscore(_CALLBACK_RETRY_KEY, "-inf", "+inf")
-            already_queued = any(tid in (m if isinstance(m, bytes) else m)
-                                 for m in retry_members)
+            # Use task_id as the sorted-set member for O(log N) dedup lookup.
+            # Full payload is stored in a companion hash key.
+            already_queued = await self._r.zscore(_CALLBACK_RETRY_KEY, tid) is not None
             if already_queued:
                 continue
 
-            # Enqueue to durable callback retry queue
+            retry_payload_key = f"callback:retry:payload:{tid}"
             retry_event = json.dumps({
                 "task_id": tid,
                 "callback_url": callback_url,
@@ -434,7 +433,11 @@ class TaskReconciler:
                 "attempt": 1,
             })
             next_retry_ts = time.time() + 10  # retry in 10s
-            await self._r.zadd(_CALLBACK_RETRY_KEY, {retry_event: next_retry_ts})
+            # Atomic pipeline: add member + store payload together
+            pipe = self._r.pipeline()
+            pipe.zadd(_CALLBACK_RETRY_KEY, {tid: next_retry_ts})
+            pipe.set(retry_payload_key, retry_event, ex=3600)
+            await pipe.execute()
             compensated += 1
             logger.info("TaskReconciler: phase3 enqueued callback task_id=%s", tid)
 

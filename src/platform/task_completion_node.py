@@ -269,7 +269,7 @@ class TaskCompletionNode:
 
     async def _get_client(self) -> httpx.AsyncClient:
         async with self._client_lock:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             if (
                 self._client is None
                 or self._client.is_closed

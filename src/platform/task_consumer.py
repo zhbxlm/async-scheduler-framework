@@ -77,8 +77,11 @@ class TaskConsumer:
 
     async def stop(self) -> None:
         self._running = False
+        # Cancel all inflight tasks and wait for them to finish
         for t in list(self._tasks):
             t.cancel()
+        if self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
         
         # Shutdown task executor
         if self._executor is not None and hasattr(self._executor, 'shutdown'):
@@ -139,8 +142,8 @@ class TaskConsumer:
                 return False
             # Global concurrency check (P1 fix)
             if self._use_global_conc:
-                deadline = asyncio.get_event_loop().time() + 30.0
-                while asyncio.get_event_loop().time() < deadline:
+                deadline = asyncio.get_running_loop().time() + 30.0
+                while asyncio.get_running_loop().time() < deadline:
                     try:
                         ok = await self._lua_acquire_slot(
                             keys=[_GLOBAL_CONC_KEY],

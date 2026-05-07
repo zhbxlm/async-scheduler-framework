@@ -6,6 +6,7 @@ Multi-tenant mode:   SHA-256 API key hash lookup via TenantRegistry
 """
 from __future__ import annotations
 
+import hmac
 from typing import Optional
 
 from fastapi import HTTPException, Request, Security
@@ -57,7 +58,7 @@ async def authenticate(
     # Single-tenant mode
     # ----------------------------------------------------------------
     if not multi_tenant_enabled:
-        if super_admin_key and api_key == super_admin_key:
+        if super_admin_key and hmac.compare_digest(api_key, super_admin_key):
             return {
                 "tenant_id": "super_admin",
                 "api_key": mask_api_key(api_key),
@@ -74,7 +75,7 @@ async def authenticate(
         raise HTTPException(status_code=503, detail="Auth service unavailable (no redis)")
 
     # Super-admin bypass
-    if super_admin_key and api_key == super_admin_key:
+    if super_admin_key and hmac.compare_digest(api_key, super_admin_key):
         return {
             "tenant_id": "super_admin",
             "api_key": mask_api_key(api_key),

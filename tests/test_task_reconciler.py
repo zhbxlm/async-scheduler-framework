@@ -393,9 +393,14 @@ async def test_phase3_enqueues_missing_callback():
 
     await rec._phase3_lost_callback([t])
 
+    # member in sorted set is now task_id (not raw JSON)
     members = await redis.zrangebyscore(_CALLBACK_RETRY_KEY, "-inf", float("inf"))
     assert len(members) == 1
-    event = json.loads(members[0])
+    assert members[0] == "p3-1"
+    # payload stored in companion hash
+    payload_raw = await redis.get("callback:retry:payload:p3-1")
+    assert payload_raw is not None
+    event = json.loads(payload_raw)
     assert event["task_id"] == "p3-1"
     assert event["callback_url"] == "http://cb/done"
 
@@ -419,9 +424,8 @@ async def test_phase3_skips_already_in_retry_queue():
     rec, redis, _, _ = _make_reconciler()
     t = _task("p3-queued", "completed", callback_url="http://cb")
 
-    # Pre-add to retry queue
-    existing = json.dumps({"task_id": "p3-queued", "callback_url": "http://cb", "payload": {}, "attempt": 1})
-    await redis.zadd(_CALLBACK_RETRY_KEY, {existing: time.time() + 30})
+    # Pre-add to retry queue using the new task_id-as-member convention
+    await redis.zadd(_CALLBACK_RETRY_KEY, {"p3-queued": time.time() + 30})
 
     await rec._phase3_lost_callback([t])
 

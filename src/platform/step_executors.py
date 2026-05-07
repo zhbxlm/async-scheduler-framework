@@ -110,12 +110,12 @@ class AsyncStepExecutor:
         result_key = f"result:{task_id}:{step_name}"
         pubsub_channel = f"result_channel:{task_id}:{step_name}"
 
-        deadline = asyncio.get_event_loop().time() + self._timeout
+        deadline = asyncio.get_running_loop().time() + self._timeout
         psub = self._r.pubsub()
         await psub.subscribe(pubsub_channel)
 
         try:
-            while asyncio.get_event_loop().time() < deadline:
+            while asyncio.get_running_loop().time() < deadline:
                 # Check result key first (may already be set)
                 raw = await self._r.get(result_key)
                 if raw:

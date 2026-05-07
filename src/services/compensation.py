@@ -162,14 +162,18 @@ class CompensationService:
             result = await session.execute(stmt)
             tasks = result.scalars().all()
             
-            # Check which ones are missing from Redis
-            missing = []
+            if not tasks:
+                return []
+
+            # Batch EXISTS check via pipeline — O(1) round trips instead of O(n)
+            pipe = self._redis.pipeline()
             for task in tasks:
-                redis_key = f"task:{task.task_id}"
-                exists = await self._redis.exists(redis_key)
-                if not exists:
-                    missing.append(task)
-            
+                pipe.exists(f"task:{task.task_id}")
+            exists_results = await pipe.execute()
+
+            missing = [
+                task for task, exists in zip(tasks, exists_results) if not exists
+            ]
             return missing
     
     async def _repair_transaction(self, tx: TxRecord) -> None:

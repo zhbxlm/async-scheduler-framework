@@ -16,7 +16,6 @@ import ast as _ast
 import asyncio
 import concurrent.futures
 import logging
-import threading
 from functools import lru_cache
 from typing import Any, Callable, Awaitable
 
@@ -33,17 +32,6 @@ _ALLOWED_BOOL_OPS = (_ast.And, _ast.Or)
 _ALLOWED_UNARY_OPS = (_ast.Not,)
 
 _ALLOWED_CONST_TYPES = (str, int, float, bool, type(None))
-
-_STREAMING_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
-
-
-def _get_streaming_executor(max_workers: int = 64) -> concurrent.futures.ThreadPoolExecutor:
-    global _STREAMING_EXECUTOR
-    if _STREAMING_EXECUTOR is None:
-        _STREAMING_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="dag_streaming"
-        )
-    return _STREAMING_EXECUTOR
 
 
 @lru_cache(maxsize=256)
@@ -77,6 +65,10 @@ class DagEngine:
         self._streaming_executor_max_workers = streaming_executor_max_workers
         self._current_steps: list = []  # for get_ready_nodes
         self._http_client: httpx.AsyncClient | None = None
+        # Instance-level executor and lock: each DagEngine owns its own resources
+        # so close() only tears down this instance, not shared global state.
+        self._streaming_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._http_client_lock = asyncio.Lock()
 
     async def execute(
         self,
@@ -271,7 +263,7 @@ class DagEngine:
         await asyncio.sleep(0)
 
         loop = asyncio.get_running_loop()
-        executor = _get_streaming_executor(self._streaming_executor_max_workers)
+        executor = self._get_streaming_executor()
         result: dict[str, Any] = {}
 
         # Global timeout for the entire streaming loop
@@ -371,13 +363,19 @@ class DagEngine:
             logger.error("STREAMING blpop error: %s", e)
             return None
 
+    def _get_streaming_executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        """Return (or lazily create) this instance's streaming thread executor."""
+        if self._streaming_executor is None:
+            self._streaming_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._streaming_executor_max_workers,
+                thread_name_prefix="dag_streaming",
+            )
+        return self._streaming_executor
+
     async def _get_http_client(self) -> httpx.AsyncClient:
-        if not hasattr(self, '_http_client_lock'):
-            self._http_client_lock = threading.Lock()
-        if self._http_client is None or self._http_client.is_closed:
-            with self._http_client_lock:
-                if self._http_client is None or self._http_client.is_closed:
-                    self._http_client = httpx.AsyncClient(timeout=30.0)
+        async with self._http_client_lock:
+            if self._http_client is None or self._http_client.is_closed:
+                self._http_client = httpx.AsyncClient(timeout=30.0)
         return self._http_client
 
     async def _flask_dispatch(self, url: str, payload: dict) -> dict:
@@ -387,12 +385,11 @@ class DagEngine:
         return resp.json()
 
     async def close(self) -> None:
-        """Release shared HTTP client and streaming executor resources."""
-        global _STREAMING_EXECUTOR
-        if _STREAMING_EXECUTOR is not None:
-            _STREAMING_EXECUTOR.shutdown(wait=False)
-            _STREAMING_EXECUTOR = None
-        if hasattr(self, '_http_client') and self._http_client is not None:
+        """Release this instance's HTTP client and streaming executor."""
+        if self._streaming_executor is not None:
+            self._streaming_executor.shutdown(wait=False)
+            self._streaming_executor = None
+        if self._http_client is not None:
             if not self._http_client.is_closed:
                 await self._http_client.aclose()
             self._http_client = None

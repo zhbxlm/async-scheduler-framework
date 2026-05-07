@@ -41,14 +41,26 @@ class CronScheduler:
         self._poll_interval = poll_interval
         self._leader_ttl = leader_ttl
         self._running = False
+        self._loop_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         self._running = True
         logger.info("CronScheduler started id=%s", self._instance_id)
-        await self._run_loop()
+        self._loop_task = asyncio.create_task(self._run_loop())
+        await self._loop_task
 
     async def stop(self) -> None:
         self._running = False
+        if self._loop_task is not None:
+            self._loop_task.cancel()
+            try:
+                await asyncio.wait_for(self._loop_task, timeout=10.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception as exc:
+                logger.warning("CronScheduler: stop error: %s", exc)
+            self._loop_task = None
+            logger.info("CronScheduler stopped id=%s", self._instance_id)
 
     @log_errors(log_level="WARNING", raise_exception=False)
     async def _run_loop(self) -> None:

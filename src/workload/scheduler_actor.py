@@ -83,10 +83,22 @@ def get_scheduler_actor(
         if redis_client is not None:
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                active_name_raw = loop.run_until_complete(
-                    redis_client.get(_ACTIVE_KEY.format(cluster_id=cluster_id))
-                )
+                # Use asyncio.run() if no running loop (sync factory context),
+                # otherwise fall back to executor to avoid blocking the event loop.
+                try:
+                    loop = asyncio.get_running_loop()
+                    # Already inside an async context — run in executor to avoid deadlock
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        active_name_raw = pool.submit(
+                            asyncio.run,
+                            redis_client.get(_ACTIVE_KEY.format(cluster_id=cluster_id))
+                        ).result(timeout=2.0)
+                except RuntimeError:
+                    # No running loop — safe to call asyncio.run() directly
+                    active_name_raw = asyncio.run(
+                        redis_client.get(_ACTIVE_KEY.format(cluster_id=cluster_id))
+                    )
                 if active_name_raw:
                     active_name = active_name_raw.decode() if isinstance(active_name_raw, bytes) else active_name_raw
                     try:
@@ -258,7 +270,13 @@ class SchedulerActor:
         if hasattr(pool, "get_status"):
             import asyncio
             try:
-                return asyncio.get_event_loop().run_until_complete(pool.get_status())
+                try:
+                    asyncio.get_running_loop()
+                    # Already in async context: cannot call run_until_complete;
+                    # return a pending marker and let caller await asynchronously.
+                    return {"capability": capability, "registered": True, "status": "pending_async"}
+                except RuntimeError:
+                    return asyncio.run(pool.get_status())
             except Exception:
                 pass
         return {"capability": capability, "registered": True}

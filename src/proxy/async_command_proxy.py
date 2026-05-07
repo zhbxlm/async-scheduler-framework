@@ -268,7 +268,7 @@ class AsyncCommandProxy:
     async def execute(self, cmd: str, args: list[str]) -> dict:
         """Async convenience wrapper for CLI-style invocation."""
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         full_cmd = cmd + (" " + " ".join(args) if args else "")
         submit_resp = self.submit(full_cmd)
         result = await loop.run_in_executor(

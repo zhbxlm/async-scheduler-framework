@@ -94,6 +94,10 @@ class FullFakeAsyncRedis:
     async def zcard(self, key: str) -> int:
         return len(self.zsets.get(key, {}))
 
+    async def zscore(self, key: str, member: str):
+        """Return score of member in sorted set, or None if not present."""
+        return self.zsets.get(key, {}).get(member)
+
     async def zpopmin(self, key: str, count: int = 1):
         bucket = self.zsets.get(key, {})
         if not bucket:
