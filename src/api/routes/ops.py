@@ -15,6 +15,7 @@ from src.services.callback_ops import CallbackOpsService
 from src.services.replay_lineage import ReplayLineageService
 from src.services.operator_queries import OperatorQueryService
 from src.services.operator_dashboard import OperatorDashboardService
+from src.services.recovery_explainer import RecoveryExplainerService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -240,6 +241,13 @@ async def operator_actions(request: Request, _auth: dict = Depends(authenticate)
     db_factory = getattr(request.app.state, "async_session_factory", None)
     rows = await OperatorQueryService(db_factory).list_actions(target_type=target_type, target_id=target_id, action_type=action_type, limit=limit)
     return {"items": [{"id": r.id, "actor": r.actor, "action_type": r.action_type, "target_type": r.target_type, "target_id": r.target_id, "reason": r.reason, "payload_json": r.payload_json, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in rows]}
+
+
+@router.get("/tasks/{task_id}/recovery-explanation", summary="Explain stale/recovery state for a task")
+async def task_recovery_explanation(task_id: str, request: Request, _auth: dict = Depends(authenticate)) -> dict:
+    redis = getattr(request.app.state, "redis", None)
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    return await RecoveryExplainerService(redis_client=redis, session_factory=db_factory).explain_task(task_id)
 
 
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
