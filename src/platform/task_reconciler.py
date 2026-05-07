@@ -88,10 +88,11 @@ class TaskReconciler:
     async def stop(self) -> None:
         self._running = False
         if self._loop_task:
+            self._loop_task.cancel()
             try:
-                await asyncio.wait_for(self._loop_task, timeout=10.0)
-            except asyncio.TimeoutError:
-                logger.warning("TaskReconciler: stop timeout")
+                await asyncio.wait_for(self._loop_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
             except Exception as exc:
                 logger.warning("TaskReconciler: stop error: %s", exc)
             self._loop_task = None

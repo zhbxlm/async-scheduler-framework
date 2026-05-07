@@ -86,7 +86,7 @@ def get_scheduler_actor(
                 # Use asyncio.run() if no running loop (sync factory context),
                 # otherwise fall back to executor to avoid blocking the event loop.
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                     # Already inside an async context — run in executor to avoid deadlock
                     import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:

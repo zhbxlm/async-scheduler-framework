@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 
 import httpx
@@ -11,6 +11,14 @@ from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliverySta
 
 logger = logging.getLogger(__name__)
 
+# Exponential backoff delays per attempt (seconds): 10s, 30s, 1m, 5m, 15m, 30m, 1h
+_BACKOFF_SECONDS = [10, 30, 60, 300, 900, 1800, 3600]
+
+
+def _next_attempt_delay(attempt_count: int) -> int:
+    """Return backoff delay in seconds for the given attempt number (1-indexed)."""
+    idx = min(attempt_count - 1, len(_BACKOFF_SECONDS) - 1)
+    return _BACKOFF_SECONDS[max(0, idx)]
 
 class CallbackDispatchService:
     def __init__(self, db_session_factory, *, poll_interval: float = 5.0, max_attempts: int = 8, http_timeout: float = 30.0):
@@ -72,7 +80,8 @@ class CallbackDispatchService:
                     if row.attempt_count >= self._max_attempts:
                         row.delivery_status = CallbackDeliveryStatus.DEAD_LETTER
                     else:
-                        row.next_attempt_at = now
+                        delay = _next_attempt_delay(row.attempt_count)
+                        row.next_attempt_at = now + timedelta(seconds=delay)
                 processed += 1
             await session.commit()
         return processed
