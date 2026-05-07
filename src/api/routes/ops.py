@@ -14,6 +14,7 @@ from src.services.task_audit_queries import TaskAuditQueryService
 from src.services.callback_ops import CallbackOpsService
 from src.services.replay_lineage import ReplayLineageService
 from src.services.operator_queries import OperatorQueryService
+from src.services.operator_dashboard import OperatorDashboardService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -183,6 +184,12 @@ async def queue_snapshot(
     if qm is None:
         raise HTTPException(status_code=503, detail="QueueManager not initialised")
     return await qm.get_queue_snapshot(capability)
+
+
+@router.get("/dashboard/summary", summary="Operator dashboard summary")
+async def operator_dashboard_summary(request: Request, _auth: dict = Depends(authenticate)) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    return await OperatorDashboardService(db_factory).summary()
 
 
 @router.get("/callbacks/summary", summary="Callback outbox summary")
