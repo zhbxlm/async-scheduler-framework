@@ -1,13 +1,7 @@
-"""scheduler_agent._internal — bridges public NodeAgent API to framework internals.
-
-This module is an implementation detail. Users should never import from here directly.
-"""
+"""scheduler_agent._internal — bridges NodeAgent to framework internals."""
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
-import sys
+import os, sys, logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,13 +9,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Add the monorepo src/ to sys.path when running from a development checkout.
-# In a proper pip install this isn't needed; the framework packages are on the path.
+
 def _ensure_framework_on_path() -> None:
-    candidate = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "src")
-    candidate = os.path.normpath(candidate)
-    if os.path.isdir(candidate) and candidate not in sys.path:
-        sys.path.insert(0, os.path.dirname(candidate))
+    candidate = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "src")
+    )
+    repo_root = os.path.dirname(candidate)
+    if os.path.isdir(candidate) and repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
 
 
 async def _start_agent(agent: "NodeAgent") -> None:
@@ -36,19 +31,14 @@ async def _start_agent(agent: "NodeAgent") -> None:
         ) from exc
 
     cfg = AgentConfig(
-        scheduler_url=agent._scheduler_url,
-        api_key=agent._api_key,
-        capabilities=agent._capabilities,
-        node_id=agent._node_id or "",
-        max_concurrent_tasks=agent._max_concurrent,
-        heartbeat_interval_seconds=agent._heartbeat_interval,
+        scheduler_url=agent.scheduler_url,
+        api_key=agent.api_key,
+        capabilities=agent.capabilities,
+        node_id=agent.node_id,
+        max_concurrent_tasks=agent.max_concurrent_tasks,
+        heartbeat_interval_seconds=agent.heartbeat_interval,
     )
-
     server = NodeAgentServer(cfg)
     agent._server = server
-    logger.info(
-        "NodeAgent starting: scheduler=%s capabilities=%s",
-        agent._scheduler_url,
-        agent._capabilities,
-    )
+    logger.info("NodeAgent starting: %s caps=%s", agent.scheduler_url, agent.capabilities)
     await server.start()

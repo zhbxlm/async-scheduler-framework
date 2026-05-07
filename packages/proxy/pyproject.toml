@@ -5,18 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "async-scheduler-proxy"
 version = "0.1.0"
-description = "Async proxy — embed fire-and-forget task dispatch into any existing service"
+description = "Embed fire-and-forget async task dispatch into any existing service"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-keywords = ["async", "scheduler", "proxy", "fire-and-forget"]
-dependencies = [
-    "redis>=5.0",
-    "orjson>=3.9",
-]
+dependencies = ["redis>=5.0", "orjson>=3.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
 [tool.setuptools.package-dir]
 "" = "src"

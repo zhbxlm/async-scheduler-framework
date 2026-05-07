@@ -1,11 +1,12 @@
 """scheduler_agent — Node Agent for async-scheduler.
 
-Deploy a worker node with a single command:
+    from scheduler_agent import NodeAgent
 
-    scheduler-agent start --scheduler-url http://scheduler:8000 \\
-                          --capabilities image_resize,data_pipeline
-
-No need to understand framework internals.
+    agent = NodeAgent(
+        scheduler_url="http://scheduler:8000",
+        capabilities=["image_resize"],
+    )
+    await agent.start()
 """
 from scheduler_agent.node import NodeAgent
 

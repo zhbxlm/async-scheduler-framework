@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# scripts/build_packages.sh
-# Build all user-facing sub-packages in dependency order.
-# Output .whl files appear in dist/packages/<name>/
+# scripts/build_packages.sh — build all 7 user-facing sub-packages
 #
-# Packages:
-#   sdk     → async-scheduler-sdk     (HTTP client + CLI, deps: httpx, pydantic)
-#   worker  → async-scheduler-worker  (BaseWorker, zero required deps)
-#   proxy   → async-scheduler-proxy   (AsyncCommandProxy, deps: redis)
-#   agent   → async-scheduler-agent   (Node Agent service, full deps)
+# Packages (lightest → heaviest):
+#   sdk       async-scheduler-sdk       HTTP client (httpx, pydantic)
+#   worker    async-scheduler-worker    BaseWorker (zero deps)
+#   proxy     async-scheduler-proxy     Redis dispatch proxy (redis)
+#   cli       async-scheduler-cli       kubectl-style CLI (httpx, click)
+#   task-api  async-scheduler-task-api  Task submission service (full stack)
+#   ops-api   async-scheduler-ops-api   Ops/Admin service (full stack + Ray)
+#   agent     async-scheduler-agent     Worker node service (full stack + Ray)
 #
 # Usage:
-#   ./scripts/build_packages.sh          # build all
-#   ./scripts/build_packages.sh sdk      # build single package
+#   ./scripts/build_packages.sh           # build all
+#   ./scripts/build_packages.sh sdk       # build single package
 #
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_ROOT="${REPO_ROOT}/dist/packages"
-# Build order: lightweight → heavy
-PACKAGES=(sdk worker proxy agent)
+PACKAGES=(sdk worker proxy cli task-api ops-api agent)
 
 TARGET="${1:-all}"
 
@@ -29,28 +29,20 @@ build_pkg() {
     local name="$1"
     local pkg_dir="${REPO_ROOT}/packages/${name}"
     local out_dir="${DIST_ROOT}/${name}"
-
-    [[ -d "$pkg_dir" ]] || err "Package directory not found: $pkg_dir"
+    [[ -d "$pkg_dir" ]] || err "Not found: $pkg_dir"
     mkdir -p "$out_dir"
-
     log "Building async-scheduler-${name} ..."
     python3 -m build --wheel --outdir "$out_dir" "$pkg_dir"
-    local whl
-    whl="$(ls "${out_dir}"/*.whl 2>/dev/null | tail -1)"
-    log "  → $(basename "$whl")"
+    log "  → $(basename "$(ls "${out_dir}"/*.whl 2>/dev/null | tail -1)")"
 }
 
 python3 -m pip install --quiet build
 
 if [[ "$TARGET" == "all" ]]; then
-    for pkg in "${PACKAGES[@]}"; do
-        build_pkg "$pkg"
-    done
+    for pkg in "${PACKAGES[@]}"; do build_pkg "$pkg"; done
     log ""
-    log "All packages built successfully:"
-    find "$DIST_ROOT" -name "*.whl" | sort | while read -r whl; do
-        log "  $(basename "$whl")"
-    done
+    log "All packages built:"
+    find "$DIST_ROOT" -name "*.whl" | sort | while read -r w; do log "  $(basename "$w")"; done
 else
     build_pkg "$TARGET"
 fi

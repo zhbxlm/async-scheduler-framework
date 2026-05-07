@@ -3,13 +3,16 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "async-scheduler-sdk"
+name = "async-scheduler-cli"
 version = "0.1.0"
-description = "Python SDK for async-scheduler — submit tasks and poll results programmatically"
+description = "kubectl-style CLI for async-scheduler — manage tasks, nodes, DAGs and schedules"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["httpx>=0.25", "pydantic>=2.0"]
+dependencies = ["httpx>=0.25", "click>=8.1"]
+
+[project.scripts]
+scheduler = "scheduler_cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
