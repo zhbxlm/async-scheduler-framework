@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
 from src.platform import queue_keys as qk
+from src.services.task_audit_queries import TaskAuditQueryService
+from src.services.callback_ops import CallbackOpsService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -179,6 +181,33 @@ async def queue_snapshot(
     if qm is None:
         raise HTTPException(status_code=503, detail="QueueManager not initialised")
     return await qm.get_queue_snapshot(capability)
+
+
+@router.get("/callbacks/summary", summary="Callback outbox summary")
+async def callback_summary(request: Request, _auth: dict = Depends(authenticate)) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    return await TaskAuditQueryService(db_factory).get_callback_summary()
+
+
+@router.get("/callbacks/dead-letters", summary="List callback dead letters")
+async def callback_dead_letters(request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    rows = await CallbackOpsService(db_factory).list_dead_letters(limit=limit)
+    return {"items": [{"id": r.id, "task_id": r.task_id, "callback_url": r.callback_url, "status": getattr(r.delivery_status, 'value', r.delivery_status), "attempt_count": r.attempt_count, "last_error": r.last_error} for r in rows]}
+
+
+@router.post("/callbacks/dead-letters/{outbox_id}/replay", summary="Replay a dead-letter callback")
+async def replay_dead_letter(outbox_id: int, request: Request, _auth: dict = Depends(authenticate)) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    ok = await CallbackOpsService(db_factory).replay_dead_letter(outbox_id)
+    return {"ok": ok, "outbox_id": outbox_id}
+
+
+@router.get("/tasks/{task_id}/timeline", summary="Task timeline events")
+async def task_timeline(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    rows = await TaskAuditQueryService(db_factory).get_task_timeline(task_id, limit=limit)
+    return {"task_id": task_id, "items": [{"id": r.id, "event_type": r.event_type, "run_key": r.run_key, "event_payload": r.event_payload, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in rows]}
 
 
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
