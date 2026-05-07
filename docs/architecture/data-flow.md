@@ -27,10 +27,11 @@
 
 ## 状态存储
 
-| 数据 | 存储 | 有效期 |
-|------|------|--------|
-| 任务记录 | MySQL | 永久 |
-| 待处理队列 | Redis List | — |
-| 运行中任务锁 | Redis String | 2 × 超时时间 |
-| 结果缓存 | Redis Hash | 可配置 |
-| 指标数据 | Prometheus | 按抓取间隔 |
+| 数据 | 存储 | 语义 | 有效期 |
+|------|------|------|--------|
+| 任务记录 | MySQL | durable lifecycle truth | 永久 |
+| TaskRun / 执行实例 | MySQL | execution-instance lineage | 永久 |
+| 待处理队列 | Redis List / ZSET | scheduler execution index | — |
+| 运行中任务锁 | Redis String | distributed execution ownership | 2 × 超时时间 |
+| 结果缓存 | Redis Hash | cache only | 可配置 |
+| 指标数据 | Prometheus | observability | 按抓取间隔 |
