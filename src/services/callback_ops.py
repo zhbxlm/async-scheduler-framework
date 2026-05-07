@@ -29,7 +29,7 @@ class CallbackOpsService:
             ))
             return list(result.scalars().all())
 
-    async def replay_dead_letter(self, outbox_id: int) -> bool:
+    async def replay_dead_letter(self, outbox_id: int, *, actor: str = "system", reason: str | None = None) -> bool:
         if self._db is None:
             return False
         async with self._db() as session:
@@ -40,4 +40,17 @@ class CallbackOpsService:
             row.next_attempt_at = None
             row.last_error = None
             await _maybe_await(session.commit())
-            return True
+        try:
+            from src.services.operator_actions import OperatorActionService
+            await OperatorActionService(self._db).record(
+                actor=actor,
+                action_type="callback_replay_requested",
+                target_type="callback_outbox",
+                target_id=str(outbox_id),
+                reason=reason,
+                payload={"outbox_id": outbox_id},
+                task_id=getattr(row, "task_id", None),
+            )
+        except Exception:
+            pass
+        return True

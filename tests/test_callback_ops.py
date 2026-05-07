@@ -35,6 +35,7 @@ async def test_list_dead_letters_returns_rows():
 async def test_replay_dead_letter_resets_row():
     row = SimpleNamespace(id=1, delivery_status=CallbackDeliveryStatus.DEAD_LETTER, next_attempt_at="x", last_error="boom")
     session = AsyncMock()
+    session.add = MagicMock()
     session.get = AsyncMock(return_value=row)
     session.commit = AsyncMock()
 
