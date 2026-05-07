@@ -330,12 +330,12 @@ async def test_semaphore_released_after_execute_exception():
 
 
 # ---------------------------------------------------------------------------
-# Global Redis concurrency (Lua path)
+# Redis present but no distributed global slot semantics
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_global_conc_redis_path_dispatches_task():
-    """With a real FakeRedis, global concurrency Lua scripts work correctly."""
+async def test_consumer_dispatches_task_even_when_redis_client_present():
+    """Redis presence should not change dispatch semantics; local semaphore remains authoritative."""
     consumer, mock_queue, mock_executor = _make_consumer(
         use_redis=True,
         max_concurrent=2,
@@ -348,34 +348,6 @@ async def test_global_conc_redis_path_dispatches_task():
 
     task_ids = [c.args[0] for c in mock_executor.execute.call_args_list]
     assert "r1" in task_ids
-
-
-@pytest.mark.asyncio
-async def test_global_conc_slot_released_after_execute():
-    """After task execution, the Lua concurrency slot counter returns to 0."""
-    from src.platform.task_consumer import _GLOBAL_CONC_KEY
-
-    fake_redis = FullFakeAsyncRedis()
-
-    consumer, mock_queue, mock_executor = _make_consumer(
-        use_redis=False,   # we inject manually below
-        max_concurrent=2,
-        poll_interval=0.01,
-    )
-    # Inject the fake redis scripts — pass real Lua content so FakeRedis detects acquire/release
-    consumer._use_global_conc = True
-    consumer._lua_acquire_slot = fake_redis.register_script("redis.call('INCR', KEYS[1])")
-    consumer._lua_release_slot = fake_redis.register_script("redis.call('DECR', KEYS[1])")
-
-    task_data = {"task_id": "slot1"}
-    mock_queue.dequeue = AsyncMock(side_effect=[task_data] + [None] * 30)
-
-    await _run_for(consumer, 0.2)
-
-    # After the task finished, the global slot counter should be back to 0
-    counter = await fake_redis.get(_GLOBAL_CONC_KEY)
-    val = int(counter) if counter is not None else 0
-    assert val == 0
 
 
 # ---------------------------------------------------------------------------

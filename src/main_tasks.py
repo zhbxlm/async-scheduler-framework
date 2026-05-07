@@ -1,7 +1,8 @@
 """Task API server entry point (port 8001).
 
 Handles task submission, query, result retrieval and cancellation.
-Depends on MySQL (TaskRecord ORM) + Redis. Runs TaskReconciler background loop.
+Depends on MySQL (TaskRecord ORM) + Redis.
+Long-running background loops are hosted by the control-plane worker.
 """
 from __future__ import annotations
 
@@ -33,12 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── startup ──────────────────────────────────────────────────
     from config.settings_pydantic import settings
     from src.platform.container import ServiceContainer, set_container
-    from src.common.lifecycle import (
-        get_lifecycle_manager,
-        TaskReconcilerResource,
-        CronSchedulerResource,
-        CompensationServiceResource,
-    )
+    from src.common.lifecycle import get_lifecycle_manager
     from src.common.error_handling import BusinessError
 
     # Fail‑fast: MySQL must be configured for task‑api
@@ -78,12 +74,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     }
 
     manager = get_lifecycle_manager()
-    if settings.background.reconcile.enabled and container.task_reconciler:
-        manager.register_resource(TaskReconcilerResource(container.task_reconciler))
-    if settings.background.cron.enabled and container.cron_scheduler:
-        manager.register_resource(CronSchedulerResource(container.cron_scheduler))
-    if container.compensation_service:
-        manager.register_resource(CompensationServiceResource(container.compensation_service))
     await manager.start_all()
 
     yield

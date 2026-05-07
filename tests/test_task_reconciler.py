@@ -375,6 +375,87 @@ async def test_reconcile_redis_from_mysql_when_cache_missing_and_task_completed(
     assert data["callback_url"] == "http://cb"
 
 
+@pytest.mark.asyncio
+async def test_rebuild_pending_index_from_mysql_for_queued_task_without_duplication():
+    rec, redis, db, _ = _make_reconciler(with_db=True)
+    session = db._session
+
+    class Row: pass
+    row = Row()
+    row.task_id = "mysql-pending1"
+    row.tenant_id = "t1"
+    row.task_type = "cap_a"
+    row.status = "queued"
+    row.priority = "normal"
+    row.input_data = '{}'
+    row.output_data = None
+    row.error_message = None
+    row.metadata_json = '{}'
+    row.callback_url = None
+    row.idempotency_key = None
+    row.timeout_seconds = 3600
+    row.max_retries = 3
+    row.attempt = 0
+    row.scheduled_at = None
+    row.cron_expr = None
+    row.created_at = None
+    row.updated_at = None
+
+    mock_rows = MagicMock()
+    mock_rows.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(return_value=mock_rows)
+
+    await rec._rebuild_redis_from_mysql()
+    pending_key = "{queue:cap_a}:pending"
+    assert await redis.zscore(pending_key, "mysql-pending1") is not None
+
+    # Re-run rebuild: should not duplicate or change cardinality unexpectedly.
+    before = await redis.zcard(pending_key)
+    await rec._rebuild_redis_from_mysql()
+    after = await redis.zcard(pending_key)
+    assert before == 1
+    assert after == 1
+
+
+@pytest.mark.asyncio
+async def test_rebuild_does_not_enqueue_when_task_already_running_indexed():
+    rec, redis, db, _ = _make_reconciler(with_db=True)
+    session = db._session
+
+    class Row: pass
+    row = Row()
+    row.task_id = "mysql-running1"
+    row.tenant_id = "t1"
+    row.task_type = "cap_a"
+    row.status = "running"
+    row.priority = "normal"
+    row.input_data = '{}'
+    row.output_data = None
+    row.error_message = None
+    row.metadata_json = '{}'
+    row.callback_url = None
+    row.idempotency_key = None
+    row.timeout_seconds = 3600
+    row.max_retries = 3
+    row.attempt = 1
+    row.scheduled_at = None
+    row.cron_expr = None
+    row.created_at = None
+    row.updated_at = None
+
+    mock_rows = MagicMock()
+    mock_rows.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(return_value=mock_rows)
+
+    running_key = "{queue:cap_a}:running"
+    await redis.zadd(running_key, {"mysql-running1": time.time()})
+
+    await rec._rebuild_redis_from_mysql()
+    pending_key = "{queue:cap_a}:pending"
+    assert await redis.zscore(pending_key, "mysql-running1") is None
+    assert await redis.zscore(running_key, "mysql-running1") is not None
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: Stuck recovery
 # ---------------------------------------------------------------------------

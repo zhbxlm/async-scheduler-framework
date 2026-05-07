@@ -151,6 +151,84 @@ class ServiceContainer:
         return c
 
     @classmethod
+    async def build_control_plane(cls, settings) -> "ServiceContainer":
+        """Build control-plane services (background loops only).
+
+        Responsibilities:
+            - CronScheduler
+            - TaskReconciler
+            - CompensationService
+
+        This role depends on MySQL + Redis but does not expose an HTTP API.
+        It exists to keep long-running orchestration loops out of task-api/ops-api.
+        """
+        from src.common.redis_client import create_redis_client
+        from src.common.async_db import init_async_engine, get_async_db
+        from src.platform.schedule_registry import ScheduleRegistry
+        from src.platform.queue_manager import QueueManager
+        from src.platform.task_creator import TaskCreator
+        from src.platform.task_reconciler import TaskReconciler
+        from src.platform.task_completion_node import TaskCompletionNode
+        from src.platform.cron_scheduler import CronScheduler
+        from src.platform.circuit_breaker import CircuitBreaker
+        from src.services.compensation import CompensationService
+        from functools import partial
+
+        c = cls()
+        redis_url = str(settings.redis.url) if settings.redis.url else None
+        c.redis_client = await create_redis_client(redis_url)
+
+        db_factory = None
+        if settings.mysql.url:
+            engine, session_factory = init_async_engine(settings.mysql.url)
+            c.async_engine = engine
+            c.async_session_factory = session_factory
+            db_factory = partial(get_async_db, session_factory)
+
+        c.schedule_registry = ScheduleRegistry(c.redis_client)
+        c.circuit_breaker = CircuitBreaker(
+            redis_client=c.redis_client,
+            key_prefix="queue:cb",
+        )
+        c.queue_manager = QueueManager(
+            c.redis_client, circuit_breaker=c.circuit_breaker
+        )
+        c.task_creator = TaskCreator(
+            redis_client=c.redis_client,
+            queue_manager=c.queue_manager,
+            db_session_factory=db_factory,
+        )
+        c.compensation_service = CompensationService(
+            mysql_session_factory=db_factory,
+            redis_client=c.redis_client,
+            scan_interval_seconds=getattr(settings.background, 'compensation_interval', 60),
+        )
+        rcfg = settings.background.reconcile
+        c.task_reconciler = TaskReconciler(
+            redis_client=c.redis_client,
+            db_session_factory=db_factory,
+            queue_manager=c.queue_manager,
+            interval_seconds=rcfg.interval_seconds,
+            stuck_max_per_tick=rcfg.stuck_max_per_tick,
+            stuck_task_max_age_seconds=rcfg.stuck_task_max_age_seconds,
+            batch_size=rcfg.batch_size,
+            compensation_service=c.compensation_service,
+        )
+        c.task_completion_node = TaskCompletionNode(
+            db_session_factory=db_factory,
+            redis_client=c.redis_client,
+        )
+        ccfg = settings.background.cron
+        cron_interval = getattr(ccfg, "poll_interval", 60)
+        c.cron_scheduler = CronScheduler(
+            redis_client=c.redis_client,
+            schedule_repository=c.schedule_registry,
+            task_creator=c.task_creator,
+            poll_interval=float(cron_interval),
+        )
+        return c
+
+    @classmethod
     async def build_ops_api(cls, settings) -> "ServiceContainer":
         """Build ops-api services (port 8000).
 

@@ -11,6 +11,8 @@
               |
         MySQL（TaskRecord 持久化）
               |
+        control-plane worker（cron / reconcile / compensation）
+              |
         Node Agent + Worker
 ```
 
@@ -27,6 +29,22 @@
 | `BACKGROUND__CRON__ENABLED` | 否 | `false` | 启用 cron 调度（task-api） |
 | `TENANT_SUPER_ADMIN_API_KEY` | 否 | — | 超级管理员 API Key |
 | `TENANT_MULTI_TENANT_ENABLED` | 否 | `false` | 启用多租户模式 |
+
+## 进程角色
+
+### task-api
+- 负责任务提交、查询、取消、结果查询
+- 不再承载长期后台控制循环
+
+### ops-api
+- 负责配置与运维管理
+- 不承载任务执行控制循环
+
+### control-plane worker
+- 负责 `CronScheduler`
+- 负责 `TaskReconciler`
+- 负责 `CompensationService`
+- 启动入口：`python -m src.main_control`
 
 ## 部署
 

@@ -154,10 +154,6 @@ class TaskReconciler:
                     task_id = getattr(row, "task_id", None)
                     if not task_id:
                         continue
-                    task_key = f"task:{task_id}"
-                    existing = await self._r.get(task_key)
-                    if existing:
-                        continue
 
                     def _enum_value(v):
                         return getattr(v, "value", v)
@@ -172,11 +168,13 @@ class TaskReconciler:
                         except Exception:
                             return default
 
+                    status = _enum_value(getattr(row, "status", "pending"))
+                    capability = getattr(row, "task_type", "") or ""
                     payload = {
                         "task_id": task_id,
                         "tenant_id": getattr(row, "tenant_id", "") or "",
-                        "status": _enum_value(getattr(row, "status", "pending")),
-                        "capability": getattr(row, "task_type", "") or "",
+                        "status": status,
+                        "capability": capability,
                         "priority": _enum_value(getattr(row, "priority", "normal")),
                         "input_data": _json_load_or_default(getattr(row, "input_data", None), {}),
                         "output": _json_load_or_default(getattr(row, "output_data", None), {}),
@@ -192,7 +190,22 @@ class TaskReconciler:
                         "created_at": str(getattr(row, "created_at", None)) if getattr(row, "created_at", None) else None,
                         "updated_at": str(getattr(row, "updated_at", None)) if getattr(row, "updated_at", None) else None,
                     }
-                    await self._r.set(task_key, json.dumps(payload), ex=86400)
+
+                    # Rebuild cache if missing.
+                    task_key = f"task:{task_id}"
+                    existing = await self._r.get(task_key)
+                    if not existing:
+                        await self._r.set(task_key, json.dumps(payload), ex=86400)
+
+                    # Conservative index rebuild: only restore pending queue membership
+                    # for queued/scheduled tasks when task is absent from both pending/running.
+                    if capability and status in ("queued", "scheduled"):
+                        pending_key = f"{{queue:{capability}}}:pending"
+                        running_key = f"{{queue:{capability}}}:running"
+                        in_pending = await self._r.zscore(pending_key, task_id)
+                        in_running = await self._r.zscore(running_key, task_id)
+                        if in_pending is None and in_running is None:
+                            await self._r.zadd(pending_key, {task_id: time.time()})
         except Exception as exc:
             logger.warning("TaskReconciler: mysql->redis rebuild error: %s", exc)
 
