@@ -27,6 +27,7 @@ async def _lifespan() -> AsyncIterator[None]:
         TaskReconcilerResource,
         CronSchedulerResource,
         CompensationServiceResource,
+        CallbackDispatcherResource,
     )
     from src.common.http_client import init_http_client, close_http_client
     from src.common.async_db import async_dispose_engine
@@ -42,6 +43,8 @@ async def _lifespan() -> AsyncIterator[None]:
         manager.register_resource(CronSchedulerResource(container.cron_scheduler))
     if container.compensation_service:
         manager.register_resource(CompensationServiceResource(container.compensation_service))
+    if container.callback_dispatcher:
+        manager.register_resource(CallbackDispatcherResource(container.callback_dispatcher))
     await manager.start_all()
 
     try:

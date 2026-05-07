@@ -233,3 +233,22 @@ class CompensationServiceResource(ManagedResource):
     async def stop(self) -> None:
         if hasattr(self._service, 'stop'):
             await self._service.stop()
+
+
+class CallbackDispatcherResource(ManagedResource):
+    """Adapter for CallbackDispatchService."""
+
+    def __init__(self, service: Any) -> None:
+        self._service = service
+
+    @property
+    def name(self) -> str:
+        return "CallbackDispatcher"
+
+    async def start(self) -> None:
+        if hasattr(self._service, 'start'):
+            await self._service.start()
+
+    async def stop(self) -> None:
+        if hasattr(self._service, 'stop'):
+            await self._service.stop()
