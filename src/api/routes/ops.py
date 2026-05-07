@@ -12,6 +12,7 @@ from src.api.auth import authenticate
 from src.platform import queue_keys as qk
 from src.services.task_audit_queries import TaskAuditQueryService
 from src.services.callback_ops import CallbackOpsService
+from src.services.replay_lineage import ReplayLineageService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -208,6 +209,13 @@ async def task_timeline(task_id: str, request: Request, _auth: dict = Depends(au
     db_factory = getattr(request.app.state, "async_session_factory", None)
     rows = await TaskAuditQueryService(db_factory).get_task_timeline(task_id, limit=limit)
     return {"task_id": task_id, "items": [{"id": r.id, "event_type": r.event_type, "run_key": r.run_key, "event_payload": r.event_payload, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in rows]}
+
+
+@router.post("/tasks/{task_id}/replay", summary="Request task replay lineage")
+async def task_replay(task_id: str, request: Request, _auth: dict = Depends(authenticate), reason: str | None = None, from_run_key: str | None = None) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    actor = _auth.get("tenant_id", "operator")
+    return await ReplayLineageService(db_factory).replay_task(task_id=task_id, actor=actor, reason=reason, from_run_key=from_run_key)
 
 
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
