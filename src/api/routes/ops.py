@@ -197,10 +197,19 @@ async def callback_dead_letters(request: Request, _auth: dict = Depends(authenti
     return {"items": [{"id": r.id, "task_id": r.task_id, "callback_url": r.callback_url, "status": getattr(r.delivery_status, 'value', r.delivery_status), "attempt_count": r.attempt_count, "last_error": r.last_error} for r in rows]}
 
 
-@router.post("/callbacks/dead-letters/{outbox_id}/replay", summary="Replay a dead-letter callback")
-async def replay_dead_letter(outbox_id: int, request: Request, _auth: dict = Depends(authenticate)) -> dict:
+@router.post("/callbacks/dead-letters/{outbox_id}/ack", summary="Acknowledge a dead-letter callback")
+async def ack_dead_letter(outbox_id: int, request: Request, _auth: dict = Depends(authenticate), reason: str | None = None) -> dict:
     db_factory = getattr(request.app.state, "async_session_factory", None)
-    ok = await CallbackOpsService(db_factory).replay_dead_letter(outbox_id)
+    actor = _auth.get("tenant_id", "operator")
+    ok = await CallbackOpsService(db_factory).acknowledge_dead_letter(outbox_id, actor=actor, reason=reason)
+    return {"ok": ok, "outbox_id": outbox_id}
+
+
+@router.post("/callbacks/dead-letters/{outbox_id}/replay", summary="Replay a dead-letter callback")
+async def replay_dead_letter(outbox_id: int, request: Request, _auth: dict = Depends(authenticate), reason: str | None = None) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    actor = _auth.get("tenant_id", "operator")
+    ok = await CallbackOpsService(db_factory).replay_dead_letter(outbox_id, actor=actor, reason=reason)
     return {"ok": ok, "outbox_id": outbox_id}
 
 

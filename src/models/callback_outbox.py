@@ -32,6 +32,8 @@ class CallbackOutboxRecord(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

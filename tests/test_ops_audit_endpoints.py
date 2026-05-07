@@ -10,5 +10,6 @@ def test_ops_router_has_callback_and_timeline_routes():
     paths = {route.path for route in app.routes}
     assert "/ops/v1/callbacks/summary" in paths
     assert "/ops/v1/callbacks/dead-letters" in paths
+    assert "/ops/v1/callbacks/dead-letters/{outbox_id}/ack" in paths
     assert "/ops/v1/callbacks/dead-letters/{outbox_id}/replay" in paths
     assert "/ops/v1/tasks/{task_id}/timeline" in paths

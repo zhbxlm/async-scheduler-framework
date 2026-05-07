@@ -32,6 +32,29 @@ async def test_list_dead_letters_returns_rows():
 
 
 @pytest.mark.asyncio
+async def test_acknowledge_dead_letter_marks_row():
+    row = SimpleNamespace(id=1, delivery_status=CallbackDeliveryStatus.DEAD_LETTER, acknowledged_by=None, acknowledged_at=None, task_id="t1")
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.get = AsyncMock(return_value=row)
+    session.commit = AsyncMock()
+
+    class Factory:
+        async def __aenter__(self):
+            return session
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+    def db_factory():
+        return Factory()
+
+    svc = CallbackOpsService(db_factory)
+    ok = await svc.acknowledge_dead_letter(1, actor="alice", reason="seen")
+    assert ok is True
+    assert row.acknowledged_by == "alice"
+    assert row.acknowledged_at is not None
+
+
+@pytest.mark.asyncio
 async def test_replay_dead_letter_resets_row():
     row = SimpleNamespace(id=1, delivery_status=CallbackDeliveryStatus.DEAD_LETTER, next_attempt_at="x", last_error="boom")
     session = AsyncMock()
