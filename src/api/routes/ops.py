@@ -236,7 +236,7 @@ async def task_replay(task_id: str, request: Request, _auth: dict = Depends(auth
     db_factory = getattr(request.app.state, "async_session_factory", None)
     redis = getattr(request.app.state, "redis", None)
     actor = _auth.get("tenant_id", "operator")
-    policy = await ReplayPolicyService(redis_client=redis, session_factory=db_factory).check_task_replay_allowed(task_id, reason=reason)
+    policy = await ReplayPolicyService(redis_client=redis, session_factory=db_factory).check_task_replay_allowed(task_id, reason=reason, actor_role=_auth.get("role", "operator"))
     if not policy["allowed"]:
         return {"ok": False, "task_id": task_id, "error": "replay not allowed", "reasons": policy["reasons"]}
     return await ReplayLineageService(db_factory).replay_task(task_id=task_id, actor=actor, reason=reason, from_run_key=from_run_key)

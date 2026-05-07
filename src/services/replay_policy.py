@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from src.services.governance import GovernanceService
+
 
 async def _maybe_await(value):
     if inspect.isawaitable(value):
@@ -14,8 +16,9 @@ class ReplayPolicyService:
     def __init__(self, *, redis_client: Any | None = None, session_factory: Any | None = None) -> None:
         self._redis = redis_client
         self._db = session_factory
+        self._governance = GovernanceService(session_factory=session_factory)
 
-    async def check_task_replay_allowed(self, task_id: str, *, reason: str | None = None) -> dict:
+    async def check_task_replay_allowed(self, task_id: str, *, reason: str | None = None, actor_role: str = "operator") -> dict:
         reasons: list[str] = []
         allowed = True
 
@@ -29,6 +32,9 @@ class ReplayPolicyService:
             if lock_exists:
                 allowed = False
                 reasons.append("active execution lease exists")
+                if actor_role == "admin":
+                    allowed = True
+                    reasons.append("admin override for force replay on active lease")
 
         return {
             "allowed": allowed,
