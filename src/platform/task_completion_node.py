@@ -61,7 +61,7 @@ class TaskCompletionNode:
     ) -> bool:
         """Persist to MySQL + send HTTP callback in parallel."""
         persist_task = asyncio.create_task(
-            self._persist(task_id, status, result, tenant_id=tenant_id)
+            self._persist(task_id, status, result, tenant_id=tenant_id, callback_url=callback_url)
         )
         callback_task = asyncio.create_task(
             self._trigger_callback(task_id, status, result, callback_url=callback_url)
@@ -77,7 +77,7 @@ class TaskCompletionNode:
     # ------------------------------------------------------------------
 
     async def _persist(
-        self, task_id: str, status: str, result: Any, *, tenant_id: str = ""
+        self, task_id: str, status: str, result: Any, *, tenant_id: str = "", callback_url: str = ""
     ) -> None:
         """Write final state to MySQL via db_session_factory."""
         if self._db is None:
@@ -87,6 +87,7 @@ class TaskCompletionNode:
             async with self._db() as session:
                 from sqlalchemy import select, update
                 from src.models.task import TaskRecord
+                from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
 
                 stmt = select(TaskRecord).where(TaskRecord.task_id == task_id)
                 row = (await session.execute(stmt)).scalar_one_or_none()
@@ -97,7 +98,7 @@ class TaskCompletionNode:
                     if error_msg:
                         error_msg = error_msg[:2000]  # truncate to 2000 chars
                 if row:
-                    from src.platform.task_state_machine import TaskStateMachine, TaskEvent, InvalidTaskTransition
+                    from src.platform.task_state_machine import TaskStateMachine, TaskEvent
                     current_status = row.status
                     target_status = status
                     if target_status == "completed":
@@ -124,6 +125,20 @@ class TaskCompletionNode:
                     if error_msg:
                         create_values["error_message"] = error_msg
                     session.add(TaskRecord(**create_values))
+                if callback_url:
+                    payload = json.dumps({
+                        "task_id": task_id,
+                        "status": status,
+                        "result": result,
+                        "timestamp": int(time.time()),
+                    }, ensure_ascii=False)
+                    session.add(CallbackOutboxRecord(
+                        task_id=task_id,
+                        tenant_id=tenant_id,
+                        callback_url=callback_url,
+                        payload_json=payload,
+                        delivery_status=CallbackDeliveryStatus.PENDING,
+                    ))
                 await session.commit()
                 logger.info("TaskCompletionNode: persisted task_id=%s status=%s", task_id, status)
         except Exception as exc:

@@ -100,7 +100,7 @@ async def test_handle_completion_both_called():
     persist_called = []
     callback_called = []
 
-    async def fake_persist(tid, status, result, *, tenant_id=""):
+    async def fake_persist(tid, status, result, *, tenant_id="", callback_url=""):
         persist_called.append(tid)
 
     async def fake_callback(tid, status, result, *, callback_url=""):
