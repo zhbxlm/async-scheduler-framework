@@ -5,20 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "async-scheduler-sdk"
 version = "0.1.0"
-description = "Python SDK and CLI client for async-scheduler"
+description = "Python client SDK for async-scheduler — submit tasks, poll results, manage schedules"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+keywords = ["async", "scheduler", "task-queue", "distributed"]
 dependencies = [
-    "async-scheduler-core==0.1.0",
     "httpx>=0.25",
-    "click>=8.1",
+    "pydantic>=2.0",
 ]
 
 [project.scripts]
-scheduler = "src.cli.main:cli"
+scheduler = "scheduler_sdk.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["../../"]
-include = ["src.sdk*", "src.cli*"]
+where = ["src"]
 
 [tool.setuptools.package-dir]
-"" = "../.."
+"" = "src"

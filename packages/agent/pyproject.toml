@@ -5,20 +5,29 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "async-scheduler-agent"
 version = "0.1.0"
-description = "Node agent for async-scheduler worker nodes"
+description = "Node Agent for async-scheduler — deploy worker nodes with a single command"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+keywords = ["async", "scheduler", "agent", "worker-node", "ray"]
 dependencies = [
-    "async-scheduler-platform==0.1.0",
     "httpx>=0.25",
     "psutil>=5.9",
+    "redis>=5.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "ray>=2.5",
+    "sqlalchemy>=2.0",
+    "orjson>=3.9",
 ]
 
 [project.scripts]
-scheduler-agent = "src.agent.server:main"
+scheduler-agent = "scheduler_agent.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["../../"]
-include = ["src.agent*"]
+where = ["src"]
 
 [tool.setuptools.package-dir]
-"" = "../.."
+"" = "src"

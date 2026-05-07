@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # scripts/build_packages.sh
-# Build all sub-packages in dependency order.
+# Build all user-facing sub-packages in dependency order.
 # Output .whl files appear in dist/packages/<name>/
+#
+# Packages:
+#   sdk     → async-scheduler-sdk     (HTTP client + CLI, deps: httpx, pydantic)
+#   worker  → async-scheduler-worker  (BaseWorker, zero required deps)
+#   proxy   → async-scheduler-proxy   (AsyncCommandProxy, deps: redis)
+#   agent   → async-scheduler-agent   (Node Agent service, full deps)
 #
 # Usage:
 #   ./scripts/build_packages.sh          # build all
-#   ./scripts/build_packages.sh core     # build single package
+#   ./scripts/build_packages.sh sdk      # build single package
 #
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_ROOT="${REPO_ROOT}/dist/packages"
-PACKAGES=(core platform api agent sdk proxy)
+# Build order: lightweight → heavy
+PACKAGES=(sdk worker proxy agent)
 
 TARGET="${1:-all}"
 
-# ── helpers ──────────────────────────────────────────────────────────────────
 log() { echo "[build] $*"; }
 err() { echo "[build] ERROR: $*" >&2; exit 1; }
 
@@ -29,10 +35,11 @@ build_pkg() {
 
     log "Building async-scheduler-${name} ..."
     python3 -m build --wheel --outdir "$out_dir" "$pkg_dir"
-    log "  → $(ls "${out_dir}"/*.whl 2>/dev/null | tail -1)"
+    local whl
+    whl="$(ls "${out_dir}"/*.whl 2>/dev/null | tail -1)"
+    log "  → $(basename "$whl")"
 }
 
-# ── main ─────────────────────────────────────────────────────────────────────
 python3 -m pip install --quiet build
 
 if [[ "$TARGET" == "all" ]]; then

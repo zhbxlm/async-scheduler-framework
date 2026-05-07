@@ -2,22 +2,21 @@
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Root package: "all-in-one" install for development / monorepo
 #
-# For production / microservice deployments, build individual
-# sub-packages from packages/<name>/pyproject.toml instead:
+# For end users, install one of the lightweight user-facing packages:
 #
-#   packages/core     → async-scheduler-core     (models, monitoring, common)
-#   packages/platform → async-scheduler-platform (platform, services, workload, middleware)
-#   packages/api      → async-scheduler-api      (api)
-#   packages/agent    → async-scheduler-agent    (agent)
-#   packages/sdk      → async-scheduler-sdk      (sdk, cli)
-#   packages/proxy    → async-scheduler-proxy    (proxy)
+#   pip install async-scheduler-sdk      # HTTP client + CLI (httpx, pydantic)
+#   pip install async-scheduler-worker   # Build Workers (zero required deps)
+#   pip install async-scheduler-proxy    # Embed fire-and-forget dispatch (redis)
+#   pip install async-scheduler-agent    # Deploy a worker node (full stack)
 #
-# Build all sub-packages:
+# Each package exposes only its own public API — no framework internals.
+#
+# Build all user-facing packages:
 #   scripts/build_packages.sh
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 [project]
 name = "ray-async"
 version = "0.1.0"

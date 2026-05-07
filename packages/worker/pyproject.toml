@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "async-scheduler-worker"
+version = "0.1.0"
+description = "Base classes for building async-scheduler Workers — no framework internals required"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["async", "scheduler", "worker", "ray"]
+# Zero required dependencies — users only need what their own worker needs.
+# Ray is optional; install it separately if you want distributed execution:
+#   pip install "async-scheduler-worker[ray]"
+dependencies = []
+
+[project.optional-dependencies]
+ray = ["ray>=2.5"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
