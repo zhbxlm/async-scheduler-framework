@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
       matrix:
         python-version: ['3.10', '3.11']
@@ -108,6 +110,8 @@ jobs:
 
   build-packages:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
