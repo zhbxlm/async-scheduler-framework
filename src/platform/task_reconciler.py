@@ -1,11 +1,13 @@
 """TaskReconciler — aligned with docs/deepwiki-reference/任务执行.md
 
-3-phase consistency repair loop:
-  Phase 1 (double-write): Scan Redis terminal tasks → persist missing to MySQL
+Reconciliation direction is now MySQL-first:
+  Phase 0 (durable rebuild): Rebuild Redis task cache from MySQL durable truth
+  Phase 1 (double-write legacy): Scan Redis terminal tasks → persist missing to MySQL
   Phase 2 (stuck recovery): Detect expired execution locks → FAILED or requeue
   Phase 3 (lost callback): Compensate missing callbacks for terminal tasks
 
-Uses a shared SCAN cursor across all three phases to amortize Redis scan cost.
+Redis `task:*` is treated as cache/index state, not the durable source of truth.
+Uses a shared SCAN cursor across Redis-oriented phases to amortize scan cost.
 """
 from __future__ import annotations
 
@@ -116,6 +118,8 @@ class TaskReconciler:
     async def _loop(self) -> None:
         while self._running:
             if await self._try_become_leader():
+                # Phase 0: MySQL is authoritative; rebuild missing Redis cache/index state first.
+                await self._rebuild_redis_from_mysql()
                 task_batch = await self._scan_task_batch()
                 if task_batch:
                     await asyncio.gather(
@@ -125,6 +129,72 @@ class TaskReconciler:
                         return_exceptions=True,
                     )
             await asyncio.sleep(self._interval)
+
+    async def _rebuild_redis_from_mysql(self) -> None:
+        """Rebuild missing Redis task cache from MySQL durable state.
+
+        MySQL is the source of truth. Redis `task:*` is a repairable cache layer.
+        This method only fills missing Redis cache entries and intentionally avoids
+        mutating queue/running indexes until a later refactor step.
+        """
+        if self._db is None or self._r is None:
+            return
+        try:
+            async with self._db() as session:
+                from sqlalchemy import select
+                from src.models.task import TaskRecord
+
+                result = await session.execute(select(TaskRecord))
+                rows = result.scalars().all()
+
+                if not rows:
+                    return
+
+                for row in rows:
+                    task_id = getattr(row, "task_id", None)
+                    if not task_id:
+                        continue
+                    task_key = f"task:{task_id}"
+                    existing = await self._r.get(task_key)
+                    if existing:
+                        continue
+
+                    def _enum_value(v):
+                        return getattr(v, "value", v)
+
+                    def _json_load_or_default(v, default):
+                        if not v:
+                            return default
+                        if isinstance(v, (dict, list)):
+                            return v
+                        try:
+                            return json.loads(v)
+                        except Exception:
+                            return default
+
+                    payload = {
+                        "task_id": task_id,
+                        "tenant_id": getattr(row, "tenant_id", "") or "",
+                        "status": _enum_value(getattr(row, "status", "pending")),
+                        "capability": getattr(row, "task_type", "") or "",
+                        "priority": _enum_value(getattr(row, "priority", "normal")),
+                        "input_data": _json_load_or_default(getattr(row, "input_data", None), {}),
+                        "output": _json_load_or_default(getattr(row, "output_data", None), {}),
+                        "error_message": getattr(row, "error_message", None),
+                        "metadata": _json_load_or_default(getattr(row, "metadata_json", None), {}),
+                        "callback_url": getattr(row, "callback_url", None) or "",
+                        "idempotency_key": getattr(row, "idempotency_key", None),
+                        "timeout_seconds": getattr(row, "timeout_seconds", 3600) or 3600,
+                        "max_retries": getattr(row, "max_retries", 3) or 3,
+                        "attempt": getattr(row, "attempt", 0) or 0,
+                        "scheduled_at": str(getattr(row, "scheduled_at", None)) if getattr(row, "scheduled_at", None) else None,
+                        "cron_expr": getattr(row, "cron_expr", None),
+                        "created_at": str(getattr(row, "created_at", None)) if getattr(row, "created_at", None) else None,
+                        "updated_at": str(getattr(row, "updated_at", None)) if getattr(row, "updated_at", None) else None,
+                    }
+                    await self._r.set(task_key, json.dumps(payload), ex=86400)
+        except Exception as exc:
+            logger.warning("TaskReconciler: mysql->redis rebuild error: %s", exc)
 
     async def _scan_task_batch(self) -> list[dict]:
         """SCAN Redis for task:* keys and return parsed task dicts."""

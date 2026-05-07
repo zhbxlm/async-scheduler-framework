@@ -290,6 +290,91 @@ async def test_phase1_skips_already_persisted_tasks():
     session.add.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_reconcile_redis_from_mysql_when_cache_missing_and_task_queued():
+    """MySQL is authoritative: missing Redis task cache should be rebuilt from DB state."""
+    rec, redis, db, _ = _make_reconciler(with_db=True)
+    session = db._session
+
+    class Row: pass
+    row = Row()
+    row.task_id = "mysql-q1"
+    row.tenant_id = "t1"
+    row.task_type = "cap_a"
+    row.status = "queued"
+    row.priority = "normal"
+    row.input_data = '{"k":"v"}'
+    row.output_data = None
+    row.error_message = None
+    row.metadata_json = '{"m":1}'
+    row.callback_url = None
+    row.idempotency_key = None
+    row.timeout_seconds = 3600
+    row.max_retries = 3
+    row.attempt = 0
+    row.scheduled_at = None
+    row.cron_expr = None
+    row.created_at = None
+    row.updated_at = None
+
+    mock_rows = MagicMock()
+    mock_rows.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(return_value=mock_rows)
+
+    # No Redis task cache exists before repair
+    assert await redis.get("task:mysql-q1") is None
+
+    await rec._rebuild_redis_from_mysql()
+
+    repaired = await redis.get("task:mysql-q1")
+    assert repaired is not None
+    data = json.loads(repaired)
+    assert data["task_id"] == "mysql-q1"
+    assert data["status"] == "queued"
+    assert data["capability"] == "cap_a"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_redis_from_mysql_when_cache_missing_and_task_completed():
+    """Terminal task truth should survive Redis cache loss because MySQL is authoritative."""
+    rec, redis, db, _ = _make_reconciler(with_db=True)
+    session = db._session
+
+    class Row: pass
+    row = Row()
+    row.task_id = "mysql-done1"
+    row.tenant_id = "t1"
+    row.task_type = "cap_a"
+    row.status = "completed"
+    row.priority = "normal"
+    row.input_data = '{"k":"v"}'
+    row.output_data = '{"result":"ok"}'
+    row.error_message = None
+    row.metadata_json = '{"m":1}'
+    row.callback_url = "http://cb"
+    row.idempotency_key = None
+    row.timeout_seconds = 3600
+    row.max_retries = 3
+    row.attempt = 1
+    row.scheduled_at = None
+    row.cron_expr = None
+    row.created_at = None
+    row.updated_at = None
+
+    mock_rows = MagicMock()
+    mock_rows.scalars.return_value.all.return_value = [row]
+    session.execute = AsyncMock(return_value=mock_rows)
+
+    await rec._rebuild_redis_from_mysql()
+
+    repaired = await redis.get("task:mysql-done1")
+    assert repaired is not None
+    data = json.loads(repaired)
+    assert data["task_id"] == "mysql-done1"
+    assert data["status"] == "completed"
+    assert data["callback_url"] == "http://cb"
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: Stuck recovery
 # ---------------------------------------------------------------------------
