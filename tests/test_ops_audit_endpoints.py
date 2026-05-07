@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from src.api.routes.ops import router
 
@@ -13,3 +12,5 @@ def test_ops_router_has_callback_and_timeline_routes():
     assert "/ops/v1/callbacks/dead-letters/{outbox_id}/ack" in paths
     assert "/ops/v1/callbacks/dead-letters/{outbox_id}/replay" in paths
     assert "/ops/v1/tasks/{task_id}/timeline" in paths
+    assert "/ops/v1/tasks/{task_id}/replay" in paths
+    assert "/ops/v1/operator-actions" in paths

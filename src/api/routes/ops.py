@@ -13,6 +13,7 @@ from src.platform import queue_keys as qk
 from src.services.task_audit_queries import TaskAuditQueryService
 from src.services.callback_ops import CallbackOpsService
 from src.services.replay_lineage import ReplayLineageService
+from src.services.operator_queries import OperatorQueryService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -225,6 +226,13 @@ async def task_replay(task_id: str, request: Request, _auth: dict = Depends(auth
     db_factory = getattr(request.app.state, "async_session_factory", None)
     actor = _auth.get("tenant_id", "operator")
     return await ReplayLineageService(db_factory).replay_task(task_id=task_id, actor=actor, reason=reason, from_run_key=from_run_key)
+
+
+@router.get("/operator-actions", summary="List operator actions")
+async def operator_actions(request: Request, _auth: dict = Depends(authenticate), target_type: str | None = None, target_id: str | None = None, action_type: str | None = None, limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    rows = await OperatorQueryService(db_factory).list_actions(target_type=target_type, target_id=target_id, action_type=action_type, limit=limit)
+    return {"items": [{"id": r.id, "actor": r.actor, "action_type": r.action_type, "target_type": r.target_type, "target_id": r.target_id, "reason": r.reason, "payload_json": r.payload_json, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in rows]}
 
 
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
