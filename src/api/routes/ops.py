@@ -17,6 +17,7 @@ from src.services.operator_queries import OperatorQueryService
 from src.services.operator_dashboard import OperatorDashboardService
 from src.services.recovery_explainer import RecoveryExplainerService
 from src.services.replay_policy import ReplayPolicyService
+from src.services.run_centric_queries import RunCentricQueryService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -253,6 +254,27 @@ async def task_recovery_explanation(task_id: str, request: Request, _auth: dict 
     redis = getattr(request.app.state, "redis", None)
     db_factory = getattr(request.app.state, "async_session_factory", None)
     return await RecoveryExplainerService(redis_client=redis, session_factory=db_factory).explain_task(task_id)
+
+
+@router.get("/tasks/{task_id}/runs", summary="List task runs")
+async def task_runs(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    runs = await RunCentricQueryService(db_factory).list_task_runs(task_id, limit=limit)
+    return {"task_id": task_id, "items": [{"id": r.id, "run_key": r.run_key, "status": r.status, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in runs]}
+
+
+@router.get("/tasks/{task_id}/runs/{run_key}/events", summary="List events for a specific run")
+async def task_run_events(task_id: str, run_key: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    events = await RunCentricQueryService(db_factory).list_task_run_events(task_id, run_key=run_key, limit=limit)
+    return {"task_id": task_id, "run_key": run_key, "items": [{"id": e.id, "event_type": e.event_type, "event_payload": e.event_payload, "created_at": e.created_at.isoformat() if getattr(e, 'created_at', None) else None} for e in events]}
+
+
+@router.get("/dags/{dag_id}/runs", summary="List dag runs")
+async def dag_runs(dag_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    runs = await RunCentricQueryService(db_factory).list_dag_runs(dag_id, limit=limit)
+    return {"dag_id": dag_id, "items": [{"id": r.id, "run_key": r.run_key, "status": r.status, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in runs]}
 
 
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
