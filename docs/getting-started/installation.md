@@ -1,40 +1,41 @@
-# Installation
+<!-- 中文文档 -->
+# 安装
 
-## Requirements
+## 环境要求
 
 - Python 3.10+
 - Redis 7+
 - MySQL 8+ / MariaDB 10.6+
-- Docker & Docker Compose (recommended)
+- Docker & Docker Compose（推荐）
 
-## Install from PyPI
+## 从 PyPI 安装
 
-Each component is published as a separate package — install only what you need:
+每个组件作为独立包发布，按需安装：
 
 ```bash
-# Python HTTP client (for callers)
+# Python HTTP 客户端（供调用方使用）
 pip install async-scheduler-sdk
 
-# Build your own Worker (zero required deps)
+# 自定义 Worker 基类（零强制依赖，Ray 可选）
 pip install async-scheduler-worker
 
-# Embed fire-and-forget dispatch in an existing service
+# 嵌入已有服务的 fire-and-forget 分发代理
 pip install async-scheduler-proxy
 
-# Command-line tool (kubectl-style)
+# kubectl 风格命令行工具
 pip install async-scheduler-cli
 
-# Deploy the Task submission service (port 8001)
+# 任务提交服务（端口 8001）
 pip install async-scheduler-task-api
 
-# Deploy the Ops/Admin service (port 8000)
+# 运维管理服务（端口 8000）
 pip install async-scheduler-ops-api
 
-# Deploy a Worker node agent
+# Worker 节点 Agent
 pip install async-scheduler-agent
 ```
 
-## Install from Source
+## 从源码安装
 
 ```bash
 git clone https://github.com/zhbxlm/async-scheduler-framework.git
@@ -42,7 +43,7 @@ cd async-scheduler-framework
 pip install -e ".[metrics,dev]"
 ```
 
-## Verify
+## 验证安装
 
 ```bash
 scheduler version

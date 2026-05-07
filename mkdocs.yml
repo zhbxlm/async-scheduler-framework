@@ -2,10 +2,11 @@ site_name: Async Scheduler
 site_url: https://zhbxlm.github.io/async-scheduler-framework/
 repo_url: https://github.com/zhbxlm/async-scheduler-framework
 repo_name: zhbxlm/async-scheduler-framework
-docs_dir: docs-site
+docs_dir: docs
 
 theme:
   name: material
+  language: zh
   features:
     - navigation.tabs
     - navigation.sections
@@ -22,13 +23,13 @@ theme:
       accent: deep orange
       toggle:
         icon: material/brightness-7
-        name: Switch to dark mode
+        name: 切换到深色模式
     - scheme: slate
       primary: teal
       accent: deep orange
       toggle:
         icon: material/brightness-4
-        name: Switch to light mode
+        name: 切换到浅色模式
 
 markdown_extensions:
   - admonition
@@ -43,33 +44,42 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - Getting Started:
-    - Quick Start: getting-started/quick-start.md
-    - Installation: getting-started/installation.md
-    - Configuration: getting-started/configuration.md
-  - Architecture:
-    - Overview: architecture/overview.md
-    - API Design: architecture/api-design.md
-    - Data Flow: architecture/data-flow.md
-  - Guides:
-    - Task Creation: guides/task-creation.md
-    - DAG Orchestration: guides/dag-orchestration.md
-    - Multi-tenancy: guides/multi-tenancy.md
-    - Monitoring: guides/monitoring.md
-    - Operations: guides/operations.md
-  - API Reference:
+  - 首页: index.md
+  - 快速开始:
+    - 快速启动: getting-started/quick-start.md
+    - 安装: getting-started/installation.md
+    - 配置: getting-started/configuration.md
+  - 架构:
+    - 总览: architecture/overview.md
+    - API 设计: architecture/api-design.md
+    - 数据流: architecture/data-flow.md
+  - 使用指南:
+    - 任务创建: guides/task-creation.md
+    - DAG 编排: guides/dag-orchestration.md
+    - 多租户: guides/multi-tenancy.md
+    - 监控: guides/monitoring.md
+    - 运维: guides/operations.md
+  - API 参考:
     - Task API: api/task-api.md
     - Ops API: api/ops-api.md
-    - CLI Reference: api/cli-reference.md
-  - Deployment:
+    - CLI 参考: api/cli-reference.md
+  - 部署:
     - Docker Compose: deployment/docker-compose.md
     - Kubernetes: deployment/kubernetes.md
-    - Monitoring Stack: deployment/monitoring-stack.md
-  - Contributing:
-    - Development Setup: contributing/development.md
-    - Testing: contributing/testing.md
-    - Code Style: contributing/code-style.md
+    - 监控栈: deployment/monitoring-stack.md
+  - 贡献:
+    - 开发环境: contributing/development.md
+    - 测试: contributing/testing.md
+    - 代码风格: contributing/code-style.md
+  - 内部文档:
+    - 架构设计: internal/ARCHITECTURE.md
+    - API 规范: internal/API.md
+    - 监控设计: internal/MONITORING.md
+    - 配置参考: internal/configuration.md
+    - 测试文档: internal/testing.md
+    - 运维手册: internal/operations.md
+    - 审计报告: internal/AUDIT_REPORT.md
+    - 项目结构: internal/STRUCTURE.md
 
 plugins:
   - search
