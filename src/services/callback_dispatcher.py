@@ -35,10 +35,12 @@ class CallbackDispatchService:
             self._task.cancel()
             try:
                 await self._task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
+            self._task = None
         if self._client:
             await self._client.aclose()
+            self._client = None
 
     async def _loop(self):
         while self._running:

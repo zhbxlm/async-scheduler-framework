@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Database engine + session factory (no module-level globals)
     app.state.async_engine = container.async_engine
     app.state.async_session_factory = container.async_session_factory
+    app.state.callback_dispatcher = container.callback_dispatcher
     
     # Cache auth settings for authenticate() - avoids repeated module imports
     app.state.auth_settings = {
@@ -74,6 +75,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     }
 
     manager = get_lifecycle_manager()
+    if container.callback_dispatcher:
+        from src.common.lifecycle import CallbackDispatcherResource
+        manager.register_resource(CallbackDispatcherResource(container.callback_dispatcher))
     await manager.start_all()
 
     yield
