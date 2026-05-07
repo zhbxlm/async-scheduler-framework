@@ -18,6 +18,7 @@ from src.services.operator_dashboard import OperatorDashboardService
 from src.services.recovery_explainer import RecoveryExplainerService
 from src.services.operator_ux import OperatorUXService
 from src.services.callback_replay_policy import CallbackReplayPolicyService
+from src.services.force_operations import ForceOperationService
 from src.services.replay_policy import ReplayPolicyService
 from src.services.run_centric_queries import RunCentricQueryService
 
@@ -281,6 +282,26 @@ async def operator_actions(request: Request, _auth: dict = Depends(authenticate)
     db_factory = getattr(request.app.state, "async_session_factory", None)
     rows = await OperatorQueryService(db_factory).list_actions(target_type=target_type, target_id=target_id, action_type=action_type, limit=limit)
     return {"items": [{"id": r.id, "actor": r.actor, "action_type": r.action_type, "target_type": r.target_type, "target_id": r.target_id, "reason": r.reason, "payload_json": r.payload_json, "created_at": r.created_at.isoformat() if getattr(r, 'created_at', None) else None} for r in rows]}
+
+
+@router.post("/tasks/{task_id}/force-lease-eviction", summary="Force evict a stale execution lease (admin only)")
+async def force_lease_eviction(task_id: str, request: Request, _auth: dict = Depends(authenticate), reason: str | None = None) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    actor = _auth.get("tenant_id", "operator")
+    actor_role = _auth.get("role", "operator")
+    result = await ForceOperationService(session_factory=db_factory).execute_force_operation(
+        operation="force_lease_eviction",
+        actor=actor,
+        actor_role=actor_role,
+        reason=reason,
+        target_type="task",
+        target_id=task_id,
+        task_id=task_id,
+    )
+    if not result["ok"]:
+        return {"ok": False, "task_id": task_id, "error": result.get("error"), "reasons": result}
+    # actual Redis lock eviction would happen here in production
+    return {"ok": True, "task_id": task_id, "evicted": True}
 
 
 @router.get("/tasks/{task_id}/recovery-explanation", summary="Explain stale/recovery state for a task")

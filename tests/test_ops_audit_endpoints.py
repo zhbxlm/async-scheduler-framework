@@ -18,6 +18,7 @@ def test_ops_router_has_callback_and_timeline_routes():
     assert "/ops/v1/callbacks/dead-letters/{outbox_id}/replay" in paths
     assert "/ops/v1/tasks/{task_id}/timeline" in paths
     assert "/ops/v1/tasks/{task_id}/replay" in paths
+    assert "/ops/v1/tasks/{task_id}/force-lease-eviction" in paths
     assert "/ops/v1/tasks/{task_id}/recovery-explanation" in paths
     assert "/ops/v1/tasks/{task_id}/runs" in paths
     assert "/ops/v1/tasks/{task_id}/runs/{run_key}/events" in paths
