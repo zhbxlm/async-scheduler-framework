@@ -21,11 +21,12 @@ from src.models.task import (
     TaskStatus,
     TaskSummary,
 )
-from src.services.task_validation import (
-    validate_task_artifact,
-    validate_task_scheduling,
-)
 from src.platform.task_state_machine import TaskStateMachine, TaskEvent, InvalidTaskTransition
+from src.services.task_application import (
+    TaskSubmissionService,
+    TaskCancellationService,
+    TaskResultService,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -164,16 +165,6 @@ async def create_task(
     ctx=Depends(get_tenant_context),
 ) -> TaskCreateResponse:
     """Create and enqueue a task via TaskCreator (owns idempotency)."""
-    # Validate task data using service layer
-    try:
-        validate_task_artifact(req.artifact_url, req.artifact_sha256)
-        validate_task_scheduling(req.scheduled_at, req.delay_seconds)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid task data: {e}",
-        )
-    
     tenant_id = ctx.tenant_id or req.tenant_id or "default"
     task_creator = getattr(request.app.state, "task_creator", None)
     if task_creator is None:
@@ -181,79 +172,19 @@ async def create_task(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="TaskCreator not initialised (task-api only)",
         )
-
-    # Convert to TaskCreator kwargs (TaskCreator handles idempotency)
-    kwargs = {
-        "task_type": req.task_type,
-        "priority": req.priority.value,
-        "input_data": req.input_data,
-        "metadata": req.metadata,
-        "callback_url": req.callback_url,
-        "timeout_seconds": req.timeout_seconds,
-        "max_retries": req.max_retries,
-        "cron_expr": req.cron_expr,
-        "persist_to_db": True,
-    }
-    if req.scheduled_at:
-        kwargs["scheduled_at"] = req.scheduled_at
-    if req.delay_seconds:
-        kwargs["delay_seconds"] = req.delay_seconds
-    if req.artifact_url:
-        kwargs["artifact_url"] = req.artifact_url
-    if req.artifact_sha256:
-        kwargs["artifact_sha256"] = req.artifact_sha256
-
     try:
-        result = await task_creator.create_task(
-            tenant_id=tenant_id,
-            idempotency_key=req.idempotency_key,
-            **kwargs,
-        )
+        return await TaskSubmissionService(task_creator).submit(req, tenant_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid task data: {e}",
         )
-    except DuplicateTaskError as e:  # noqa: F821
-        # Idempotency key conflict - return existing task info
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
-    except QueueCapacityError as e:  # noqa: F821
-        # Queue at capacity
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Queue capacity exceeded for capability '{req.capability}': {e}. Please retry later.",
-        )
     except Exception as e:
-        # Log the actual error for debugging
-        logger.error(
-            "Task creation failed",
-            extra={
-                "task_id": req.task_id,
-                "capability": req.capability,
-                "error_type": type(e).__name__,
-                "error_detail": str(e),
-            }
-        )
+        logger.error("Task creation failed", extra={"error_type": type(e).__name__, "error_detail": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Task creation failed unexpectedly. Please retry.",
         )
-
-    # Map result to TaskCreateResponse
-    transition = TaskStateMachine.transition(TaskStatus.PENDING, TaskEvent.ENQUEUE)
-    return TaskCreateResponse(
-        task_id=result["task_id"],
-        tenant_id=tenant_id,
-        status=transition.current,
-        cluster_id="",  # Not yet assigned
-        estimated_wait_seconds=0,
-        queue_position=result.get("queue_position", -1),
-        scheduled_at="",
-        idempotent_reused=result.get("idempotent_reused", False),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -289,16 +220,7 @@ async def get_task_result(
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
     if not ctx.is_super_admin and task.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Task is still {task.status.value}; result not yet available",
-        )
-    return TaskResultResponse(
-        task_id=task.task_id,
-        status=task.status,
-        output_data=_to_json(task.output_data),
-    )
+    return await TaskResultService(db).get_result(task_id, ctx.tenant_id, ctx.is_super_admin)
 
 
 # ---------------------------------------------------------------------------
@@ -321,14 +243,4 @@ async def cancel_task(
     if not ctx.is_super_admin and task.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    prior = task.status
-    terminal = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
-    if prior in terminal:
-        return TaskCancelResponse(task_id=task_id, cancelled=False, prior_status=prior)
-
-    try:
-        task.status = TaskStateMachine.transition(prior, TaskEvent.CANCEL).current
-    except InvalidTaskTransition:
-        return TaskCancelResponse(task_id=task_id, cancelled=False, prior_status=prior)
-    db.commit()
-    return TaskCancelResponse(task_id=task_id, cancelled=True, prior_status=prior)
+    return await TaskCancellationService(db).cancel(task_id, ctx.tenant_id, ctx.is_super_admin)
