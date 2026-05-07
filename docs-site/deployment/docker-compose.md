@@ -1,344 +1,149 @@
-# Docker Compose Deployment
+# Docker 部署
 
-Deploy Async Scheduler with a complete monitoring stack using Docker Compose.
+本文档描述当前仓库的 Docker / Compose 部署方式，已与代码现状对齐。
 
-## Quick Start
+## 当前服务拆分
 
-```bash
-# Clone the repository
-git clone https://github.com/zhbxlm/async-scheduler-framework.git
-cd async-scheduler-framework
+### 1. ops-api
+- 入口：`src.main:app`
+- 端口：`8000`
+- 职责：运维管理面
+- 路由：`/ops/v1/*` + `/health/*`
+- 后台任务：`CronScheduler`
+- 依赖：Redis（不要求 MySQL）
 
-# Start all services
-docker-compose -f docker-compose.monitoring.yml up -d
+### 2. task-api
+- 入口：`src.main_tasks:app`
+- 端口：`8001`
+- 职责：任务提交、查询、取消、结果获取
+- 路由：`/tasks/*` + `/health/*`
+- 后台任务：`TaskReconciler`
+- 依赖：Redis + MySQL
 
-# Check services
-docker-compose -f docker-compose.monitoring.yml ps
-```
+### 3. redis
+- 队列、注册表、锁、协调状态
 
-## Service Architecture
+### 4. mysql
+- `TaskRecord` 持久化
 
-The Docker Compose stack includes:
+### 5. observability（可选 profile）
+- `jaeger`
+- `prometheus`
+- `grafana`
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| **redis** | 6379 | In-memory data store for queues |
-| **mysql** | 3306 | Persistent task storage |
-| **task-api** | 8001 | Task API (business logic) |
-| **ops-api** | 8000 | Ops API (monitoring & management) |
-| **prometheus** | 9090 | Metrics collection & alerting |
-| **grafana** | 3000 | Metrics visualization dashboards |
-| **alertmanager** | 9093 | Alert routing & notification |
-| **node-agent** | - | Example worker node |
-| **load-generator** | - | Load testing utility |
+## 启动示例
 
-## Environment Configuration
-
-### Required Environment Variables
-
-```bash
-# Redis configuration
-REDIS_URL=redis://redis:6379/0
-
-# MySQL configuration  
-MYSQL_URL=mysql://scheduler:scheduler123@mysql:3306/scheduler
-
-# API configuration
-SERVER_PORT=8001  # or 8000 for ops-api
-ENVIRONMENT=development
-LOG_LEVEL=INFO
-```
-
-### Optional Environment Variables
+### 启动核心服务
 
 ```bash
-# Multi-tenancy
-TENANT_MULTI_TENANT_ENABLED=true
-TENANT_SUPER_ADMIN_API_KEY=your-secret-key
-TENANT_TENANT_ID_HEADER=X-Tenant-ID
-
-# Task configuration
-TASK_DEFAULT_PRIORITY=normal
-TASK_MAX_RETRIES=3
-
-# Queue configuration
-QUEUE_MAX_DEPTH=1000
-QUEUE_MAX_CONCURRENT=8
-QUEUE_TTL=3600
-
-# Cron scheduler
-CRON_INTERVAL_SECONDS=30
-CRON_BATCH_SIZE=100
+docker compose up -d ops-api task-api redis mysql
 ```
 
-## Health Checks
-
-All services include health checks:
+### 启动完整环境（含观测）
 
 ```bash
-# Check service health
-curl http://localhost:8001/api/v1/health
-
-# Check Redis health
-curl http://localhost:8001/api/v1/health/redis
-
-# Check MySQL health  
-curl http://localhost:8001/api/v1/health/mysql
-
-# Prometheus metrics
-curl http://localhost:8001/api/v1/health/metrics
+docker compose --profile observability up -d
 ```
 
-## Monitoring Stack
-
-### Prometheus
-
-Access Prometheus at [http://localhost:9090](http://localhost:9090):
-
-- **Targets**: Check service discovery status
-- **Graph**: Query metrics with PromQL
-- **Alerts**: View active alert rules
-- **Status**: Service discovery and configuration
-
-### Grafana
-
-Access Grafana at [http://localhost:3000](http://localhost:3000):
-
-- **Username**: `admin`
-- **Password**: `admin`
-
-Pre-configured dashboards:
-1. **Queue Health** - Pending/running tasks per capability
-2. **Task Throughput** - Creation/completion rates
-3. **Execution Duration** - P50/P95/P99 latency
-4. **System Resources** - CPU, memory, connections
-
-### Alertmanager
-
-Access Alertmanager at [http://localhost:9093](http://localhost:9093):
-
-- **Alerts**: View and silence alerts
-- **Status**: Check alert routing
-- **Silences**: Manage alert suppression
-
-## Data Persistence
-
-Volumes are configured for data persistence:
-
-```yaml
-volumes:
-  redis_data:    # Redis AOF persistence
-  mysql_data:    # MySQL data directory  
-  prometheus_data:  # Prometheus time-series data
-  grafana_data:  # Grafana dashboards & config
-  alertmanager_data:  # Alertmanager state
-```
-
-To backup data:
+### 查看日志
 
 ```bash
-# Backup MySQL
-docker exec async-scheduler-framework-mysql-1 mysqldump -u scheduler -pscheduler123 scheduler > backup.sql
-
-# Backup Redis
-docker exec async-scheduler-framework-redis-1 redis-cli save
-docker cp async-scheduler-framework-redis-1:/data/dump.rdb ./redis-backup.rdb
+docker compose logs -f ops-api
+docker compose logs -f task-api
+docker compose logs -f redis
+docker compose logs -f mysql
 ```
 
-## Scaling
+## 访问地址
 
-### Horizontal Scaling
+- Ops API: `http://127.0.0.1:8000`
+- Task API: `http://127.0.0.1:8001`
+- Ops Swagger: `http://127.0.0.1:8000/docs`
+- Task Swagger: `http://127.0.0.1:8001/docs`
+- Ops Health: `http://127.0.0.1:8000/health/ready`
+- Task Health: `http://127.0.0.1:8001/health/ready`
 
-```yaml
-# Scale task-api instances
-task-api:
-  deploy:
-    replicas: 3
-  environment:
-    - SERVER_HOST=0.0.0.0
-    - REDIS_URL=redis://redis:6379/0
-    - MYSQL_URL=mysql://scheduler:scheduler123@mysql:3306/scheduler
+## 当前 compose 里的关键配置
 
-# Scale ops-api instances
-ops-api:
-  deploy:
-    replicas: 2
-  environment:
-    - SERVER_HOST=0.0.0.0  
-    - REDIS_URL=redis://redis:6379/0
-```
+### ops-api
 
-### Load Balancer Configuration
+- `BACKGROUND__RECONCILE__ENABLED=false`
+- `BACKGROUND__CRON__ENABLED=true`
 
-```yaml
-nginx:
-  image: nginx:alpine
-  ports:
-    - "80:80"
-  volumes:
-    - ./nginx.conf:/etc/nginx/nginx.conf
-  depends_on:
-    - task-api
-    - ops-api
-```
+### task-api
 
-Example `nginx.conf`:
+- `BACKGROUND__RECONCILE__ENABLED=true`
+- `BACKGROUND__CRON__ENABLED=false`
 
-```nginx
-upstream task_api {
-  least_conn;
-  server task-api:8001;
-}
+这是推荐生产分工：
+- cron 调度只在 ops-api 跑
+- reconcile 修复只在 task-api 跑
 
-upstream ops_api {
-  least_conn;
-  server ops-api:8000;
-}
+## 常用命令
 
-server {
-  listen 80;
-  
-  location /api/v1/ {
-    proxy_pass http://task_api;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-  }
-  
-  location /ops/v1/ {
-    proxy_pass http://ops_api;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-  }
-}
-```
-
-## Production Considerations
-
-### Security
-
-```yaml
-# Use secrets for sensitive data
-secrets:
-  mysql_root_password:
-    file: ./secrets/mysql_root_password.txt
-  redis_password:
-    file: ./secrets/redis_password.txt
-
-mysql:
-  environment:
-    MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
-  secrets:
-    - mysql_root_password
-
-redis:
-  command: redis-server --requirepass $$(cat /run/secrets/redis_password)
-  secrets:
-    - redis_password
-```
-
-### Network Isolation
-
-```yaml
-networks:
-  backend:
-    driver: bridge
-    internal: true  # Isolate from external traffic
-  
-  monitoring:
-    driver: bridge
-
-# Only expose necessary ports
-task-api:
-  networks:
-    - backend
-    - monitoring
-  ports:
-    - "8001:8001"  # Expose only to load balancer
-
-prometheus:
-  networks:
-    - monitoring
-  ports:
-    - "9090:9090"  # Internal monitoring only
-```
-
-### Resource Limits
-
-```yaml
-task-api:
-  deploy:
-    resources:
-      limits:
-        cpus: '1'
-        memory: 512M
-      reservations:
-        cpus: '0.5'
-        memory: 256M
-
-redis:
-  deploy:
-    resources:
-      limits:
-        cpus: '0.5'
-        memory: 256M
-      reservations:
-        cpus: '0.25'
-        memory: 128M
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Services not starting**
-   ```bash
-   # Check logs
-   docker-compose -f docker-compose.monitoring.yml logs task-api
-   
-   # Check health
-   docker-compose -f docker-compose.monitoring.yml ps
-   ```
-
-2. **Database connection errors**
-   ```bash
-   # Wait for MySQL to be ready
-   docker-compose -f docker-compose.monitoring.yml exec mysql mysqladmin ping -h localhost -u root -pscheduler123
-   
-   # Check MySQL logs
-   docker-compose -f docker-compose.monitoring.yml logs mysql
-   ```
-
-3. **Redis connection errors**
-   ```bash
-   # Test Redis connection
-   docker-compose -f docker-compose.monitoring.yml exec redis redis-cli ping
-   
-   # Check Redis logs
-   docker-compose -f docker-compose.monitoring.yml logs redis
-   ```
-
-### Maintenance Commands
+### 仅启动 ops-api
 
 ```bash
-# View logs
-docker-compose -f docker-compose.monitoring.yml logs -f
-
-# Restart services
-docker-compose -f docker-compose.monitoring.yml restart task-api
-
-# Scale services
-docker-compose -f docker-compose.monitoring.yml up -d --scale task-api=3
-
-# Clean up
-docker-compose -f docker-compose.monitoring.yml down -v
-
-# Update images
-docker-compose -f docker-compose.monitoring.yml pull
-docker-compose -f docker-compose.monitoring.yml up -d
+docker compose up -d ops-api redis
 ```
 
-## Next Steps
+### 仅启动 task-api
 
-- [Kubernetes Deployment](kubernetes.md) - Deploy to Kubernetes
-- [Monitoring Configuration](../guides/monitoring.md) - Customize monitoring
-- [Production Checklist](../guides/production-checklist.md) - Production readiness
+```bash
+docker compose up -d task-api redis mysql
+```
+
+### 运行测试容器
+
+```bash
+docker compose --profile test run --rm test
+```
+
+## 环境变量
+
+主要环境变量由 `docker-compose.yml` 中的 `x-common-env` 提供：
+
+- `REDIS_URL`
+- `MYSQL_URL`
+- `ENVIRONMENT`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_SERVICE_NAME`
+
+可通过 `.env` 覆盖。
+
+## 生产建议
+
+### 1. Redis
+- 开启持久化
+- 配置认证
+- 与应用容器分离部署
+
+### 2. MySQL
+- task-api 才真正依赖 MySQL
+- 若 MySQL 不可用，task-api 的任务持久化与查询能力会受影响
+
+### 3. 扩缩容建议
+- `task-api` 通常按请求量水平扩容
+- `ops-api` 通常保持少量实例即可
+- `CronScheduler` 和 `TaskReconciler` 都依赖 Redis 协调，避免多个实例无约束重复执行
+
+### 4. 镜像
+当前默认使用同一基础镜像，通过不同 `command` 启动不同服务。
+
+例如：
+```bash
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn src.main_tasks:app --host 0.0.0.0 --port 8001
+```
+
+## 说明
+
+旧文档中提到的这些角色已不再对应当前 compose：
+- `api`
+- `worker`
+- `scheduler`
+- `reconciler`
+
+当前仓库的实际对外 HTTP 服务是：
+- `ops-api`
+- `task-api`

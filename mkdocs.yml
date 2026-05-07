@@ -2,6 +2,7 @@ site_name: Async Scheduler
 site_url: https://zhbxlm.github.io/async-scheduler-framework/
 repo_url: https://github.com/zhbxlm/async-scheduler-framework
 repo_name: zhbxlm/async-scheduler-framework
+docs_dir: docs-site
 
 theme:
   name: material
@@ -56,6 +57,7 @@ nav:
     - DAG Orchestration: guides/dag-orchestration.md
     - Multi-tenancy: guides/multi-tenancy.md
     - Monitoring: guides/monitoring.md
+    - Operations: guides/operations.md
   - API Reference:
     - Task API: api/task-api.md
     - Ops API: api/ops-api.md
