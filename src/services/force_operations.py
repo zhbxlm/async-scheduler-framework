@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from src.services.governance import GovernanceService
 from src.services.operator_actions import OperatorActionService
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class ForceOperationService:
@@ -32,6 +29,7 @@ class ForceOperationService:
         target_id: str,
         payload: dict | None = None,
         task_id: str | None = None,
+        executor: Any | None = None,
     ) -> dict:
         allowed_roles = self._governance.allowed_role_categories(operation)
         is_high_risk = self._governance.is_high_risk_operation(operation)
@@ -63,6 +61,11 @@ class ForceOperationService:
                 task_id=task_id,
             )
 
+        # Execute the side-effect if provided (e.g. Redis key deletion)
+        side_effect_result = None
+        if executor is not None:
+            side_effect_result = await executor()
+
         return {
             "ok": True,
             "operation": operation,
@@ -70,4 +73,5 @@ class ForceOperationService:
             "target_type": target_type,
             "target_id": target_id,
             "is_high_risk": is_high_risk,
+            "side_effect": side_effect_result,
         }

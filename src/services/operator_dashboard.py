@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from sqlalchemy import select, func
@@ -10,10 +11,6 @@ from src.models.task_event import TaskEventRecord
 from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class OperatorDashboardService:
@@ -24,11 +21,11 @@ class OperatorDashboardService:
         if self._db is None:
             return {"callback": {}, "operator_actions": 0, "recent_timeline_events": 0}
         async with self._db() as session:
-            cb_rows = await _maybe_await(
+            cb_rows = await maybe_await(
                 session.execute(select(CallbackOutboxRecord.delivery_status, func.count()).group_by(CallbackOutboxRecord.delivery_status))
             )
-            action_rows = await _maybe_await(session.execute(select(func.count()).select_from(OperatorActionRecord)))
-            event_rows = await _maybe_await(session.execute(select(func.count()).select_from(TaskEventRecord)))
+            action_rows = await maybe_await(session.execute(select(func.count()).select_from(OperatorActionRecord)))
+            event_rows = await maybe_await(session.execute(select(func.count()).select_from(TaskEventRecord)))
             callback = {"pending": 0, "delivered": 0, "failed": 0, "dead_letter": 0, "total": 0}
             for status, count in cb_rows.fetchall():
                 key = getattr(status, "value", status)

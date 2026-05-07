@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,10 +10,6 @@ from sqlalchemy import select
 from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class CallbackOpsService:
@@ -23,7 +20,7 @@ class CallbackOpsService:
         if self._db is None:
             return []
         async with self._db() as session:
-            result = await _maybe_await(session.execute(
+            result = await maybe_await(session.execute(
                 select(CallbackOutboxRecord).where(
                     CallbackOutboxRecord.delivery_status == CallbackDeliveryStatus.DEAD_LETTER
                 ).limit(limit)
@@ -34,12 +31,12 @@ class CallbackOpsService:
         if self._db is None:
             return False
         async with self._db() as session:
-            row = await _maybe_await(session.get(CallbackOutboxRecord, outbox_id))
+            row = await maybe_await(session.get(CallbackOutboxRecord, outbox_id))
             if row is None:
                 return False
             row.acknowledged_by = actor
             row.acknowledged_at = datetime.now(timezone.utc)
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())
         try:
             from src.services.operator_actions import OperatorActionService
             await OperatorActionService(self._db).record(
@@ -59,7 +56,7 @@ class CallbackOpsService:
         if self._db is None:
             return False
         async with self._db() as session:
-            row = await _maybe_await(session.get(CallbackOutboxRecord, outbox_id))
+            row = await maybe_await(session.get(CallbackOutboxRecord, outbox_id))
             if row is None:
                 return False
             row.delivery_status = CallbackDeliveryStatus.PENDING
@@ -67,7 +64,7 @@ class CallbackOpsService:
             row.last_error = None
             row.acknowledged_by = None
             row.acknowledged_at = None
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())
         try:
             from src.services.operator_actions import OperatorActionService
             await OperatorActionService(self._db).record(

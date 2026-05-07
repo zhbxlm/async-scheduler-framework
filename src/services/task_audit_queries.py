@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from sqlalchemy import select, func
@@ -9,10 +10,6 @@ from src.models.task_event import TaskEventRecord
 from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class TaskAuditQueryService:
@@ -23,7 +20,7 @@ class TaskAuditQueryService:
         if self._db is None:
             return []
         async with self._db() as session:
-            result = await _maybe_await(
+            result = await maybe_await(
                 session.execute(
                     select(TaskEventRecord)
                     .where(TaskEventRecord.task_id == task_id)
@@ -37,7 +34,7 @@ class TaskAuditQueryService:
         if self._db is None:
             return {"pending": 0, "delivered": 0, "failed": 0, "dead_letter": 0, "total": 0}
         async with self._db() as session:
-            rows = await _maybe_await(
+            rows = await maybe_await(
                 session.execute(
                     select(CallbackOutboxRecord.delivery_status, func.count())
                     .group_by(CallbackOutboxRecord.delivery_status)

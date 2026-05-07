@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 import uuid
 from typing import Any
 
@@ -8,10 +9,6 @@ from src.models.task_run import TaskRunRecord
 from src.models.dag_run import DagRunRecord
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class RunTrackingService:
@@ -40,7 +37,7 @@ class RunTrackingService:
                 worker_id=worker_id,
                 lease_id=lease_id,
             ))
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())
         return run_key
 
     async def create_dag_run(
@@ -65,5 +62,5 @@ class RunTrackingService:
                 trigger_source=trigger_source,
                 input_json=input_json,
             ))
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())
         return run_key

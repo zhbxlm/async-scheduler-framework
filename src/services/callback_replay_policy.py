@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from src.services.governance import GovernanceService
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class CallbackReplayPolicyService:

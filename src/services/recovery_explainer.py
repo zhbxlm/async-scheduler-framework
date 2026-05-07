@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
-
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
+from src.common.db_utils import maybe_await
 
 
 class RecoveryExplainerService:
@@ -29,30 +24,31 @@ class RecoveryExplainerService:
         if self._redis is not None:
             lock_key = f"task_lock:{task_id}"
             task_key = f"task:{task_id}"
-            lock_exists = await _maybe_await(self._redis.exists(lock_key))
-            cache_raw = await _maybe_await(self._redis.get(task_key))
+            lock_exists = await maybe_await(self._redis.exists(lock_key))
+            cache_raw = await maybe_await(self._redis.get(task_key))
             explanation["lock"]["present"] = bool(lock_exists)
             explanation["task_cache"]["present"] = cache_raw is not None
             if not lock_exists:
                 explanation["reasons"].append("execution lease missing")
 
-        # Durable DB state
+        # Durable DB state — reference TaskRecord columns directly
         if self._db is not None:
             try:
                 from src.models.task import TaskRecord
                 async with self._db() as session:
-                    task = await _maybe_await(session.get(TaskRecord, task_id))
+                    task: TaskRecord | None = await maybe_await(session.get(TaskRecord, task_id))
                     if task is not None:
+                        status_val = task.status.value if hasattr(task.status, "value") else str(task.status)
                         explanation["mysql"] = {
                             "present": True,
-                            "status": getattr(task.status, "value", task.status),
-                            "attempt": getattr(task, "attempt", 0),
-                            "max_retries": getattr(task, "max_retries", 0),
+                            "status": status_val,
+                            "attempt": task.attempt,
+                            "max_retries": task.max_retries,
                         }
-                        if getattr(task.status, "value", task.status) == "running" and not explanation["lock"]["present"]:
+                        if status_val == "running" and not explanation["lock"]["present"]:
                             explanation["reasons"].append("task marked running but lease missing")
                             explanation["recommended_action"] = "replay_or_repair"
-                        elif getattr(task.status, "value", task.status) in ("failed", "completed"):
+                        elif status_val in ("failed", "completed"):
                             explanation["recommended_action"] = "inspect_or_replay_callback"
                         else:
                             explanation["recommended_action"] = "inspect"

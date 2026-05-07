@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 import json
 from typing import Any
 
 from src.models.task_event import TaskEventRecord
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class TaskTimelineService:
@@ -27,4 +24,4 @@ class TaskTimelineService:
                 event_type=event_type,
                 event_payload=json.dumps(payload or {}, ensure_ascii=False),
             ))
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())

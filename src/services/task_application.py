@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from src.common.db_utils import maybe_await
+
 from dataclasses import dataclass
-import inspect
 import json
 from typing import Any
 
@@ -20,10 +21,6 @@ from src.platform.task_state_machine import TaskStateMachine, TaskEvent, Invalid
 from src.services.task_validation import validate_task_artifact, validate_task_scheduling
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 @dataclass
@@ -71,7 +68,7 @@ class TaskCancellationService:
     session: AsyncSession
 
     async def cancel(self, task_id: str, tenant_id: str, is_super_admin: bool) -> TaskCancelResponse:
-        task = await _maybe_await(self.session.get(TaskRecord, task_id))
+        task = await maybe_await(self.session.get(TaskRecord, task_id))
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         if not is_super_admin and task.tenant_id != tenant_id:
@@ -84,7 +81,7 @@ class TaskCancellationService:
             task.status = TaskStateMachine.transition(prior, TaskEvent.CANCEL).current
         except InvalidTaskTransition:
             return TaskCancelResponse(task_id=task_id, cancelled=False, prior_status=prior)
-        await _maybe_await(self.session.commit())
+        await maybe_await(self.session.commit())
         return TaskCancelResponse(task_id=task_id, cancelled=True, prior_status=prior)
 
 
@@ -93,7 +90,7 @@ class TaskResultService:
     session: AsyncSession
 
     async def get_result(self, task_id: str, tenant_id: str, is_super_admin: bool) -> TaskResultResponse:
-        task = await _maybe_await(self.session.get(TaskRecord, task_id))
+        task = await maybe_await(self.session.get(TaskRecord, task_id))
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         if not is_super_admin and task.tenant_id != tenant_id:

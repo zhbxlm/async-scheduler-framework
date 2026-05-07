@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from sqlalchemy import select, func
@@ -11,10 +12,6 @@ from src.models.task_event import TaskEventRecord
 from src.models.task_run import TaskRunRecord
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class OperatorUXService:
@@ -30,7 +27,7 @@ class OperatorUXService:
             stmt = select(OperatorActionRecord).order_by(OperatorActionRecord.created_at.desc()).limit(limit)
             if action_type:
                 stmt = stmt.where(OperatorActionRecord.action_type == action_type)
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             rows = list(result.scalars().all())
         return [
             {
@@ -55,7 +52,7 @@ class OperatorUXService:
                 .order_by(TaskRunRecord.created_at.asc())
                 .limit(limit)
             )
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             rows = list(result.scalars().all())
         return [
             {
@@ -80,7 +77,7 @@ class OperatorUXService:
                 .order_by(CallbackOutboxRecord.created_at.asc())
                 .limit(limit)
             )
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             rows = list(result.scalars().all())
         return [
             {

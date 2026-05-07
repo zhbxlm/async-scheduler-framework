@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from sqlalchemy import select
@@ -10,10 +11,6 @@ from src.models.task_event import TaskEventRecord
 from src.models.task_run import TaskRunRecord
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class RunCentricQueryService:
@@ -30,7 +27,7 @@ class RunCentricQueryService:
                 .order_by(TaskRunRecord.created_at.desc())
                 .limit(limit)
             )
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             return list(result.scalars().all())
 
     async def list_task_run_events(self, task_id: str, run_key: str | None = None, limit: int = 100) -> list[TaskEventRecord]:
@@ -45,7 +42,7 @@ class RunCentricQueryService:
             )
             if run_key:
                 stmt = stmt.where(TaskEventRecord.run_key == run_key)
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             return list(result.scalars().all())
     
     async def list_dag_runs(self, dag_id: str, limit: int = 100) -> list[DagRunRecord]:
@@ -58,5 +55,5 @@ class RunCentricQueryService:
                 .order_by(DagRunRecord.created_at.desc())
                 .limit(limit)
             )
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             return list(result.scalars().all())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 from typing import Any
 
 from sqlalchemy import select
@@ -8,10 +9,6 @@ from sqlalchemy import select
 from src.models.task_run import TaskRunRecord
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class ReplayChainQueryService:
@@ -30,7 +27,7 @@ class ReplayChainQueryService:
                 .order_by(TaskRunRecord.created_at.asc())
                 .limit(limit)
             )
-            result = await _maybe_await(session.execute(stmt))
+            result = await maybe_await(session.execute(stmt))
             rows = list(result.scalars().all())
         return [
             {

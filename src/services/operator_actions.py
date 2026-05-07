@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import inspect
+from src.common.db_utils import maybe_await
+
 import json
 from typing import Any
 
@@ -8,10 +9,6 @@ from src.models.operator_action import OperatorActionRecord
 from src.services.task_timeline import TaskTimelineService
 
 
-async def _maybe_await(value):
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 class OperatorActionService:
@@ -42,7 +39,7 @@ class OperatorActionService:
                 payload_json=json.dumps(payload or {}, ensure_ascii=False),
             )
             session.add(row)
-            await _maybe_await(session.commit())
+            await maybe_await(session.commit())
         if self._timeline and task_id:
             await self._timeline.emit(
                 task_id=task_id,
