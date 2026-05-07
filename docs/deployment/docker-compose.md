@@ -10,7 +10,7 @@
 - 端口：`8000`
 - 职责：运维管理面
 - 路由：`/ops/v1/*` + `/health/*`
-- 后台任务：`CronScheduler`
+- 后台任务：无
 - 依赖：Redis（不要求 MySQL）
 
 ### 2. task-api
@@ -18,10 +18,16 @@
 - 端口：`8001`
 - 职责：任务提交、查询、取消、结果获取
 - 路由：`/tasks/*` + `/health/*`
-- 后台任务：`TaskReconciler`
+- 后台任务：无
 - 依赖：Redis + MySQL
 
-### 3. redis
+### 3. control-plane
+- 入口：`src.main_control`
+- 职责：平台后台控制循环
+- 后台任务：`CronScheduler` / `TaskReconciler` / `CompensationService`
+- 依赖：Redis + MySQL
+
+### 4. redis
 - 队列、注册表、锁、协调状态
 
 ### 4. mysql
@@ -37,7 +43,7 @@
 ### 启动核心服务
 
 ```bash
-docker compose up -d ops-api task-api redis mysql
+docker compose up -d ops-api task-api control-plane redis mysql
 ```
 
 ### 启动完整环境（含观测）
@@ -51,6 +57,7 @@ docker compose --profile observability up -d
 ```bash
 docker compose logs -f ops-api
 docker compose logs -f task-api
+docker compose logs -f control-plane
 docker compose logs -f redis
 docker compose logs -f mysql
 ```
@@ -69,16 +76,21 @@ docker compose logs -f mysql
 ### ops-api
 
 - `BACKGROUND__RECONCILE__ENABLED=false`
-- `BACKGROUND__CRON__ENABLED=true`
+- `BACKGROUND__CRON__ENABLED=false`
 
 ### task-api
 
-- `BACKGROUND__RECONCILE__ENABLED=true`
+- `BACKGROUND__RECONCILE__ENABLED=false`
 - `BACKGROUND__CRON__ENABLED=false`
 
+### control-plane
+
+- `BACKGROUND__RECONCILE__ENABLED=true`
+- `BACKGROUND__CRON__ENABLED=true`
+
 这是推荐生产分工：
-- cron 调度只在 ops-api 跑
-- reconcile 修复只在 task-api 跑
+- API 进程只处理请求
+- cron / reconcile / compensation 全部在 control-plane 跑
 
 ## 常用命令
 
@@ -92,6 +104,12 @@ docker compose up -d ops-api redis
 
 ```bash
 docker compose up -d task-api redis mysql
+
+### 仅启动 control-plane
+
+```bash
+docker compose up -d control-plane redis mysql
+```
 ```
 
 ### 运行测试容器

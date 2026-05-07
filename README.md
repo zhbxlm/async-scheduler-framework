@@ -1,6 +1,6 @@
 # async-scheduler-framework
 
-> Ray-powered asynchronous task scheduling framework with multi-tenant support, DAG orchestration, split task/ops APIs, and production-grade observability.
+> Async task scheduling framework with multi-tenant support, DAG orchestration, split task/ops APIs, dedicated control-plane worker, and production-grade observability.
 
 [![CI](https://github.com/zhbxlm/async-scheduler-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/zhbxlm/async-scheduler-framework/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
@@ -42,18 +42,13 @@
                                 |
                   +-------------+--------------+
                   |                            |
-         +--------v--------+          +--------v--------+
-         | MySQL TaskRecord|          | CronScheduler   |
-         | task persistence|          | ops-api bg task |
-         +--------+--------+          +-----------------+
-                  |
-         +--------v--------+
-         | TaskReconciler  |
-         | task-api bg task|
-         +--------+--------+
-                  |
-         +--------v--------+
-         |  DagEngine /    |
+         +--------v--------+          +--------v--------+          +----------------------+
+         | MySQL TaskRecord|          | control-plane worker |
+         | task persistence|          | cron / reconcile /   |
+         +--------+--------+          | compensation         |
+                  |                   +----------+-----------+
+         +--------v--------+                     |
+         |  DagEngine /    |<--------------------+
          |  QueueManager   |
          +--------+--------+
                   |
@@ -69,6 +64,7 @@
 |-------------|------|---------|
 | Ops API | `src/main.py` | Cluster/node/capability/DAG/schedule/ops management |
 | Task API | `src/main_tasks.py` | Task create/list/get/result/cancel |
+| Control-plane | `src/main_control.py` | CronScheduler / TaskReconciler / CompensationService |
 | Node Agent | `src/agent/server.py` | Per-node heartbeat, ownership, cluster invite/release |
 
 ---
@@ -87,8 +83,8 @@ docker compose up
 More commonly:
 
 ```bash
-# Start both API services + infra
-docker compose up scheduler-ops-api scheduler-task-api redis mysql
+# Start both API services + control-plane + infra
+docker compose up ops-api task-api control-plane redis mysql
 
 # Start observability stack too
 docker compose --profile observability up
@@ -128,11 +124,7 @@ uvicorn src.main_tasks:app --reload --port 8001
 Responsibilities:
 - capability / cluster / node / DAG / schedule / tenant management
 - queue and system ops views
-- cron background scheduling
 - health and observability endpoints
-
-Background task:
-- `CronScheduler`
 
 Depends on:
 - Redis
@@ -143,14 +135,21 @@ Depends on:
 Responsibilities:
 - task submission
 - task query / result retrieval / cancellation
-- task consistency repair
-
-Background task:
-- `TaskReconciler`
 
 Depends on:
 - Redis
 - MySQL (`TaskRecord` persistence)
+
+### control-plane
+
+Responsibilities:
+- cron scheduling
+- task reconciliation / repair
+- compensation processing
+
+Depends on:
+- Redis
+- MySQL
 
 ---
 
@@ -166,8 +165,9 @@ Depends on:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | Jaeger / Tempo OTLP endpoint |
 
 Recommended split deployment:
-- `ops-api`: `BACKGROUND__CRON__ENABLED=true`, `BACKGROUND__RECONCILE__ENABLED=false`
-- `task-api`: `BACKGROUND__CRON__ENABLED=false`, `BACKGROUND__RECONCILE__ENABLED=true`
+- `ops-api`: `BACKGROUND__CRON__ENABLED=false`, `BACKGROUND__RECONCILE__ENABLED=false`
+- `task-api`: `BACKGROUND__CRON__ENABLED=false`, `BACKGROUND__RECONCILE__ENABLED=false`
+- `control-plane`: `BACKGROUND__CRON__ENABLED=true`, `BACKGROUND__RECONCILE__ENABLED=true`
 
 ---
 
