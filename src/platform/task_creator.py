@@ -39,6 +39,7 @@ class TaskCreator:
         self._qm = queue_manager
         self._db = db_session_factory
         self._coordinator = coordinator
+        self._run_tracking = None
         
         # Create coordinator if not provided
         if self._db and not self._coordinator:
@@ -47,6 +48,9 @@ class TaskCreator:
                 redis_client=self._r,
                 enable_logging=True,
             )
+        if self._db:
+            from src.services.run_tracking import RunTrackingService
+            self._run_tracking = RunTrackingService(self._db)
 
     @log_errors(log_level="ERROR", raise_exception=True)
     async def create_task(
@@ -201,6 +205,19 @@ class TaskCreator:
             priority=priority,
             execute_after_ms=execute_after_ms,
         )
+
+        if self._run_tracking:
+            await self._run_tracking.create_task_run(
+                task_id=task_id,
+                attempt=kwargs.get("attempt", 0),
+                status="created",
+            )
+            if kwargs.get("dag_id"):
+                await self._run_tracking.create_dag_run(
+                    dag_id=kwargs.get("dag_id"),
+                    tenant_id=tenant_id,
+                    status="created",
+                )
 
         return {
             "task_id": task_id,

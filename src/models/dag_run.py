@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from datetime import datetime
+from sqlalchemy import DateTime, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
+
+from src.common.async_db import Base
+
+
+class DagRunRecord(Base):
+    __tablename__ = "dag_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dag_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    run_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created", index=True)
+    trigger_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_dag_runs_dag_run_key", "dag_id", "run_key"),
+    )
