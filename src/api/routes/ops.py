@@ -21,6 +21,7 @@ from src.services.callback_replay_policy import CallbackReplayPolicyService
 from src.services.force_operations import ForceOperationService
 from src.services.replay_policy import ReplayPolicyService
 from src.services.run_centric_queries import RunCentricQueryService
+from src.services.replay_chain_queries import ReplayChainQueryService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops/v1", tags=["ops"])
@@ -309,6 +310,13 @@ async def task_recovery_explanation(task_id: str, request: Request, _auth: dict 
     redis = getattr(request.app.state, "redis", None)
     db_factory = getattr(request.app.state, "async_session_factory", None)
     return await RecoveryExplainerService(redis_client=redis, session_factory=db_factory).explain_task(task_id)
+
+
+@router.get("/tasks/{task_id}/replay-chain", summary="Replay lineage chain for a task")
+async def task_replay_chain(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 50) -> dict:
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    chain = await ReplayChainQueryService(db_factory).get_replay_chain(task_id, limit=limit)
+    return {"task_id": task_id, "chain": chain}
 
 
 @router.get("/tasks/{task_id}/runs", summary="List task runs")
