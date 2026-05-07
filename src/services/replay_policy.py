@@ -6,6 +6,8 @@ from typing import Any
 from sqlalchemy import select, func
 
 from src.common.db_utils import maybe_await
+from src.common.metrics import REPLAY_REQUESTS_TOTAL
+from src.common.service_logger import log_service_event
 from src.models.operator_action import OperatorActionRecord
 from src.services.governance import GovernanceService
 
@@ -71,8 +73,14 @@ class ReplayPolicyService:
                 f"replay rate limit exceeded: {recent}/{self._max_replays} replays in last {self._window_seconds}s"
             )
 
-        return {
+        result = {
             "allowed": allowed,
             "task_id": task_id,
             "reasons": reasons or ["allowed"],
         }
+        try:
+            REPLAY_REQUESTS_TOTAL.labels(actor_role=actor_role, allowed=str(allowed)).inc()
+            log_service_event("ReplayPolicyService", "check_task_replay_allowed", task_id=task_id, actor_role=actor_role, outcome="allowed" if allowed else "denied")
+        except Exception:
+            pass
+        return result

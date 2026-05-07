@@ -213,3 +213,61 @@ async def health_mysql(request: Request) -> Dict[str, Any]:
             status_code=503,
             detail=f"MySQL unreachable: {e}",
         )
+
+@router.get("/ready")
+async def health_ready(request: Request) -> dict:
+    """Deep readiness check: DB and Redis connectivity."""
+    result = {"status": "ready", "checks": {}}
+
+    # Redis check
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        try:
+            await redis.ping()
+            result["checks"]["redis"] = "ok"
+        except Exception as exc:
+            result["checks"]["redis"] = f"error: {exc}"
+            result["status"] = "not_ready"
+    else:
+        result["checks"]["redis"] = "not_configured"
+
+    # DB check
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    if db_factory is not None:
+        try:
+            from sqlalchemy import text
+            async with db_factory() as session:
+                await session.execute(text("SELECT 1"))
+            result["checks"]["db"] = "ok"
+        except Exception as exc:
+            result["checks"]["db"] = f"error: {exc}"
+            result["status"] = "not_ready"
+    else:
+        result["checks"]["db"] = "not_configured"
+
+    return result
+
+
+@router.get("/platform")
+async def health_platform(request: Request) -> dict:
+    """Platform-level observability summary."""
+    db_factory = getattr(request.app.state, "async_session_factory", None)
+    try:
+        from src.services.operator_ux import OperatorUXService
+        from src.services.operator_dashboard import OperatorDashboardService
+        svc = OperatorUXService(db_factory)
+        dash = OperatorDashboardService(db_factory)
+        stale = await svc.stale_task_queue(limit=200)
+        dl = await svc.dead_letter_backlog(limit=200)
+        recent = await svc.recent_operator_actions(limit=10)
+        summary = await dash.summary()
+        from src.common.metrics import STALE_TASKS_GAUGE
+        STALE_TASKS_GAUGE.set(len(stale))
+        return {
+            "stale_task_count": len(stale),
+            "dead_letter_backlog": len(dl),
+            "recent_operator_actions": len(recent),
+            "callback_summary": summary.get("callback", {}),
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}

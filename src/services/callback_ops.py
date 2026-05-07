@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from src.common.db_utils import maybe_await
+from src.common.metrics import DEAD_LETTER_EVENTS_TOTAL
+from src.common.service_logger import log_service_event
 
 from datetime import datetime, timezone
 from typing import Any
@@ -50,6 +52,11 @@ class CallbackOpsService:
             )
         except Exception:
             pass
+        try:
+            DEAD_LETTER_EVENTS_TOTAL.labels(event="acked").inc()
+            log_service_event("CallbackOpsService", "acknowledge_dead_letter", actor=actor, outbox_id=outbox_id, outcome="ok")
+        except Exception:
+            pass
         return True
 
     async def replay_dead_letter(self, outbox_id: int, *, actor: str = "system", reason: str | None = None) -> bool:
@@ -76,6 +83,11 @@ class CallbackOpsService:
                 payload={"outbox_id": outbox_id},
                 task_id=getattr(row, "task_id", None),
             )
+        except Exception:
+            pass
+        try:
+            DEAD_LETTER_EVENTS_TOTAL.labels(event="replayed").inc()
+            log_service_event("CallbackOpsService", "replay_dead_letter", actor=actor, outbox_id=outbox_id, outcome="ok")
         except Exception:
             pass
         return True

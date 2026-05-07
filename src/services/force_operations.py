@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from src.common.db_utils import maybe_await
+from src.common.metrics import FORCE_OPERATIONS_TOTAL
+from src.common.service_logger import log_service_event
 
 from typing import Any
 
@@ -66,6 +68,11 @@ class ForceOperationService:
         if executor is not None:
             side_effect_result = await executor()
 
+        try:
+            FORCE_OPERATIONS_TOTAL.labels(operation=operation, outcome="success").inc()
+            log_service_event("ForceOperationService", operation, target_id=target_id, actor=actor, actor_role=actor_role, outcome="success")
+        except Exception:
+            pass
         return {
             "ok": True,
             "operation": operation,

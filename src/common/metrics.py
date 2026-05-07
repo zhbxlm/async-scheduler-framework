@@ -97,6 +97,40 @@ DAG_EXECUTION_DURATION = Histogram(
 )
 
 # ---------------------------------------------------------------------------
+# Platform operator / replay / observability metrics
+# ---------------------------------------------------------------------------
+
+REPLAY_REQUESTS_TOTAL = Counter(
+    'platform_replay_requests_total',
+    'Task replay requests',
+    ['actor_role', 'allowed']
+)
+
+DEAD_LETTER_EVENTS_TOTAL = Counter(
+    'platform_dead_letter_events_total',
+    'Dead-letter callback lifecycle events',
+    ['event']
+)
+
+OPERATOR_ACTIONS_TOTAL = Counter(
+    'platform_operator_actions_total',
+    'Operator actions recorded',
+    ['action_type']
+)
+
+FORCE_OPERATIONS_TOTAL = Counter(
+    'platform_force_operations_total',
+    'Force operations executed',
+    ['operation', 'outcome']
+)
+
+STALE_TASKS_GAUGE = Gauge(
+    'platform_stale_tasks',
+    'Current count of stale (running without lease) task runs'
+)
+
+
+# ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
 

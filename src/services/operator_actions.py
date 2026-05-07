@@ -7,6 +7,8 @@ from typing import Any
 
 from src.models.operator_action import OperatorActionRecord
 from src.services.task_timeline import TaskTimelineService
+from src.common.metrics import OPERATOR_ACTIONS_TOTAL
+from src.common.service_logger import log_service_event
 
 
 
@@ -46,4 +48,9 @@ class OperatorActionService:
                 event_type=f"operator_{action_type}",
                 payload={"actor": actor, "reason": reason or "", **(payload or {})},
             )
+        try:
+            OPERATOR_ACTIONS_TOTAL.labels(action_type=action_type).inc()
+            log_service_event("OperatorActionService", "record", task_id=task_id, actor=actor, action_type=action_type, outcome="ok")
+        except Exception:
+            pass
         return getattr(row, "id", None)
