@@ -28,6 +28,7 @@ _DEQUEUE_SCAN_LIMIT = 50
 _CAPABILITIES_KEY = "queue:capabilities:registry"
 _STATS_CACHE_KEY = "queue:stats:cached"
 _STATS_REFRESH_INTERVAL = 10.0  # seconds
+_STATS_CACHE_MAX_CAPABILITIES = 2000  # safety cap: prevent unbounded growth in multi-tenant deployments
 
 # ---------------------------------------------------------------------------
 # Lua scripts
@@ -382,6 +383,13 @@ class QueueManager:
         instead of O(n) capabilities on every get_queue_stats call.
         """
         capabilities = await self.discover_queue_capabilities()
+        # Guard against unbounded growth in multi-tenant deployments with many capabilities.
+        if len(capabilities) > _STATS_CACHE_MAX_CAPABILITIES:
+            logger.warning(
+                "QueueManager: discovered %d capabilities, capping stats cache at %d",
+                len(capabilities), _STATS_CACHE_MAX_CAPABILITIES,
+            )
+            capabilities = list(capabilities)[:_STATS_CACHE_MAX_CAPABILITIES]
         if not capabilities:
             self._stats_cache = {}
             return

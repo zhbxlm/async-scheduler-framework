@@ -215,7 +215,9 @@ async def heartbeat_task(
 
             # Update NodeRegistry
             if node_registry is not None:
-                _ = state.to_node_info()  # noqa: F841 — kept for side-effect pattern
+                # Validate that current state can produce a NodeInfo (raises if malformed).
+                # The return value is intentionally unused here; heartbeat uses state.resources directly.
+                state.to_node_info()
                 await node_registry.heartbeat(
                     state.node_id,
                     resources=state.resources.model_dump(),

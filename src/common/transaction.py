@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
+from src.common.ttl_constants import TX_PENDING_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class AtomicWriteCoordinator:
     
     # Redis key prefix for transaction tracking
     TX_PREFIX = "tx:"
-    TX_TTL = 300  # 5 minutes for pending transactions
+    TX_TTL = TX_PENDING_TTL  # centralised in src/common/ttl_constants.py
     
     def __init__(
         self,

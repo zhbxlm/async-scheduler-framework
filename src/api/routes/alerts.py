@@ -5,6 +5,8 @@ import json
 import logging
 import time
 import uuid
+
+from src.common.ttl_constants import ALERT_ACK_TTL
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
@@ -258,7 +260,7 @@ async def acknowledge_alert(fingerprint: str, request: Request) -> Dict[str, Any
     redis = _get_redis(request)
     if redis:
         try:
-            await redis.set(ack_key, ack_data, ex=86400)  # 24h TTL
+            await redis.set(ack_key, ack_data, ex=ALERT_ACK_TTL)
         except Exception as e:
             logger.warning("Failed to save acknowledgment to Redis: %s", e)
 

@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from src.models.task import TaskRecord, TaskStatus
 from src.common.transaction import TxStatus, TxRecord
+from src.common.ttl_constants import TASK_REDIS_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ class CompensationService:
                 "priority_rank": 3,  # Default priority
             }
             
-            await self._redis.set(task_key, json.dumps(task_data), ex=86400)
+            await self._redis.set(task_key, json.dumps(task_data), ex=TASK_REDIS_TTL)
             
             # Mark as committed
             tx.status = TxStatus.COMMITTED
@@ -257,7 +258,7 @@ class CompensationService:
             if data:
                 task_data = json.loads(data)
                 task_data["status"] = task.status.value
-                await self._redis.set(task_key, json.dumps(task_data), ex=86400)
+                await self._redis.set(task_key, json.dumps(task_data), ex=TASK_REDIS_TTL)
             
             # Mark as committed
             tx.status = TxStatus.COMMITTED
@@ -280,7 +281,7 @@ class CompensationService:
                 "priority_rank": 3,  # Default priority
             }
             
-            await self._redis.set(task_key, json.dumps(task_data), ex=86400)
+            await self._redis.set(task_key, json.dumps(task_data), ex=TASK_REDIS_TTL)
             logger.info("Repaired missing Redis task %s", task.task_id)
         
         except Exception as e:

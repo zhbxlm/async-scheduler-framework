@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,9 @@ class SyncStepExecutor:
                 if self._qm:
                     await self._qm.adjust_concurrent(capability, -1)
                 if attempt < self._max_retries:
-                    await asyncio.sleep(self._retry_delay * (2 ** attempt))
+                    base = self._retry_delay * (2 ** attempt)
+                    jitter = random.uniform(0, base * 0.2)
+                    await asyncio.sleep(min(base + jitter, 60.0))
 
         raise RuntimeError(
             f"SyncStepExecutor: step={step_name} failed after {self._max_retries + 1} attempts"

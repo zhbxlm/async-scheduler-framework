@@ -1,5 +1,6 @@
 """HTTP client for CLI."""
 import os
+import random
 import time
 from typing import Any
 
@@ -72,8 +73,8 @@ class ApiClient:
             # Calculate backoff delay (exponential with jitter)
             if attempt < max_retries:
                 delay = min(base_delay * (2 ** attempt), max_delay)
-                jitter = delay * 0.1  # 10% jitter
-                delay = delay + (jitter * (hash(f"{time.time()}") % 100) / 100)
+                jitter = random.uniform(0, delay * 0.2)  # ±20% jitter
+                delay = delay + jitter
                 
                 click.echo(
                     f"Request failed (attempt {attempt + 1}/{max_retries + 1}), "

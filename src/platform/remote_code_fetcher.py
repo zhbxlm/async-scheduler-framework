@@ -30,7 +30,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Default configuration (can be overridden via constructor)
-_DEFAULT_CACHE_DIR = "/tmp/artifact_cache"
+_DEFAULT_CACHE_DIR = str(Path(tempfile.gettempdir()) / "artifact_cache")
 _DEFAULT_MAX_SIZE_MB = 1024
 _DEFAULT_MAX_CACHE_ENTRIES = 50
 

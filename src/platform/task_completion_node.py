@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Any
 
@@ -166,7 +167,9 @@ class TaskCompletionNode:
                     attempt, task_id, exc,
                 )
                 if attempt < self._inline_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    base = float(2 ** attempt)
+                    jitter = random.uniform(0, base * 0.2)
+                    await asyncio.sleep(min(base + jitter, 60.0))
 
         # Level-2: enqueue to durable retry queue
         await self._enqueue_callback_retry(task_id, callback_url, payload, attempt=1)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from typing import Any, Optional
 
@@ -167,11 +168,14 @@ class RedisHA:
                     if self.circuit_breaker.state == 'OPEN' and attempt == 0:
                         REDIS_CIRCUIT_BREAKER_TRIPS.inc()
                 except Exception:
-                    pass
+                    pass  # Prometheus metrics are best-effort; never block the retry path
                 
                 if attempt < self.max_retries - 1:
-                    # Exponential backoff: 100ms, 200ms, 400ms
-                    await asyncio.sleep(0.1 * (2 ** attempt))
+                    # Exponential backoff with jitter: avoids thundering herd
+                    # when multiple clients retry simultaneously after failures.
+                    base = 0.1 * (2 ** attempt)
+                    jitter = random.uniform(0, base * 0.2)
+                    await asyncio.sleep(min(base + jitter, 30.0))
                     continue
                 
                 # After all retries failed

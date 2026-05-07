@@ -18,6 +18,7 @@ from typing import Any
 import json
 
 from src.common.error_handling import log_errors
+from src.common.ttl_constants import CALLBACK_RETRY_PAYLOAD_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -436,7 +437,7 @@ class TaskReconciler:
             # Atomic pipeline: add member + store payload together
             pipe = self._r.pipeline()
             pipe.zadd(_CALLBACK_RETRY_KEY, {tid: next_retry_ts})
-            pipe.set(retry_payload_key, retry_event, ex=3600)
+            pipe.set(retry_payload_key, retry_event, ex=CALLBACK_RETRY_PAYLOAD_TTL)
             await pipe.execute()
             compensated += 1
             logger.info("TaskReconciler: phase3 enqueued callback task_id=%s", tid)

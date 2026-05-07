@@ -69,7 +69,11 @@ class _WorkerHandle:
         return len(recent) >= _ACTOR_FAULT_MAX_REPLACES_PER_WINDOW
 
     def record_fault(self) -> None:
-        self.fault_times.append(time.time())
+        now = time.time()
+        self.fault_times.append(now)
+        # Prune stale entries to prevent unbounded list growth on long-running workers.
+        cutoff = now - _ACTOR_FAULT_REPLACE_WINDOW_SECONDS
+        self.fault_times = [t for t in self.fault_times if t > cutoff]
 
 
 # ---------------------------------------------------------------------------

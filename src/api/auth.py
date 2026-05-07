@@ -52,7 +52,9 @@ async def authenticate(
         raise HTTPException(status_code=401, detail="Missing API key")
 
     api_key = credentials.credentials
-    _ = request.headers.get(tenant_id_header)  # noqa: F841
+    # Extract tenant_id hint from header (optional, used to fast-path validate_key).
+    # In single-tenant mode this is unused but harmless.
+    tenant_id_hint = request.headers.get(tenant_id_header) or None
 
     # ----------------------------------------------------------------
     # Single-tenant mode
@@ -90,7 +92,7 @@ async def authenticate(
         # Fallback for tests or when app.state is not populated
         from src.platform.tenant_registry import TenantRegistry
         registry = TenantRegistry(redis_client)
-    tenant_data = await registry.validate_key(api_key, tenant_id_header)
+    tenant_data = await registry.validate_key(api_key, tenant_id_hint)
 
     if tenant_data is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
