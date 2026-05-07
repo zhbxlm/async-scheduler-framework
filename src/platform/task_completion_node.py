@@ -141,6 +141,12 @@ class TaskCompletionNode:
                     ))
                 await session.commit()
                 logger.info("TaskCompletionNode: persisted task_id=%s status=%s", task_id, status)
+                try:
+                    from src.services.task_timeline import TaskTimelineService
+                    timeline = TaskTimelineService(self._db)
+                    await timeline.emit(task_id=task_id, event_type=f"task_{status}", payload={"callback_url": callback_url or ""})
+                except Exception:
+                    pass
         except Exception as exc:
             logger.error("TaskCompletionNode: persist failed task_id=%s: %s", task_id, exc)
             raise

@@ -40,6 +40,7 @@ class TaskCreator:
         self._db = db_session_factory
         self._coordinator = coordinator
         self._run_tracking = None
+        self._timeline = None
         
         # Create coordinator if not provided
         if self._db and not self._coordinator:
@@ -50,7 +51,9 @@ class TaskCreator:
             )
         if self._db:
             from src.services.run_tracking import RunTrackingService
+            from src.services.task_timeline import TaskTimelineService
             self._run_tracking = RunTrackingService(self._db)
+            self._timeline = TaskTimelineService(self._db)
 
     @log_errors(log_level="ERROR", raise_exception=True)
     async def create_task(
@@ -207,7 +210,7 @@ class TaskCreator:
         )
 
         if self._run_tracking:
-            await self._run_tracking.create_task_run(
+            run_key = await self._run_tracking.create_task_run(
                 task_id=task_id,
                 attempt=kwargs.get("attempt", 0),
                 status="created",
@@ -217,6 +220,13 @@ class TaskCreator:
                     dag_id=kwargs.get("dag_id"),
                     tenant_id=tenant_id,
                     status="created",
+                )
+            if self._timeline:
+                await self._timeline.emit(
+                    task_id=task_id,
+                    run_key=run_key,
+                    event_type="task_created",
+                    payload={"tenant_id": tenant_id, "capability": capability},
                 )
 
         return {
