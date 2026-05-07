@@ -6,4 +6,4 @@ from scheduler_proxy.command import AsyncCommandProxy
 from scheduler_proxy.service import AsyncServiceProxy
 
 __all__ = ["AsyncCommandProxy", "AsyncServiceProxy"]
-__version__ = "0.1.0"
+__version__ = "1.1.0"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "async-scheduler-task-api"
-version = "0.1.0"
+version = "1.1.0"
 description = "Task submission API service for async-scheduler — handles submit/query/cancel"
 readme = "README.md"
 requires-python = ">=3.10"
