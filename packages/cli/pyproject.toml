@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "async-scheduler-cli"
-version = "1.1.0"
+version = "1.2.0"
 description = "kubectl-style CLI for async-scheduler — manage tasks, nodes, DAGs and schedules"
 readme = "README.md"
 requires-python = ">=3.10"

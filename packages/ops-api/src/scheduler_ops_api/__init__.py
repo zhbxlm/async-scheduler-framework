@@ -13,4 +13,4 @@ Or in Python::
 from scheduler_ops_api.app import create_app
 
 __all__ = ["create_app"]
-__version__ = "1.1.0"
+__version__ = "1.2.0"

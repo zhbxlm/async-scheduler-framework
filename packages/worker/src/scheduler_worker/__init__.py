@@ -13,4 +13,4 @@ from scheduler_worker.base import BaseWorker, task_handler
 from scheduler_worker.devkit import WorkerDevKit
 
 __all__ = ["BaseWorker", "task_handler", "WorkerDevKit"]
-__version__ = "1.1.0"
+__version__ = "1.2.0"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "async-scheduler-sdk"
-version = "1.1.0"
+version = "1.2.0"
 description = "Python SDK for async-scheduler — submit tasks and poll results programmatically"
 readme = "README.md"
 requires-python = ">=3.10"

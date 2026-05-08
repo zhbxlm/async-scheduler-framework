@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "async-scheduler-agent"
-version = "1.1.0"
+version = "1.2.0"
 description = "Node Agent for async-scheduler — deploy worker nodes with a single command"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "async-scheduler-runtime-core>=1.1.0",
+    "async-scheduler-runtime-core>=1.2.0",
     "click>=8.1",
 ]
 
