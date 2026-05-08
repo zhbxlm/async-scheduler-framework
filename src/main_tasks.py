@@ -34,7 +34,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── startup ──────────────────────────────────────────────────
     from config.settings_pydantic import settings
     from src.platform.container import ServiceContainer, set_container
-    from src.common.lifecycle import get_lifecycle_manager
     from src.common.error_handling import BusinessError
 
     # Fail‑fast: MySQL must be configured for task‑api
@@ -59,13 +58,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.schedule_registry = container.schedule_registry
     app.state.queue_manager = container.queue_manager
     app.state.task_creator = container.task_creator
-    app.state.task_reconciler = container.task_reconciler
     app.state.task_completion_node = container.task_completion_node
-    
+
     # Database engine + session factory (no module-level globals)
     app.state.async_engine = container.async_engine
     app.state.async_session_factory = container.async_session_factory
-    app.state.callback_dispatcher = container.callback_dispatcher
     
     # Cache auth settings for authenticate() - avoids repeated module imports
     app.state.auth_settings = {
@@ -74,17 +71,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         'tenant_id_header': settings.tenant.tenant_id_header,
     }
 
-    manager = get_lifecycle_manager()
-    if container.callback_dispatcher:
-        from src.common.lifecycle import CallbackDispatcherResource
-        manager.register_resource(CallbackDispatcherResource(container.callback_dispatcher))
-    await manager.start_all()
+    manager = container.lifecycle_manager
+    if manager is not None:
+        await manager.start_all()
 
     yield
 
     # ── shutdown ──────────────────────────────────────────────────
-    manager = get_lifecycle_manager()
-    await manager.stop_all()
+    manager = container.lifecycle_manager
+    if manager is not None:
+        await manager.stop_all()
     if app.state.async_engine:
         await async_dispose_engine(app.state.async_engine)
     from src.common.http_client import close_http_client

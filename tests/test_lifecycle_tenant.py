@@ -9,7 +9,6 @@
 - stop_all(): orders stop correctly (consumer → drain → processor → scheduler → other)
 - stop_all(): error in stop doesn't crash
 - is_started / is_stopping flags
-- get_lifecycle_manager(): returns singleton
 
 === Resource Adapters ===
 - TaskReconcilerResource: delegates start/stop
@@ -17,6 +16,7 @@
 - CompensationServiceResource: delegates start/stop
 - ManagedResource.resource_type default
 - ManagedResource.requires_drain default
+- ManagedResource.shutdown_phase default
 
 === TenantRegistry ===
 - register() stores tenant, returns True
@@ -43,7 +43,6 @@ from src.common.lifecycle import (
     LifecycleManager,
     ManagedResource,
     TaskReconcilerResource,
-    get_lifecycle_manager,
 )
 from src.platform.tenant_registry import TenantRegistry
 from tests.fake_redis import FullFakeAsyncRedis
@@ -56,6 +55,14 @@ def _make_resource(name: str, resource_type: str = "generic") -> MagicMock:
     r = MagicMock(spec=ManagedResource)
     r.name = name
     r.resource_type = resource_type
+    if resource_type == "consumer":
+        r.shutdown_phase = ManagedResource.PHASE_CONSUMER
+    elif resource_type == "processor":
+        r.shutdown_phase = ManagedResource.PHASE_PROCESSOR
+    elif resource_type == "scheduler":
+        r.shutdown_phase = ManagedResource.PHASE_SCHEDULER
+    else:
+        r.shutdown_phase = ManagedResource.PHASE_OTHER
     r.start = AsyncMock()
     r.stop = AsyncMock()
     r.requires_drain = False
@@ -258,27 +265,6 @@ async def test_is_stopping_true_during_shutdown():
 
 
 # ===========================================================================
-# get_lifecycle_manager singleton
-# ===========================================================================
-
-def test_get_lifecycle_manager_returns_singleton():
-    import src.common.lifecycle as lc
-    lc._lifecycle_manager = None  # reset
-
-    lm1 = get_lifecycle_manager()
-    lm2 = get_lifecycle_manager()
-    assert lm1 is lm2
-
-
-def test_get_lifecycle_manager_creates_instance():
-    import src.common.lifecycle as lc
-    lc._lifecycle_manager = None
-
-    lm = get_lifecycle_manager()
-    assert isinstance(lm, LifecycleManager)
-
-
-# ===========================================================================
 # Resource adapters
 # ===========================================================================
 
@@ -303,6 +289,7 @@ async def test_task_reconciler_resource_delegates_stop():
 def test_task_reconciler_resource_name():
     resource = TaskReconcilerResource(MagicMock())
     assert resource.name == "TaskReconciler"
+    assert resource.shutdown_phase == ManagedResource.PHASE_PROCESSOR
 
 
 @pytest.mark.asyncio
@@ -324,6 +311,7 @@ async def test_cron_scheduler_resource_delegates_stop():
 def test_cron_scheduler_resource_name():
     resource = CronSchedulerResource(MagicMock())
     assert resource.name == "CronScheduler"
+    assert resource.shutdown_phase == ManagedResource.PHASE_SCHEDULER
 
 
 @pytest.mark.asyncio
@@ -339,6 +327,7 @@ async def test_compensation_service_resource_delegates():
 def test_compensation_service_resource_name():
     resource = CompensationServiceResource(MagicMock())
     assert resource.name == "CompensationService"
+    assert resource.shutdown_phase == ManagedResource.PHASE_PROCESSOR
 
 
 def test_managed_resource_default_type():
@@ -352,6 +341,7 @@ def test_managed_resource_default_type():
     r = MinimalResource()
     assert r.resource_type == "generic"
     assert r.requires_drain is False
+    assert r.shutdown_phase == ManagedResource.PHASE_OTHER
 
 
 # ===========================================================================

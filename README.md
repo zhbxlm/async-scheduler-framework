@@ -238,7 +238,10 @@ GET /health/metrics
 ```
 
 Tracing:
-- set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317`
+- tracing is an **optional capability**
+- install with: `pip install -e .[tracing]`
+- then set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317`
+- if tracing dependencies are not installed, the runtime degrades gracefully and tracing is disabled
 
 ---
 

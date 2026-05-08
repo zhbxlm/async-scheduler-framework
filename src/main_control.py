@@ -23,7 +23,6 @@ async def _lifespan() -> AsyncIterator[None]:
     from config.settings_pydantic import settings
     from src.platform.container import ServiceContainer, set_container
     from src.common.lifecycle import (
-        get_lifecycle_manager,
         TaskReconcilerResource,
         CronSchedulerResource,
         CompensationServiceResource,
@@ -36,7 +35,9 @@ async def _lifespan() -> AsyncIterator[None]:
     container = await ServiceContainer.build_control_plane(settings)
     set_container(container)
 
-    manager = get_lifecycle_manager()
+    manager = container.lifecycle_manager
+    if manager is None:
+        raise RuntimeError("LifecycleManager is not initialised in ServiceContainer")
     if settings.background.reconcile.enabled and container.task_reconciler:
         manager.register_resource(TaskReconcilerResource(container.task_reconciler))
     if settings.background.cron.enabled and container.cron_scheduler:

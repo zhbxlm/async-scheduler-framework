@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional
+from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
 
 class ManagedResource(ABC):
     """Base class for resources that need lifecycle management."""
+
+    PHASE_CONSUMER = 10
+    PHASE_PROCESSOR = 20
+    PHASE_SCHEDULER = 30
+    PHASE_OTHER = 40
 
     @abstractmethod
     async def start(self) -> None:
@@ -33,6 +38,14 @@ class ManagedResource(ABC):
     def requires_drain(self) -> bool:
         """Whether this resource needs drain time before shutdown."""
         return False
+
+    @property
+    def shutdown_phase(self) -> int:
+        """Explicit shutdown ordering phase.
+
+        Lower values stop earlier.
+        """
+        return self.PHASE_OTHER
 
 
 class LifecycleManager:
@@ -78,28 +91,47 @@ class LifecycleManager:
         self._stopping = True
         logger.info("LifecycleManager: starting graceful shutdown")
 
-        # Categorize resources by type
+        def _infer_phase(resource: ManagedResource) -> int:
+            rtype = getattr(resource, "resource_type", "generic")
+            rname = resource.name.lower()
+            if "consumer" in rtype.lower() or "consumer" in rname:
+                return ManagedResource.PHASE_CONSUMER
+            if (
+                "processor" in rtype.lower()
+                or "executor" in rtype.lower()
+                or "reconciler" in rtype.lower()
+                or "processor" in rname
+                or "executor" in rname
+                or "reconciler" in rname
+            ):
+                return ManagedResource.PHASE_PROCESSOR
+            if (
+                "scheduler" in rtype.lower()
+                or "cron" in rtype.lower()
+                or "scheduler" in rname
+                or "cron" in rname
+            ):
+                return ManagedResource.PHASE_SCHEDULER
+            return ManagedResource.PHASE_OTHER
+
         consumers = []
         processors = []
         schedulers = []
         others = []
-        
+
         for resource in self._resources:
-            rtype = getattr(resource, 'resource_type', 'generic')
-            rname = resource.name.lower()
-            
-            if 'consumer' in rtype.lower() or 'consumer' in rname:
+            phase = getattr(resource, "shutdown_phase", None)
+            if phase is None:
+                phase = _infer_phase(resource)
+            if phase == ManagedResource.PHASE_CONSUMER:
                 consumers.append(resource)
-            elif 'processor' in rtype.lower() or 'executor' in rtype.lower() or \
-                 'reconciler' in rtype.lower() or 'processor' in rname or \
-                 'executor' in rname or 'reconciler' in rname:
+            elif phase == ManagedResource.PHASE_PROCESSOR:
                 processors.append(resource)
-            elif 'scheduler' in rtype.lower() or 'cron' in rtype.lower() or \
-                 'scheduler' in rname or 'cron' in rname:
+            elif phase == ManagedResource.PHASE_SCHEDULER:
                 schedulers.append(resource)
             else:
                 others.append(resource)
-        
+
         # 1. Stop consumers first (stop accepting new work)
         if consumers:
             logger.info("LifecycleManager: stopping %d consumer resource(s)", len(consumers))
@@ -160,21 +192,6 @@ class LifecycleManager:
 
 
 # ---------------------------------------------------------------------------
-# Global lifecycle manager
-# ---------------------------------------------------------------------------
-
-_lifecycle_manager: Optional[LifecycleManager] = None
-
-
-def get_lifecycle_manager() -> LifecycleManager:
-    """Get or create the global lifecycle manager."""
-    global _lifecycle_manager
-    if _lifecycle_manager is None:
-        _lifecycle_manager = LifecycleManager()
-    return _lifecycle_manager
-
-
-# ---------------------------------------------------------------------------
 # Resource adapters for existing components
 # ---------------------------------------------------------------------------
 
@@ -187,6 +204,10 @@ class TaskReconcilerResource(ManagedResource):
     @property
     def name(self) -> str:
         return "TaskReconciler"
+
+    @property
+    def shutdown_phase(self) -> int:
+        return self.PHASE_PROCESSOR
 
     async def start(self) -> None:
         if hasattr(self._reconciler, 'start'):
@@ -207,6 +228,10 @@ class CronSchedulerResource(ManagedResource):
     def name(self) -> str:
         return "CronScheduler"
 
+    @property
+    def shutdown_phase(self) -> int:
+        return self.PHASE_SCHEDULER
+
     async def start(self) -> None:
         if hasattr(self._scheduler, 'start'):
             await self._scheduler.start()
@@ -226,6 +251,10 @@ class CompensationServiceResource(ManagedResource):
     def name(self) -> str:
         return "CompensationService"
 
+    @property
+    def shutdown_phase(self) -> int:
+        return self.PHASE_PROCESSOR
+
     async def start(self) -> None:
         if hasattr(self._service, 'start'):
             await self._service.start()
@@ -244,6 +273,10 @@ class CallbackDispatcherResource(ManagedResource):
     @property
     def name(self) -> str:
         return "CallbackDispatcher"
+
+    @property
+    def shutdown_phase(self) -> int:
+        return self.PHASE_PROCESSOR
 
     async def start(self) -> None:
         if hasattr(self._service, 'start'):

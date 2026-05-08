@@ -38,7 +38,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ── startup ──────────────────────────────────────────────────
     from config.settings_pydantic import settings
     from src.platform.container import ServiceContainer, set_container
-    from src.common.lifecycle import get_lifecycle_manager
 
     # init shared http client pool
     from src.common.http_client import init_http_client
@@ -57,14 +56,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.dag_loader = container.dag_loader
     app.state.queue_manager = container.queue_manager
 
-    manager = get_lifecycle_manager()
-    await manager.start_all()
+    manager = container.lifecycle_manager
+    if manager is not None:
+        await manager.start_all()
 
     yield
 
     # ── shutdown ──────────────────────────────────────────────────
-    manager = get_lifecycle_manager()
-    await manager.stop_all()
+    manager = container.lifecycle_manager
+    if manager is not None:
+        await manager.stop_all()
     from src.common.http_client import close_http_client
     await close_http_client()
     shutdown_tracing()
