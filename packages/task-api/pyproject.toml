@@ -10,25 +10,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "fastapi>=0.104",
+    "async-scheduler-runtime-core>=1.1.0",
     "uvicorn[standard]>=0.24",
-    "redis>=5.0",
-    "sqlalchemy>=2.0",
-    "pydantic>=2.0",
-    "pydantic-settings>=2.0",
-    "orjson>=3.9",
-    "httpx>=0.25",
-    "prometheus-client>=0.17",
 ]
 
 [project.optional-dependencies]
+# Full tracing stack — install when OTLP exporter is needed at this layer
 tracing = [
-    "opentelemetry-api>=1.20",
-    "opentelemetry-sdk>=1.20",
-    "opentelemetry-semantic-conventions>=0.41b0",
-    "opentelemetry-exporter-otlp>=1.20",
-    "opentelemetry-instrumentation-fastapi>=0.41b0",
-    "opentelemetry-instrumentation-redis>=0.41b0",
+    "async-scheduler-runtime-core[tracing]>=1.1.0",
 ]
 
 [project.scripts]

@@ -10,16 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "httpx>=0.25",
-    "psutil>=5.9",
-    "redis>=5.0",
-    "pydantic>=2.0",
-    "pydantic-settings>=2.0",
-    "fastapi>=0.104",
-    "uvicorn[standard]>=0.24",
-    "ray>=2.5",
-    "sqlalchemy>=2.0",
-    "orjson>=3.9",
+    "async-scheduler-runtime-core>=1.1.0",
+    "click>=8.1",
 ]
 
 [project.scripts]
