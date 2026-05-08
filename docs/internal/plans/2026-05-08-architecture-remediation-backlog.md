@@ -203,12 +203,18 @@ These are not required to claim phase 1 success. They are candidates for future 
 Access and tenant/super-admin checks still exist across multiple route families (`tasks`, `tenants`, some ops entrypoints).
 
 **Candidate items**
-- [ ] Extract broader access policy primitives beyond task access
-- [ ] Unify tenant access rules across `tenants.py` and other route modules
-- [ ] Decide and document 403 vs 404 masking policy consistently
+- [x] Extract broader access policy primitives beyond task access
+- [x] Unify tenant access rules across `tenants.py` and other route modules
+- [x] Decide and document 403 vs 404 masking policy consistently
+- [x] Add `resolve_tenant_id` helper and wire into clusters/nodes/dags/schedules
+
+**Result**
+`src/services/access_policy.py` introduced with `TenantAccessPolicy`, `TaskAccessPolicy`, and `resolve_tenant_id`.
+All tenant/super-admin checks in `tenants.py` and `task_application.py` now route through policy objects.
+Repeated `_auth.get('tenant_id', 'default')` in four route modules replaced with `resolve_tenant_id`.
 
 **Priority**
-High, if auth/tenant complexity grows.
+Completed 2026-05-08.
 
 ---
 
@@ -218,12 +224,17 @@ High, if auth/tenant complexity grows.
 The main oversized modules were reduced, but service/presenter layering could still become more uniform across route families.
 
 **Candidate items**
-- [ ] Reduce `request.app.state` lookup boilerplate in route modules
-- [ ] Normalize query-service / presenter patterns across `ops` and `tasks`
+- [x] Reduce `request.app.state` lookup boilerplate in route modules
+- [x] Normalize query-service / presenter patterns across `ops` and `tasks`
 - [ ] Decide whether route-private helper compatibility shims should remain or be removed
 
+**Result**
+`ops_shared.py` now exports `get_db_factory`, `get_redis`, `DbFactory`, `Redis` FastAPI dependencies.
+`ops_callback/dashboard/force/replay` routes refactored to use injected `DbFactory`.
+Optional-redis patterns preserved in replay/debug endpoints.
+
 **Priority**
-Medium.
+Substantially complete 2026-05-08. Compatibility shim removal deferred (low risk, low value).
 
 ---
 
@@ -233,12 +244,15 @@ Medium.
 Root package and subpackages are now cleaner, but product/release boundaries can be further clarified.
 
 **Candidate items**
-- [ ] Define root package vs subpackage support expectations explicitly
-- [ ] Publish capability/install matrix (core vs extras vs subpackage-only)
+- [x] Define root package vs subpackage support expectations explicitly
+- [x] Publish capability/install matrix (core vs extras vs subpackage-only)
 - [ ] Prepare release notes / changelog / distribution guidance
 
+**Result**
+`docs/capability-install-matrix.md` created: defines per-package capabilities, optional extras, and deployment profiles.
+
 **Priority**
-Medium-high for release preparation.
+Substantially complete 2026-05-08. Release notes/changelog deferred to release prep.
 
 ---
 
@@ -248,12 +262,16 @@ Medium-high for release preparation.
 Tracing is now optional and documented, but broader observability strategy can be refined if needed.
 
 **Candidate items**
-- [ ] Decide whether subpackages should all expose the same optional tracing contract
-- [ ] Document observability profiles (minimal / production / tracing-enabled)
+- [x] Decide whether subpackages should all expose the same optional tracing contract
+- [x] Document observability profiles (minimal / production / tracing-enabled)
 - [ ] Review whether instrumentation hooks should be centralized further
 
+**Result**
+`docs/observability.md` created: defines three profiles (minimal/production/tracing-enabled), instrumented component matrix, key Prometheus metrics, and configuration reference.
+Tracing extra limited to task-api and ops-api subpackages (worker/agent/proxy/sdk/cli carry no tracing code).
+
 **Priority**
-Medium.
+Substantially complete 2026-05-08. Instrumentation centralization deferred (no current pain).
 
 ---
 
