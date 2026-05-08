@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import Depends, Request
 
 from src.api.auth import authenticate
-from src.api.routes.ops_shared import router
+from src.api.routes.ops_shared import DbFactory, router
+from src.services.access_policy import resolve_tenant_id
 from src.services.operator_queries import OperatorQueryService
 from src.services.recovery_explainer import RecoveryExplainerService
 from src.services.replay_chain_queries import ReplayChainQueryService
@@ -14,8 +15,12 @@ from src.services.task_audit_queries import TaskAuditQueryService
 
 
 @router.get("/tasks/{task_id}/timeline", summary="Task timeline events")
-async def task_timeline(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
+async def task_timeline(
+    task_id: str,
+    db_factory=DbFactory,
+    _auth: dict = Depends(authenticate),
+    limit: int = 100,
+) -> dict:
     rows = await TaskAuditQueryService(db_factory).get_task_timeline(task_id, limit=limit)
     return {
         "task_id": task_id,
@@ -36,13 +41,14 @@ async def task_timeline(task_id: str, request: Request, _auth: dict = Depends(au
 async def task_replay(
     task_id: str,
     request: Request,
+    db_factory=DbFactory,
     _auth: dict = Depends(authenticate),
     reason: str | None = None,
     from_run_key: str | None = None,
 ) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
+    # redis is optional for replay policy; tolerate None
     redis = getattr(request.app.state, "redis", None)
-    actor = _auth.get("tenant_id", "operator")
+    actor = resolve_tenant_id(_auth, fallback="operator")
     policy = await ReplayPolicyService(redis_client=redis, session_factory=db_factory).check_task_replay_allowed(
         task_id,
         reason=reason,
@@ -65,14 +71,13 @@ async def task_replay(
 
 @router.get("/operator-actions", summary="List operator actions")
 async def operator_actions(
-    request: Request,
+    db_factory=DbFactory,
     _auth: dict = Depends(authenticate),
     target_type: str | None = None,
     target_id: str | None = None,
     action_type: str | None = None,
     limit: int = 100,
 ) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
     rows = await OperatorQueryService(db_factory).list_actions(
         target_type=target_type,
         target_id=target_id,
@@ -97,22 +102,35 @@ async def operator_actions(
 
 
 @router.get("/tasks/{task_id}/recovery-explanation", summary="Explain stale/recovery state for a task")
-async def task_recovery_explanation(task_id: str, request: Request, _auth: dict = Depends(authenticate)) -> dict:
+async def task_recovery_explanation(
+    task_id: str,
+    request: Request,
+    db_factory=DbFactory,
+    _auth: dict = Depends(authenticate),
+) -> dict:
+    # redis is optional for recovery explainer; tolerate None
     redis = getattr(request.app.state, "redis", None)
-    db_factory = getattr(request.app.state, "async_session_factory", None)
     return await RecoveryExplainerService(redis_client=redis, session_factory=db_factory).explain_task(task_id)
 
 
 @router.get("/tasks/{task_id}/replay-chain", summary="Replay lineage chain for a task")
-async def task_replay_chain(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 50) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
+async def task_replay_chain(
+    task_id: str,
+    db_factory=DbFactory,
+    _auth: dict = Depends(authenticate),
+    limit: int = 50,
+) -> dict:
     chain = await ReplayChainQueryService(db_factory).get_replay_chain(task_id, limit=limit)
     return {"task_id": task_id, "chain": chain}
 
 
 @router.get("/tasks/{task_id}/runs", summary="List task runs")
-async def task_runs(task_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
+async def task_runs(
+    task_id: str,
+    db_factory=DbFactory,
+    _auth: dict = Depends(authenticate),
+    limit: int = 100,
+) -> dict:
     runs = await RunCentricQueryService(db_factory).list_task_runs(task_id, limit=limit)
     return {
         "task_id": task_id,
@@ -132,11 +150,10 @@ async def task_runs(task_id: str, request: Request, _auth: dict = Depends(authen
 async def task_run_events(
     task_id: str,
     run_key: str,
-    request: Request,
+    db_factory=DbFactory,
     _auth: dict = Depends(authenticate),
     limit: int = 100,
 ) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
     events = await RunCentricQueryService(db_factory).list_task_run_events(task_id, run_key=run_key, limit=limit)
     return {
         "task_id": task_id,
@@ -154,8 +171,12 @@ async def task_run_events(
 
 
 @router.get("/dags/{dag_id}/runs", summary="List dag runs")
-async def dag_runs(dag_id: str, request: Request, _auth: dict = Depends(authenticate), limit: int = 100) -> dict:
-    db_factory = getattr(request.app.state, "async_session_factory", None)
+async def dag_runs(
+    dag_id: str,
+    db_factory=DbFactory,
+    _auth: dict = Depends(authenticate),
+    limit: int = 100,
+) -> dict:
     runs = await RunCentricQueryService(db_factory).list_dag_runs(dag_id, limit=limit)
     return {
         "dag_id": dag_id,
@@ -174,6 +195,7 @@ async def dag_runs(dag_id: str, request: Request, _auth: dict = Depends(authenti
 @router.get("/tasks/{task_id}/debug", summary="Debug information for a specific task")
 async def task_debug(task_id: str, request: Request, _auth: dict = Depends(authenticate)) -> dict:
     """Return comprehensive debug information for a task."""
+    # redis, qm, db_session are all optional in debug; tolerate None gracefully
     redis = getattr(request.app.state, "redis", None)
     qm = getattr(request.app.state, "queue_manager", None)
     db_session = getattr(request.app.state, "async_session_factory", None)
