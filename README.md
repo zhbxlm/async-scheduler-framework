@@ -216,9 +216,13 @@ The repo also contains independently packaged user-side components:
 
 | Package dir | Package name | Purpose |
 |-------------|--------------|---------|
-| `packages/node-agent` | `async-agent` | Lightweight node agent |
-| `packages/async-proxy` | `async-proxy` | Sidecar for long-running service async wrapping |
-| `packages/worker-sdk` | `async-worker` | Worker SDK / base classes |
+| `packages/sdk` | `async-scheduler-sdk` | Python SDK for task submission and result polling |
+| `packages/worker` | `async-scheduler-worker` | Worker SDK / base classes |
+| `packages/proxy` | `async-scheduler-proxy` | Sidecar proxy for long-running service async wrapping |
+| `packages/cli` | `async-scheduler-cli` | kubectl-style CLI |
+| `packages/task-api` | `async-scheduler-task-api` | Task submission API service |
+| `packages/ops-api` | `async-scheduler-ops-api` | Ops/Admin API service |
+| `packages/agent` | `async-scheduler-agent` | Lightweight node agent |
 
 ---
 
