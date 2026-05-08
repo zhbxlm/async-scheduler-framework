@@ -30,17 +30,18 @@ All notable changes to async-scheduler-framework are documented here.
 
 ### New
 
-- **7 独立可发布的用户包**（`packages/` 目录）：
+- **8 独立可发布的用户/部署包**（`packages/` 目录）：
   - `async-scheduler-sdk` — Python HTTP 客户端 + pydantic 模型
   - `async-scheduler-worker` — `BaseWorker` 基类（**零依赖**，Ray 可选）
   - `async-scheduler-proxy` — 嵌入已有服务的 fire-and-forget Redis 代理
   - `async-scheduler-cli` — kubectl 风格 CLI（`scheduler` 命令）
   - `async-scheduler-task-api` — 任务提交 API 服务（port 8001）
   - `async-scheduler-ops-api` — 运维管理 API 服务（port 8000）
+  - `async-scheduler-control-plane` — 独立 control-plane 后台工作进程
   - `async-scheduler-agent` — Worker 节点 Agent 服务
 - **Task API 和 Ops API 独立部署**，权限和暴露范围分离
 - 每个包各自有 `scheduler-*` CLI 入口、`README.md` 和独立 `pyproject.toml`
-- `scripts/build_packages.sh` 支持一键构建全部 7 个包
+- `scripts/build_packages.sh` 支持一键构建全部 8 个包
 
 ### Changed
 
@@ -61,7 +62,7 @@ All notable changes to async-scheduler-framework are documented here.
 ### CI
 
 - 468/468 测试通过（Python 3.10 + 3.11）
-- `build-packages` job 自动构建并上传 7 个包的 wheel artifacts
+- `build-packages` job 自动构建并上传 8 个包的 wheel artifacts
 
 ---
 

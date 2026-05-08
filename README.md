@@ -212,7 +212,7 @@ Current status:
 
 ## User-facing packages
 
-The repo also contains independently packaged user-side components:
+The repo also contains independently packaged deployable/user-side components:
 
 | Package dir | Package name | Purpose |
 |-------------|--------------|---------|
@@ -222,6 +222,7 @@ The repo also contains independently packaged user-side components:
 | `packages/cli` | `async-scheduler-cli` | kubectl-style CLI |
 | `packages/task-api` | `async-scheduler-task-api` | Task submission API service |
 | `packages/ops-api` | `async-scheduler-ops-api` | Ops/Admin API service |
+| `packages/control-plane` | `async-scheduler-control-plane` | Standalone background control-plane worker |
 | `packages/agent` | `async-scheduler-agent` | Lightweight node agent |
 
 ---

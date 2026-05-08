@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# scripts/build_packages.sh — build all 7 user-facing sub-packages
+# scripts/build_packages.sh — build all 9 runtime/deployable sub-packages
 #
 # Packages (lightest → heaviest):
-#   sdk       async-scheduler-sdk       HTTP client (httpx, pydantic)
-#   worker    async-scheduler-worker    BaseWorker (zero deps)
-#   proxy     async-scheduler-proxy     Redis dispatch proxy (redis)
-#   cli       async-scheduler-cli       kubectl-style CLI (httpx, click)
-#   task-api  async-scheduler-task-api  Task submission service (full stack)
-#   ops-api   async-scheduler-ops-api   Ops/Admin service (full stack + Ray)
-#   agent     async-scheduler-agent     Worker node service (full stack + Ray)
+#   sdk           async-scheduler-sdk             HTTP client (httpx, pydantic)
+#   worker        async-scheduler-worker          BaseWorker (zero deps)
+#   proxy         async-scheduler-proxy           Redis dispatch proxy (redis)
+#   cli           async-scheduler-cli             kubectl-style CLI (httpx, click)
+#   runtime-core  async-scheduler-runtime-core    Shared runtime/core implementation layer
+#   task-api      async-scheduler-task-api        Task submission service (full stack)
+#   ops-api       async-scheduler-ops-api         Ops/Admin service (full stack + Ray)
+#   control-plane async-scheduler-control-plane   Background control-plane worker
+#   agent         async-scheduler-agent           Worker node service (full stack + Ray)
 #
 # Usage:
 #   ./scripts/build_packages.sh           # build all
@@ -18,7 +20,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_ROOT="${REPO_ROOT}/dist/packages"
-PACKAGES=(sdk worker proxy cli task-api ops-api agent)
+PACKAGES=(sdk worker proxy cli runtime-core task-api ops-api control-plane agent)
 
 TARGET="${1:-all}"
 

@@ -11,12 +11,13 @@ build-backend = "setuptools.build_meta"
 #   pip install async-scheduler-worker     # Build Workers — zero required deps
 #   pip install async-scheduler-proxy      # Embed fire-and-forget dispatch (redis)
 #   pip install async-scheduler-cli        # kubectl-style CLI (httpx, click)
-#   pip install async-scheduler-task-api   # Task submission service (FastAPI)
-#   pip install async-scheduler-ops-api    # Ops/Admin API service (FastAPI + Ray)
-#   pip install async-scheduler-agent      # Worker node agent (FastAPI + Ray)
+#   pip install async-scheduler-task-api       # Task submission service (FastAPI)
+#   pip install async-scheduler-ops-api        # Ops/Admin API service (FastAPI + Ray)
+#   pip install async-scheduler-control-plane  # Background control-plane worker
+#   pip install async-scheduler-agent          # Worker node agent (FastAPI + Ray)
 #
-# Task API (port 8001) and Ops API (port 8000) are independent deployments.
-# Each package exposes only its own public API — no framework internals.
+# Task API (port 8001), Ops API (port 8000), and control-plane are independent deployments.
+# Each package exposes only its own runtime role — no framework internals.
 #
 # Build all user-facing packages:
 #   scripts/build_packages.sh

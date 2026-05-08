@@ -13,6 +13,7 @@ This document defines what is included in each installable package, what optiona
 | Root | `async-scheduler-framework` | Full monolith install (control-plane + task-api + ops-api) |
 | `packages/task-api` | `async-scheduler-task-api` | Task submission API service only |
 | `packages/ops-api` | `async-scheduler-ops-api` | Ops/admin API service only |
+| `packages/control-plane` | `async-scheduler-control-plane` | Standalone control-plane worker |
 | `packages/worker` | `async-scheduler-worker` | Ray-based worker node |
 | `packages/agent` | `async-scheduler-agent` | Node agent (lightweight deploy) |
 | `packages/proxy` | `async-scheduler-proxy` | Fire-and-forget dispatch proxy (embed into existing services) |
@@ -80,19 +81,19 @@ pip install async-scheduler-framework[dev]
 
 ## Per-Package Capability Matrix
 
-| Capability | root | task-api | ops-api | worker | agent | proxy | sdk | cli |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Task submission API | ✅ | ✅ | — | — | — | ✅ | ✅ | ✅ |
-| Task query / cancel | ✅ | ✅ | — | — | — | — | ✅ | ✅ |
-| Ops/admin API | ✅ | — | ✅ | — | — | — | — | — |
-| Cron scheduling | ✅ | — | — | — | — | — | — | — |
-| Task reconciler | ✅ | — | — | — | — | — | — | — |
-| Callback dispatch | ✅ | — | — | — | — | — | — | — |
-| Worker execution | ✅ | — | — | ✅ | — | — | — | — |
-| Node agent | ✅ | — | — | — | ✅ | — | — | — |
-| Fire-and-forget proxy | ✅ | — | — | — | — | ✅ | — | — |
-| Tracing (optional) | ✅ | ✅ | ✅ | — | — | — | — | — |
-| DB migrations (Alembic) | ✅ | — | ✅ | — | — | — | — | — |
+| Capability | root | task-api | ops-api | control-plane | worker | agent | proxy | sdk | cli |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Task submission API | ✅ | ✅ | — | — | — | — | ✅ | ✅ | ✅ |
+| Task query / cancel | ✅ | ✅ | — | — | — | — | — | ✅ | ✅ |
+| Ops/admin API | ✅ | — | ✅ | — | — | — | — | — | — |
+| Cron scheduling | ✅ | — | — | ✅ | — | — | — | — | — |
+| Task reconciler | ✅ | — | — | ✅ | — | — | — | — | — |
+| Callback dispatch | ✅ | — | — | ✅ | — | — | — | — | — |
+| Worker execution | ✅ | — | — | — | ✅ | — | — | — | — |
+| Node agent | ✅ | — | — | — | — | ✅ | — | — | — |
+| Fire-and-forget proxy | ✅ | — | — | — | — | — | ✅ | — | — |
+| Tracing (optional) | ✅ | ✅ | ✅ | — | — | — | — | — | — |
+| DB migrations (Alembic) | ✅ | — | ✅ | — | — | — | — | — | — |
 
 ---
 
@@ -118,10 +119,11 @@ Suitable for: development, small deployments.
 Install separately:
 - `async-scheduler-task-api` — handles client-facing task requests
 - `async-scheduler-ops-api` — handles admin/ops requests
+- `async-scheduler-control-plane` — runs cron / reconcile / compensation / callback dispatch
 - `async-scheduler-worker` — runs task execution via Ray
 - `async-scheduler-agent` — manages worker node lifecycle
 
-Control-plane runs embedded in ops-api or as a standalone process.
+Control-plane can run as a dedicated standalone process/package.
 
 ---
 
