@@ -13,6 +13,64 @@ from src.common.lifecycle import LifecycleManager
 from src.platform.circuit_breaker import CircuitBreaker
 
 
+def _new_container() -> "ServiceContainer":
+    return ServiceContainer(lifecycle_manager=LifecycleManager())
+
+
+async def _init_redis_client(settings) -> Any:
+    from src.common.redis_client import create_redis_client
+
+    redis_url = str(settings.redis.url) if settings.redis.url else None
+    return await create_redis_client(redis_url)
+
+
+def _init_async_db(settings) -> tuple[Any, Any, Any]:
+    from functools import partial
+
+    from src.common.async_db import get_async_db, init_async_engine
+
+    if not settings.mysql.url:
+        return None, None, None
+
+    engine, session_factory = init_async_engine(settings.mysql.url)
+    db_factory = partial(get_async_db, session_factory)
+    return engine, session_factory, db_factory
+
+
+def _init_queue_stack(container: "ServiceContainer") -> None:
+    from src.platform.queue_manager import QueueManager
+
+    container.circuit_breaker = CircuitBreaker(redis_client=container.redis_client, key_prefix="queue:cb")
+    container.queue_manager = QueueManager(container.redis_client, circuit_breaker=container.circuit_breaker)
+
+
+def _init_schedule_registry(container: "ServiceContainer") -> None:
+    from src.platform.schedule_registry import ScheduleRegistry
+
+    container.schedule_registry = ScheduleRegistry(container.redis_client)
+
+
+def _init_tenant_registry(container: "ServiceContainer") -> None:
+    from src.platform.tenant_registry import TenantRegistry
+
+    container.tenant_registry = TenantRegistry(container.redis_client)
+
+
+def _init_task_runtime_components(container: "ServiceContainer", db_factory: Any) -> None:
+    from src.platform.task_completion_node import TaskCompletionNode
+    from src.platform.task_creator import TaskCreator
+
+    container.task_creator = TaskCreator(
+        redis_client=container.redis_client,
+        queue_manager=container.queue_manager,
+        db_session_factory=db_factory,
+    )
+    container.task_completion_node = TaskCompletionNode(
+        db_session_factory=db_factory,
+        redis_client=container.redis_client,
+    )
+
+
 @dataclass
 class ServiceContainer:
     redis_client: Any = None
@@ -36,72 +94,28 @@ class ServiceContainer:
 
     @classmethod
     async def build_task_api(cls, settings) -> "ServiceContainer":
-        from functools import partial
-
-        from src.common.async_db import get_async_db, init_async_engine
-        from src.common.redis_client import create_redis_client
-        from src.platform.queue_manager import QueueManager
-        from src.platform.schedule_registry import ScheduleRegistry
-        from src.platform.task_completion_node import TaskCompletionNode
-        from src.platform.task_creator import TaskCreator
-        from src.platform.tenant_registry import TenantRegistry
-
-        c = cls(lifecycle_manager=LifecycleManager())
-        redis_url = str(settings.redis.url) if settings.redis.url else None
-        c.redis_client = await create_redis_client(redis_url)
-        db_factory = None
-        if settings.mysql.url:
-            engine, session_factory = init_async_engine(settings.mysql.url)
-            c.async_engine = engine
-            c.async_session_factory = session_factory
-            db_factory = partial(get_async_db, session_factory)
-        c.tenant_registry = TenantRegistry(c.redis_client)
-        c.schedule_registry = ScheduleRegistry(c.redis_client)
-        c.circuit_breaker = CircuitBreaker(redis_client=c.redis_client, key_prefix="queue:cb")
-        c.queue_manager = QueueManager(c.redis_client, circuit_breaker=c.circuit_breaker)
-        c.task_creator = TaskCreator(
-            redis_client=c.redis_client,
-            queue_manager=c.queue_manager,
-            db_session_factory=db_factory,
-        )
-        c.task_completion_node = TaskCompletionNode(
-            db_session_factory=db_factory,
-            redis_client=c.redis_client,
-        )
+        c = _new_container()
+        c.redis_client = await _init_redis_client(settings)
+        c.async_engine, c.async_session_factory, db_factory = _init_async_db(settings)
+        _init_tenant_registry(c)
+        _init_schedule_registry(c)
+        _init_queue_stack(c)
+        _init_task_runtime_components(c, db_factory)
         return c
 
     @classmethod
     async def build_control_plane(cls, settings) -> "ServiceContainer":
-        from functools import partial
-
-        from src.common.async_db import get_async_db, init_async_engine
-        from src.common.redis_client import create_redis_client
         from src.platform.cron_scheduler import CronScheduler
-        from src.platform.queue_manager import QueueManager
-        from src.platform.schedule_registry import ScheduleRegistry
-        from src.platform.task_completion_node import TaskCompletionNode
-        from src.platform.task_creator import TaskCreator
         from src.platform.task_reconciler import TaskReconciler
         from src.services.callback_dispatcher import CallbackDispatchService
         from src.services.compensation import CompensationService
 
-        c = cls(lifecycle_manager=LifecycleManager())
-        redis_url = str(settings.redis.url) if settings.redis.url else None
-        c.redis_client = await create_redis_client(redis_url)
-        db_factory = None
-        if settings.mysql.url:
-            engine, session_factory = init_async_engine(settings.mysql.url)
-            c.async_engine = engine
-            c.async_session_factory = session_factory
-            db_factory = partial(get_async_db, session_factory)
-        c.schedule_registry = ScheduleRegistry(c.redis_client)
-        c.circuit_breaker = CircuitBreaker(redis_client=c.redis_client, key_prefix="queue:cb")
-        c.queue_manager = QueueManager(c.redis_client, circuit_breaker=c.circuit_breaker)
-        c.task_creator = TaskCreator(
-            redis_client=c.redis_client,
-            queue_manager=c.queue_manager,
-            db_session_factory=db_factory,
-        )
+        c = _new_container()
+        c.redis_client = await _init_redis_client(settings)
+        c.async_engine, c.async_session_factory, db_factory = _init_async_db(settings)
+        _init_schedule_registry(c)
+        _init_queue_stack(c)
+        _init_task_runtime_components(c, db_factory)
         c.compensation_service = CompensationService(
             mysql_session_factory=db_factory,
             redis_client=c.redis_client,
@@ -118,10 +132,6 @@ class ServiceContainer:
             batch_size=rcfg.batch_size,
             compensation_service=c.compensation_service,
         )
-        c.task_completion_node = TaskCompletionNode(
-            db_session_factory=db_factory,
-            redis_client=c.redis_client,
-        )
         c.callback_dispatcher = CallbackDispatchService(db_factory) if db_factory else None
         ccfg = settings.background.cron
         cron_interval = getattr(ccfg, "poll_interval", 60)
@@ -135,26 +145,20 @@ class ServiceContainer:
 
     @classmethod
     async def build_ops_api(cls, settings) -> "ServiceContainer":
-        from src.common.redis_client import create_redis_client
         from src.platform.capability_registry import CapabilityRegistry
         from src.platform.cluster_registry import ClusterRegistry
         from src.platform.dag_loader import DagLoader
         from src.platform.node_registry import NodeRegistry
-        from src.platform.queue_manager import QueueManager
-        from src.platform.schedule_registry import ScheduleRegistry
-        from src.platform.tenant_registry import TenantRegistry
 
-        c = cls(lifecycle_manager=LifecycleManager())
-        redis_url = str(settings.redis.url) if settings.redis.url else None
-        c.redis_client = await create_redis_client(redis_url)
+        c = _new_container()
+        c.redis_client = await _init_redis_client(settings)
         c.capability_registry = CapabilityRegistry(c.redis_client)
         c.cluster_registry = ClusterRegistry(c.redis_client)
         c.node_registry = NodeRegistry(c.redis_client)
-        c.schedule_registry = ScheduleRegistry(c.redis_client)
-        c.tenant_registry = TenantRegistry(c.redis_client)
-        c.circuit_breaker = CircuitBreaker(redis_client=c.redis_client, key_prefix="queue:cb")
+        _init_schedule_registry(c)
+        _init_tenant_registry(c)
         c.dag_loader = DagLoader(redis_client=c.redis_client)
-        c.queue_manager = QueueManager(c.redis_client, circuit_breaker=c.circuit_breaker)
+        _init_queue_stack(c)
         return c
 
     async def close(self) -> None:

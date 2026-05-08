@@ -11,6 +11,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from src.api.app_runtime import register_control_plane_resources, start_container_lifecycle, stop_container_lifecycle
 from src.common.logging_config import configure_logging
 from src.common.tracing import setup_tracing, shutdown_tracing
 
@@ -22,12 +23,6 @@ setup_tracing(service_name="scheduler-control-plane", service_version="1.0.0")
 async def _lifespan() -> AsyncIterator[None]:
     from config.settings_pydantic import settings
     from src.platform.container import ServiceContainer, set_container
-    from src.common.lifecycle import (
-        TaskReconcilerResource,
-        CronSchedulerResource,
-        CompensationServiceResource,
-        CallbackDispatcherResource,
-    )
     from src.common.http_client import init_http_client, close_http_client
     from src.common.async_db import async_dispose_engine
 
@@ -35,23 +30,13 @@ async def _lifespan() -> AsyncIterator[None]:
     container = await ServiceContainer.build_control_plane(settings)
     set_container(container)
 
-    manager = container.lifecycle_manager
-    if manager is None:
-        raise RuntimeError("LifecycleManager is not initialised in ServiceContainer")
-    if settings.background.reconcile.enabled and container.task_reconciler:
-        manager.register_resource(TaskReconcilerResource(container.task_reconciler))
-    if settings.background.cron.enabled and container.cron_scheduler:
-        manager.register_resource(CronSchedulerResource(container.cron_scheduler))
-    if container.compensation_service:
-        manager.register_resource(CompensationServiceResource(container.compensation_service))
-    if container.callback_dispatcher:
-        manager.register_resource(CallbackDispatcherResource(container.callback_dispatcher))
-    await manager.start_all()
+    register_control_plane_resources(container, settings)
+    await start_container_lifecycle(container)
 
     try:
         yield
     finally:
-        await manager.stop_all(drain_timeout=0.0)
+        await stop_container_lifecycle(container, drain_timeout=0.0)
         if container.async_engine:
             await async_dispose_engine(container.async_engine)
         await close_http_client()

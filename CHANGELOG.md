@@ -4,6 +4,28 @@ All notable changes to async-scheduler-framework are documented here.
 
 ---
 
+## [Unreleased] — 2026-05-08
+
+### Changed
+
+- **Phase 3 architecture normalization** completed:
+  - standardized `clusters` / `nodes` / `dags` / `schedules` route layering,
+  - added shared runtime assembly helpers for ops-api / task-api / control-plane,
+  - reduced repeated `ServiceContainer` builder plumbing while preserving role ownership.
+- Added focused regression coverage for:
+  - resource routes,
+  - runtime helper contracts,
+  - container builder contracts.
+
+### Internal
+
+- New internal references:
+  - `docs/internal/reference/2026-05-08-phase3-architecture-summary.md`
+  - `docs/internal/reference/2026-05-08-phase3-release-notes.md`
+  - `docs/internal/pr-description-phase3.md`
+
+---
+
 ## [v1.1.0] — 2026-05-07
 
 ### New

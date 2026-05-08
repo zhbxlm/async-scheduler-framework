@@ -21,6 +21,7 @@ from src.common.error_handling import (
 )
 from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
 from src.common.logging_config import configure_logging
+from src.api.app_runtime import cache_auth_settings, mount_container_state, start_container_lifecycle, stop_container_lifecycle
 from src.api.middleware import RequestIDMiddleware
 from src.middleware.metrics_middleware import MetricsMiddleware
 
@@ -52,35 +53,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     container = await ServiceContainer.build_task_api(settings)
     set_container(container)
 
-    # Mount onto app.state so route helpers can access via request.app.state
+    mount_container_state(
+        app,
+        container,
+        (
+            "redis_client",
+            "tenant_registry",
+            "schedule_registry",
+            "queue_manager",
+            "task_creator",
+            "task_completion_node",
+            "async_engine",
+            "async_session_factory",
+        ),
+    )
     app.state.redis = container.redis_client
-    app.state.tenant_registry = container.tenant_registry
-    app.state.schedule_registry = container.schedule_registry
-    app.state.queue_manager = container.queue_manager
-    app.state.task_creator = container.task_creator
-    app.state.task_completion_node = container.task_completion_node
+    cache_auth_settings(app, settings)
 
-    # Database engine + session factory (no module-level globals)
-    app.state.async_engine = container.async_engine
-    app.state.async_session_factory = container.async_session_factory
-    
-    # Cache auth settings for authenticate() - avoids repeated module imports
-    app.state.auth_settings = {
-        'super_admin_key': settings.tenant.super_admin_api_key,
-        'multi_tenant_enabled': settings.tenant.multi_tenant_enabled,
-        'tenant_id_header': settings.tenant.tenant_id_header,
-    }
-
-    manager = container.lifecycle_manager
-    if manager is not None:
-        await manager.start_all()
+    await start_container_lifecycle(container)
 
     yield
 
     # ── shutdown ──────────────────────────────────────────────────
-    manager = container.lifecycle_manager
-    if manager is not None:
-        await manager.stop_all()
+    await stop_container_lifecycle(container)
     if app.state.async_engine:
         await async_dispose_engine(app.state.async_engine)
     from src.common.http_client import close_http_client

@@ -19,6 +19,7 @@ from src.common.error_handling import (
 )
 from src.common.tracing import setup_tracing, instrument_fastapi, shutdown_tracing
 from src.common.logging_config import configure_logging
+from src.api.app_runtime import mount_container_state, start_container_lifecycle, stop_container_lifecycle
 from src.api.middleware import RequestIDMiddleware
 # MetricsMiddleware handles request tracking
 from src.middleware.metrics_middleware import MetricsMiddleware
@@ -46,26 +47,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     container = await ServiceContainer.build_ops_api(settings)
     set_container(container)
 
-    # Mount onto app.state so route helpers can access via request.app.state
+    mount_container_state(
+        app,
+        container,
+        (
+            "redis_client",
+            "capability_registry",
+            "cluster_registry",
+            "node_registry",
+            "schedule_registry",
+            "tenant_registry",
+            "dag_loader",
+            "queue_manager",
+        ),
+    )
     app.state.redis = container.redis_client
-    app.state.capability_registry = container.capability_registry
-    app.state.cluster_registry = container.cluster_registry
-    app.state.node_registry = container.node_registry
-    app.state.schedule_registry = container.schedule_registry
-    app.state.tenant_registry = container.tenant_registry
-    app.state.dag_loader = container.dag_loader
-    app.state.queue_manager = container.queue_manager
 
-    manager = container.lifecycle_manager
-    if manager is not None:
-        await manager.start_all()
+    await start_container_lifecycle(container)
 
     yield
 
     # ── shutdown ──────────────────────────────────────────────────
-    manager = container.lifecycle_manager
-    if manager is not None:
-        await manager.stop_all()
+    await stop_container_lifecycle(container)
     from src.common.http_client import close_http_client
     await close_http_client()
     shutdown_tracing()
