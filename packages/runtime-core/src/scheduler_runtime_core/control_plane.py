@@ -45,7 +45,7 @@ def configure(
 
 def _default_factory():
     """Fall back to monorepo factory when configure() was not called."""
-    from src.platform.container import ServiceContainer, set_container  # late import
+    from src.platform.container import ServiceContainer, set_container  # monorepo-wiring: fallback
     return ServiceContainer.build_control_plane, set_container
 
 

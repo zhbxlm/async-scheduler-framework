@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.platform.container import ServiceContainer, set_container
+from src.platform.container import ServiceContainer, set_container  # monorepo-wiring: intentional
 from scheduler_runtime_core import control_plane as _cp
 
 _cp.configure(
