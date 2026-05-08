@@ -76,6 +76,16 @@ def _to_task_summary(task: TaskRecord) -> TaskSummary:
     )
 
 
+class TaskAccessPolicy:
+    @staticmethod
+    def ensure_task_access(task: TaskRecord | None, tenant_id: str, is_super_admin: bool) -> TaskRecord:
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not is_super_admin and task.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task
+
+
 @dataclass
 class TaskSubmissionService:
     task_creator: Any
@@ -167,11 +177,7 @@ class TaskQueryService:
 
     async def get_task_record(self, task_id: str, tenant_id: str, is_super_admin: bool) -> TaskRecord:
         task = await maybe_await(self.session.get(TaskRecord, task_id))
-        if task is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        if not is_super_admin and task.tenant_id != tenant_id:
-            raise HTTPException(status_code=404, detail="Task not found")
-        return task
+        return TaskAccessPolicy.ensure_task_access(task, tenant_id, is_super_admin)
 
     async def get_task(self, task_id: str, tenant_id: str, is_super_admin: bool) -> TaskInfo:
         task = await self.get_task_record(task_id, tenant_id, is_super_admin)

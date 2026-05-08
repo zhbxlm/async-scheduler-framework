@@ -6,6 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.services.access_policy import resolve_tenant_id
 
 router = APIRouter(prefix="/ops/v1/clusters", tags=["clusters"])
 
@@ -41,7 +42,7 @@ async def get_cluster(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     cl = await reg.get(tenant, cluster_id)
     if cl is None:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id!r} not found")
@@ -55,7 +56,7 @@ async def register_cluster(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     cluster_id = body.get("cluster_id")
     if not cluster_id:
         raise HTTPException(status_code=422, detail="cluster_id required")
@@ -71,7 +72,7 @@ async def update_cluster(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     existing = await reg.get(tenant, cluster_id)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id!r} not found")
@@ -87,7 +88,7 @@ async def delete_cluster(
     _auth: dict = Depends(authenticate),
 ) -> None:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     await reg.delete(tenant, cluster_id)
 
 
@@ -98,7 +99,7 @@ async def get_cluster_resources(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     cl = await reg.get(tenant, cluster_id)
     if cl is None:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id!r} not found")

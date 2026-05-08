@@ -6,6 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.services.access_policy import resolve_tenant_id
 
 router = APIRouter(prefix="/ops/v1/dags", tags=["dags"])
 
@@ -59,7 +60,7 @@ async def register_dag(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     loader = _loader(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     dag_id = body.get("dag_id")
     if not dag_id:
         raise HTTPException(status_code=422, detail="dag_id required")
@@ -75,7 +76,7 @@ async def update_dag(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     loader = _loader(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     existing = await loader.load(dag_id, tenant)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"DAG {dag_id!r} not found")

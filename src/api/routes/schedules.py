@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.services.access_policy import resolve_tenant_id
 
 router = APIRouter(prefix="/ops/v1/schedules", tags=["schedules"])
 
@@ -25,7 +26,7 @@ async def list_schedules(
     _auth: dict = Depends(authenticate),
 ) -> list[dict]:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     ids = await reg.list(tenant)
     schedules = []
     for sid in ids:
@@ -42,7 +43,7 @@ async def get_schedule(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     s = await reg.get(tenant, schedule_id)
     if s is None:
         raise HTTPException(status_code=404, detail=f"Schedule {schedule_id!r} not found")
@@ -57,7 +58,7 @@ async def create_schedule(
 ) -> dict:
     import uuid
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     cron_expr = body.get("cron_expr")
     if not cron_expr:
         raise HTTPException(status_code=422, detail="cron_expr required")
@@ -85,7 +86,7 @@ async def update_schedule(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     existing = await reg.get(tenant, schedule_id)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Schedule {schedule_id!r} not found")
@@ -103,7 +104,7 @@ async def toggle_schedule(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     enabled = bool(body.get("enabled", True))
     ok = await reg.toggle(tenant, schedule_id, enabled)
     if not ok:
@@ -118,5 +119,5 @@ async def delete_schedule(
     _auth: dict = Depends(authenticate),
 ) -> None:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     await reg.delete(tenant, schedule_id)

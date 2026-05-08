@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.services.access_policy import TenantAccessPolicy
 
 router = APIRouter(prefix="/ops/v1/tenants", tags=["tenants"])
 
@@ -24,8 +25,7 @@ async def list_tenants(
     request: Request,
     _auth: dict = Depends(authenticate),
 ) -> list[dict]:
-    if not _auth.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Super-admin only")
+    TenantAccessPolicy.require_super_admin(_auth)
     reg = _registry(request)
     tenant_ids = await reg.list_all_tenants()
     tenants = []
@@ -42,9 +42,7 @@ async def get_tenant(
     request: Request,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    caller_tid = _auth.get("tenant_id", "")
-    if not _auth.get("is_super_admin") and caller_tid != tenant_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    TenantAccessPolicy.require_same_tenant_or_super_admin(_auth, tenant_id)
     reg = _registry(request)
     t = await reg.get_tenant(tenant_id)
     if t is None:
@@ -58,8 +56,7 @@ async def register_tenant(
     body: dict,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    if not _auth.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Super-admin only")
+    TenantAccessPolicy.require_super_admin(_auth)
     reg = _registry(request)
     now_iso = datetime.now(tz=timezone.utc).isoformat()
     import secrets
@@ -84,8 +81,7 @@ async def update_tenant(
     body: dict,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    if not _auth.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Super-admin only")
+    TenantAccessPolicy.require_super_admin(_auth)
     reg = _registry(request)
     existing = await reg.get_tenant(tenant_id)
     if existing is None:
@@ -102,8 +98,7 @@ async def delete_tenant(
     request: Request,
     _auth: dict = Depends(authenticate),
 ) -> None:
-    if not _auth.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Super-admin only")
+    TenantAccessPolicy.require_super_admin(_auth)
     reg = _registry(request)
     await reg.unregister(tenant_id)
 
@@ -114,8 +109,7 @@ async def generate_api_key(
     request: Request,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    if not _auth.get("is_super_admin") and _auth.get("tenant_id") != tenant_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    TenantAccessPolicy.require_same_tenant_or_super_admin(_auth, tenant_id)
     reg = _registry(request)
     api_key = await reg.generate_api_key(tenant_id)
     return {"tenant_id": tenant_id, "api_key": api_key, "note": "Store this key; it will not be shown again."}
@@ -127,9 +121,7 @@ async def get_tenant_usage(
     request: Request,
     _auth: dict = Depends(authenticate),
 ) -> dict:
-    caller_tid = _auth.get("tenant_id", "")
-    if not _auth.get("is_super_admin") and caller_tid != tenant_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+    TenantAccessPolicy.require_same_tenant_or_super_admin(_auth, tenant_id)
     reg = _registry(request)
     usage = await reg.get_usage(tenant_id)
     return {"tenant_id": tenant_id, **usage}

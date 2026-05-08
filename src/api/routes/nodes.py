@@ -6,6 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.auth import authenticate
+from src.services.access_policy import resolve_tenant_id
 
 router = APIRouter(prefix="/ops/v1/nodes", tags=["nodes"])
 
@@ -24,7 +25,7 @@ async def list_nodes(
     _auth: dict = Depends(authenticate),
 ) -> list[dict]:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     ids = await reg.list(tenant)
     nodes = []
     for nid in ids:
@@ -43,7 +44,7 @@ async def get_node(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     node = await reg.get(tenant, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail=f"Node {node_id!r} not found")
@@ -58,7 +59,7 @@ async def invite_node(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     node = await reg.get(tenant, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail=f"Node {node_id!r} not found")
@@ -78,7 +79,7 @@ async def drain_node(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     node = await reg.get(tenant, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail=f"Node {node_id!r} not found")
@@ -95,7 +96,7 @@ async def release_node(
     _auth: dict = Depends(authenticate),
 ) -> dict:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     node = await reg.get(tenant, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail=f"Node {node_id!r} not found")
@@ -112,5 +113,5 @@ async def delete_node(
     _auth: dict = Depends(authenticate),
 ) -> None:
     reg = _registry(request)
-    tenant = _auth.get("tenant_id", "default")
+    tenant = resolve_tenant_id(_auth)
     await reg.delete(tenant, node_id)
