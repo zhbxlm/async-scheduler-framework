@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.services.task_audit_queries import TaskAuditQueryService
 from src.models.callback_outbox import CallbackDeliveryStatus
+from src.services.task_audit_queries import TaskAuditQueryService
 
 
 @pytest.mark.asyncio

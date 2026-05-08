@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-from src.common.metrics import DEAD_LETTER_EVENTS_TOTAL
-from src.common.service_logger import log_service_event
-
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 
-from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
-
-
+from src.common.db_utils import maybe_await
+from src.common.metrics import DEAD_LETTER_EVENTS_TOTAL
+from src.common.service_logger import log_service_event
+from src.models.callback_outbox import CallbackDeliveryStatus, CallbackOutboxRecord
 
 
 class CallbackOpsService:

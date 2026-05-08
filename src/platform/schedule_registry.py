@@ -7,6 +7,7 @@ Cron schedule CRUD with:
 - schedule_id → tenant_id reverse index for O(1) update_next_fire
 """
 from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -85,7 +86,7 @@ class ScheduleRegistry(BaseRedisRegistry):
 
     async def list_due(self, as_of: datetime) -> list[Any]:
         """Return all enabled schedules whose next_fire_at <= as_of.
-        
+
         Optimised: pipeline batch-fetches all schedules in one Redis round-trip
         instead of O(tenants × schedules) individual GETs.
         """

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.fake_redis import FullFakeAsyncRedis
 from src.services.replay_policy import ReplayPolicyService
+from tests.fake_redis import FullFakeAsyncRedis
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
 from sqlalchemy import select
 
+from src.common.db_utils import maybe_await
 from src.models.task_run import TaskRunRecord
-
-
 
 
 class ReplayChainQueryService:

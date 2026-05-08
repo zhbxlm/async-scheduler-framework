@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from src.common.db_utils import maybe_await
 from src.common.metrics import REPLAY_REQUESTS_TOTAL

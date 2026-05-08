@@ -1,6 +1,7 @@
 """Tests for AsyncCommandProxy — updated for substantive implementation."""
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from src.proxy.async_command_proxy import AsyncCommandProxy, _result_key
 
 

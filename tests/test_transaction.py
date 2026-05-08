@@ -1,14 +1,12 @@
 """Tests for data consistency: AtomicWriteCoordinator + CompensationService."""
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 import fakeredis.aioredis as fakeredis
+import pytest
 
 from src.common.transaction import (
     AtomicWriteCoordinator,
@@ -18,7 +16,6 @@ from src.common.transaction import (
     atomic_task_status_update,
 )
 from src.services.compensation import CompensationService
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixtures

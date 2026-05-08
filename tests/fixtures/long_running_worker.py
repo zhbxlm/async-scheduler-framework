@@ -1,6 +1,5 @@
 """Fixture: long-running worker for tests."""
 import asyncio
-import time
 
 
 class LongRunningWorker:

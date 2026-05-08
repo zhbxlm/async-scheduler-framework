@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
 from sqlalchemy import select
 
+from src.common.db_utils import maybe_await
 from src.models.dag_run import DagRunRecord
 from src.models.task_event import TaskEventRecord
 from src.models.task_run import TaskRunRecord
-
-
 
 
 class RunCentricQueryService:
@@ -44,7 +41,7 @@ class RunCentricQueryService:
                 stmt = stmt.where(TaskEventRecord.run_key == run_key)
             result = await maybe_await(session.execute(stmt))
             return list(result.scalars().all())
-    
+
     async def list_dag_runs(self, dag_id: str, limit: int = 100) -> list[DagRunRecord]:
         if self._db is None:
             return []

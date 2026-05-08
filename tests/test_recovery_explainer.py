@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.fake_redis import FullFakeAsyncRedis
 from src.services.recovery_explainer import RecoveryExplainerService
+from tests.fake_redis import FullFakeAsyncRedis
 
 
 @pytest.mark.asyncio

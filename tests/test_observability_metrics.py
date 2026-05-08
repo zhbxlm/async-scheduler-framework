@@ -1,8 +1,8 @@
 from src.common.metrics import (
-    REPLAY_REQUESTS_TOTAL,
     DEAD_LETTER_EVENTS_TOTAL,
-    OPERATOR_ACTIONS_TOTAL,
     FORCE_OPERATIONS_TOTAL,
+    OPERATOR_ACTIONS_TOTAL,
+    REPLAY_REQUESTS_TOTAL,
     STALE_TASKS_GAUGE,
 )
 from src.common.service_logger import log_service_event

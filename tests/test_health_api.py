@@ -1,7 +1,6 @@
 """Integration tests for health check endpoints."""
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -18,7 +17,7 @@ def test_health_detailed(test_client: TestClient):
     response = test_client.get("/api/v1/health/detailed")
     assert response.status_code == 200
     data = response.json()
-    
+
     # Check required fields
     assert data["status"] == "healthy"
     assert "timestamp" in data
@@ -26,7 +25,7 @@ def test_health_detailed(test_client: TestClient):
     assert "process" in data
     assert "uptime_seconds" in data
     assert "request_count" in data
-    
+
     # Check system metrics structure
     system = data["system"]
     assert "cpu_percent" in system
@@ -34,7 +33,7 @@ def test_health_detailed(test_client: TestClient):
     assert "memory_available_gb" in system
     assert "disk_percent" in system
     assert "disk_free_gb" in system
-    
+
     # Check process metrics structure
     process = data["process"]
     assert "pid" in process
@@ -50,7 +49,7 @@ def test_health_ready(test_client: TestClient):
     response = test_client.get("/api/v1/health/ready")
     assert response.status_code == 200
     data = response.json()
-    
+
     assert data["status"] == "ready"
     assert "timestamp" in data
     assert "checks" in data
@@ -64,7 +63,7 @@ def test_health_metrics(test_client: TestClient):
     # Accept either plain text or Prometheus format
     content_type = response.headers["content-type"]
     assert "text/plain" in content_type
-    
+
     content = response.text
     # Check for Prometheus metric lines
     assert "# HELP" in content
@@ -107,11 +106,11 @@ def test_health_error_handling(test_client: TestClient):
         "/api/v1/health/redis",
         "/api/v1/health/mysql",
     ]
-    
+
     for endpoint in endpoints:
         response = test_client.get(endpoint)
         assert response.status_code in [200, 503], f"Endpoint {endpoint} failed"
-        
+
         if response.status_code == 503:
             # Service unhealthy response
             data = response.json()
@@ -124,12 +123,12 @@ def test_health_request_count_increment(test_client: TestClient):
     response1 = test_client.get("/api/v1/health/detailed")
     data1 = response1.json()
     initial_count = data1["request_count"]
-    
+
     # Make another request
     response2 = test_client.get("/api/v1/health/detailed")
     data2 = response2.json()
     new_count = data2["request_count"]
-    
+
     # Count should increase (or at least not decrease)
     # Note: Due to fixture scope, each test gets fresh state
     # So we can only assert it's non-negative
@@ -140,17 +139,17 @@ def test_health_request_count_increment(test_client: TestClient):
 def test_health_uptime_increases(test_client: TestClient):
     """Test that uptime increases between requests."""
     import time
-    
+
     response1 = test_client.get("/api/v1/health/detailed")
     data1 = response1.json()
     uptime1 = data1["uptime_seconds"]
-    
+
     time.sleep(0.1)  # Small delay
-    
+
     response2 = test_client.get("/api/v1/health/detailed")
     data2 = response2.json()
     uptime2 = data2["uptime_seconds"]
-    
+
     # Uptime should increase (or at least not decrease)
     assert uptime2 >= uptime1
 
@@ -168,11 +167,12 @@ if __name__ == "__main__":
     # Quick manual test
     import sys
     sys.path.insert(0, ".")
-    from src.main import app
     from fastapi.testclient import TestClient
-    
+
+    from src.main import app
+
     client = TestClient(app)
-    
+
     print("Running health check tests...")
     test_health_basic(client)
     test_health_detailed(client)

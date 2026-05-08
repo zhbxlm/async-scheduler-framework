@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from src.services.replay_policy import ReplayPolicyService
-from tests.fake_redis import FullFakeAsyncRedis
-from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.mark.asyncio

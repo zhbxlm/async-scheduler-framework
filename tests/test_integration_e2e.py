@@ -5,17 +5,12 @@ No mocks — services use actual SQLAlchemy async sessions.
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 
-from tests.integration_fixtures import async_db_session_factory, fake_redis  # noqa: F401
-
-from src.services.run_tracking import RunTrackingService
-from src.services.replay_lineage import ReplayLineageService
-from src.services.operator_queries import OperatorQueryService
+from src.models.callback_outbox import CallbackDeliveryStatus, CallbackOutboxRecord
 from src.services.callback_ops import CallbackOpsService
 from src.services.force_operations import ForceOperationService
-from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
-
+from src.services.operator_queries import OperatorQueryService
+from src.services.replay_lineage import ReplayLineageService
 
 # ---------------------------------------------------------------------------
 # Scenario 1: Replay lineage with real DB
@@ -36,8 +31,9 @@ async def test_replay_lineage_creates_new_task_run(async_db_session_factory):
     assert new_rk is not None
 
     # Verify run was persisted
-    from src.models.task_run import TaskRunRecord
     from sqlalchemy import select
+
+    from src.models.task_run import TaskRunRecord
     async with async_db_session_factory() as session:
         stmt = select(TaskRunRecord).where(TaskRunRecord.task_id == "task-int-001")
         rows = (await session.execute(stmt)).scalars().all()
@@ -101,7 +97,6 @@ async def test_force_lease_eviction_deletes_redis_key(async_db_session_factory, 
 @pytest.mark.asyncio
 async def test_dead_letter_replay_resets_status(async_db_session_factory):
     # Write a dead-letter record
-    from sqlalchemy import select
     async with async_db_session_factory() as session:
         row = CallbackOutboxRecord(
             task_id="task-int-004",

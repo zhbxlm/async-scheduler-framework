@@ -1,6 +1,8 @@
 """Tests for AsyncProxyWorker — updated for substantive implementation."""
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
+
 from src.workload.async_proxy_worker import AsyncProxyWorker, ProxySubmitError, ProxyTimeoutError
 
 
@@ -46,7 +48,6 @@ def test_async_proxy_worker_submit_error(monkeypatch):
 
 def test_async_proxy_worker_timeout(monkeypatch):
     """call() raises ProxyTimeoutError when BLPOP returns None."""
-    import requests as _requests
 
     worker = AsyncProxyWorker(config={"proxy_url": "http://mock"})
     worker.backend_path = "/generate"

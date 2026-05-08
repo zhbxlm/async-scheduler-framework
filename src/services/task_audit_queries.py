@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
+from src.common.db_utils import maybe_await
+from src.models.callback_outbox import CallbackOutboxRecord
 from src.models.task_event import TaskEventRecord
-from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
-
-
 
 
 class TaskAuditQueryService:

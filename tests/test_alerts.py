@@ -1,9 +1,7 @@
 """Tests for alert management system."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,14 +11,12 @@ from src.monitoring.alerts import (
     AlertChannel,
     AlertFormatter,
     AlertLabel,
-    AlertManagerWebhook,
     AlertNotifier,
     AlertRouter,
     AlertSeverity,
     AlertStatus,
     process_alertmanager_webhook,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -244,7 +240,6 @@ class TestAlertNotifier:
         notifier = AlertNotifier(router)
 
         # Monkey-patch to simulate channel failure
-        original_send = notifier._send_to_channel
         call_count = {"n": 0}
 
         async def flaky_send(channel, alert):
@@ -316,10 +311,10 @@ class TestAlertMetricsIntegration:
     def test_redis_ha_metrics_registered(self):
         from src.monitoring.metrics import (
             REDIS_CIRCUIT_BREAKER_STATE,
+            REDIS_CIRCUIT_BREAKER_TRIPS,
             REDIS_DEGRADATION_MODE,
             REDIS_DEGRADATION_QUEUE_SIZE,
             REDIS_RETRY_TOTAL,
-            REDIS_CIRCUIT_BREAKER_TRIPS,
         )
         # Metrics objects should exist and be usable
         assert REDIS_CIRCUIT_BREAKER_STATE is not None

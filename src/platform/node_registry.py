@@ -11,13 +11,14 @@ Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
-import orjson
 import logging
 import time
 from typing import Any
 
+import orjson
+
+from src.common.error_handling import ExternalServiceError, log_errors
 from src.platform.base_registry import BaseRedisRegistry
-from src.common.error_handling import log_errors, ExternalServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ return 'ok'
     @log_errors(log_level="ERROR", raise_exception=False)
     async def list_all(self) -> list[Any]:
         """Return all registered nodes.
-        
+
         Optimised: pipeline batch-fetches all nodes in one Redis round-trip
         instead of O(n) individual GETs.
         """

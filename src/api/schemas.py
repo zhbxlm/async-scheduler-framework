@@ -6,7 +6,8 @@ regardless of the resource type.
 """
 from __future__ import annotations
 
-from typing import Generic, TypeVar, Any
+from typing import Any, Generic, TypeVar
+
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")

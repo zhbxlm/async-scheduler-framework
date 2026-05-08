@@ -5,12 +5,11 @@ import json
 import logging
 import time
 import uuid
-
-from src.common.ttl_constants import ALERT_ACK_TTL
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from src.common.ttl_constants import ALERT_ACK_TTL
 from src.monitoring.alerts import (
     AlertSeverity,
     AlertStatus,
@@ -35,7 +34,7 @@ def _get_redis(request: Request):
 
 
 @router.post("/webhook")
-async def alertmanager_webhook(request: Request) -> Dict[str, Any]:
+async def alertmanager_webhook(request: Request) -> dict[str, Any]:
     """Receive alerts from Prometheus Alertmanager.
 
     This endpoint conforms to the Alertmanager webhook format:
@@ -79,7 +78,7 @@ async def alertmanager_webhook(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/status")
-async def get_alert_status(request: Request) -> Dict[str, Any]:
+async def get_alert_status(request: Request) -> dict[str, Any]:
     """Get alert system status and configuration."""
     redis = _get_redis(request)
     total_alerts = 0
@@ -105,7 +104,7 @@ async def get_alert_status(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/test")
-async def test_alert() -> Dict[str, Any]:
+async def test_alert() -> dict[str, Any]:
     """Send a test alert to verify the alert system is working."""
     import datetime
 
@@ -162,7 +161,7 @@ async def list_alerts(
     severity: AlertSeverity | None = None,
     service: str | None = None,
     limit: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List recent alerts from Redis history."""
     redis = _get_redis(request)
     alerts = []
@@ -201,7 +200,7 @@ async def create_silence(
     severity: AlertSeverity | None = None,
     service: str | None = None,
     duration_minutes: int = 60,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a temporary silence for matching alerts (stored in Redis)."""
     silence_id = str(uuid.uuid4())[:8]
     silence = {
@@ -231,7 +230,7 @@ async def create_silence(
 
 
 @router.delete("/silence/{silence_id}")
-async def delete_silence(silence_id: str, request: Request) -> Dict[str, Any]:
+async def delete_silence(silence_id: str, request: Request) -> dict[str, Any]:
     """Delete a silence."""
     redis = _get_redis(request)
     deleted = False
@@ -249,7 +248,7 @@ async def delete_silence(silence_id: str, request: Request) -> Dict[str, Any]:
 
 
 @router.post("/acknowledge/{fingerprint}")
-async def acknowledge_alert(fingerprint: str, request: Request) -> Dict[str, Any]:
+async def acknowledge_alert(fingerprint: str, request: Request) -> dict[str, Any]:
     """Acknowledge an alert (mark as being handled), stored in Redis."""
     ack_key = _ALERT_ACK_KEY.format(fingerprint=fingerprint)
     ack_data = json.dumps({

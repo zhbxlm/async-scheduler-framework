@@ -6,12 +6,15 @@ Provides helpers to run, mock and assert Workers without Ray or Redis:
   - WorkerDevKit: mock capability registration and output assertions
 """
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
 import orjson
-from typing import Any, Callable, Type
 
 
 def run_local_test(
-    worker_class: Type,
+    worker_class: type,
     input_data: dict[str, Any],
     config: dict[str, Any] | None = None,
     capability: str = "local_test",
@@ -65,7 +68,7 @@ class WorkerDevKit:
 
     def local_runner(
         self,
-        worker_class: Type,
+        worker_class: type,
         input_data: dict[str, Any],
         config: dict[str, Any] | None = None,
         capability: str = "local_test",

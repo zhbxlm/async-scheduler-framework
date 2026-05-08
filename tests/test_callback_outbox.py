@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.services.callback_dispatcher import CallbackDispatchService
 from src.models.callback_outbox import CallbackDeliveryStatus
+from src.services.callback_dispatcher import CallbackDispatchService
 
 
 @pytest.mark.asyncio

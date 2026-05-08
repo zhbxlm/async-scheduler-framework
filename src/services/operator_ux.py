@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 
+from src.common.db_utils import maybe_await
+from src.models.callback_outbox import CallbackDeliveryStatus, CallbackOutboxRecord
 from src.models.operator_action import OperatorActionRecord
-from src.models.callback_outbox import CallbackOutboxRecord, CallbackDeliveryStatus
-from src.models.task_event import TaskEventRecord
 from src.models.task_run import TaskRunRecord
-
-
 
 
 class OperatorUXService:

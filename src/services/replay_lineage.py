@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-
 from typing import Any
 
 from src.services.operator_actions import OperatorActionService
 from src.services.run_tracking import RunTrackingService
 from src.services.task_timeline import TaskTimelineService
-
-
 
 
 class ReplayLineageService:

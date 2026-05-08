@@ -1,10 +1,9 @@
 """Tests for TaskExecutor, TaskConsumer, CronScheduler, DagEngine (src/)."""
 from __future__ import annotations
 
-import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ===========================================================================
 # TaskExecutor
@@ -17,6 +16,7 @@ class TestTaskExecutor:
         r.get = AsyncMock(return_value=None)
         r.delete = AsyncMock()
         r.eval = AsyncMock(return_value=b"ok")
+        r.register_script = MagicMock(return_value=AsyncMock(return_value=b"ok"))
         return r
 
     @pytest.mark.asyncio
@@ -58,8 +58,8 @@ class TestTaskExecutor:
 class TestDagEngine:
     @pytest.mark.asyncio
     async def test_simple_linear_dag(self):
-        from src.platform.dag_engine import DagEngine
         from src.models.dag import DagDefinition, DagStep
+        from src.platform.dag_engine import DagEngine
 
         calls = []
         async def dispatch(capability, step_name, payload):
@@ -82,8 +82,8 @@ class TestDagEngine:
 
     @pytest.mark.asyncio
     async def test_dag_with_condition_skip(self):
-        from src.platform.dag_engine import DagEngine
         from src.models.dag import DagDefinition, DagStep
+        from src.platform.dag_engine import DagEngine
 
         calls = []
         async def dispatch(capability, step_name, payload):
@@ -98,14 +98,14 @@ class TestDagEngine:
             ],
         )
         engine = DagEngine()
-        ctx = await engine.execute(dag, dispatch, initial_context={})
+        await engine.execute(dag, dispatch, initial_context={})
         assert "always" in calls
         assert "conditional" not in calls
 
     @pytest.mark.asyncio
     async def test_dag_fallback_on_failure(self):
+        from src.models.dag import DagDefinition, DagStep, FallbackConfig, OnFailureAction
         from src.platform.dag_engine import DagEngine
-        from src.models.dag import DagDefinition, DagStep, OnFailureAction, FallbackConfig
 
         async def dispatch(capability, step_name, payload):
             if step_name == "flaky":
@@ -130,8 +130,8 @@ class TestDagEngine:
 
     @pytest.mark.asyncio
     async def test_dag_abort_on_failure(self):
-        from src.platform.dag_engine import DagEngine
         from src.models.dag import DagDefinition, DagStep, OnFailureAction
+        from src.platform.dag_engine import DagEngine
 
         async def dispatch(capability, step_name, payload):
             raise RuntimeError("always fails")
@@ -146,8 +146,8 @@ class TestDagEngine:
 
     @pytest.mark.asyncio
     async def test_topo_sort_parallel_wave(self):
-        from src.platform.dag_engine import DagEngine
         from src.models.dag import DagStep
+        from src.platform.dag_engine import DagEngine
 
         engine = DagEngine()
         steps = [
@@ -162,8 +162,8 @@ class TestDagEngine:
         assert waves[1] == ["c"]
 
     def test_topo_sort_linear(self):
-        from src.platform.dag_engine import DagEngine
         from src.models.dag import DagStep
+        from src.platform.dag_engine import DagEngine
 
         engine = DagEngine()
         steps = [

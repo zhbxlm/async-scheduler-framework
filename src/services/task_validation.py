@@ -9,11 +9,11 @@ from typing import Any
 
 def validate_task_artifact(artifact_url: str | None, artifact_sha256: str | None) -> None:
     """Validate artifact URL and SHA256 consistency.
-    
+
     Args:
         artifact_url: Optional artifact URL.
         artifact_sha256: Optional SHA256 hash.
-    
+
     Raises:
         ValueError: If validation fails.
     """
@@ -23,15 +23,15 @@ def validate_task_artifact(artifact_url: str | None, artifact_sha256: str | None
 
 
 def validate_task_scheduling(
-    scheduled_at: str | None, 
+    scheduled_at: str | None,
     delay_seconds: int | None
 ) -> None:
     """Validate task scheduling parameters.
-    
+
     Args:
         scheduled_at: Optional ISO timestamp.
         delay_seconds: Optional delay in seconds.
-    
+
     Raises:
         ValueError: If both scheduled_at and delay_seconds are provided.
     """
@@ -43,10 +43,10 @@ def validate_task_scheduling(
 
 def fix_lua_cjson_empty_tables(values: dict[str, Any]) -> dict[str, Any]:
     """Convert empty lists → empty dicts (Lua cjson serialises {} as []).
-    
+
     Args:
         values: Dictionary of task data.
-    
+
     Returns:
         Modified dictionary with fixed empty tables.
     """

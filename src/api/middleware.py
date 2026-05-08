@@ -11,9 +11,9 @@ well (if tracing is enabled).
 """
 from __future__ import annotations
 
-import uuid
-import time
 import logging
+import time
+import uuid
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware

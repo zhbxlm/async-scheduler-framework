@@ -1,8 +1,11 @@
 """FastAPI dependencies — auth, tenant context, DB session."""
 from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated, AsyncGenerator
 
 from src.api.auth import authenticate
 from src.common.async_db import get_async_db

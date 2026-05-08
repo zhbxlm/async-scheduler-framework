@@ -6,7 +6,6 @@ Also handles stale running entry cleanup.
 from __future__ import annotations
 
 import asyncio
-
 import logging
 from typing import Any
 
@@ -56,7 +55,7 @@ class TaskConsumer:
             t.cancel()
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
-        
+
         # Shutdown task executor
         if self._executor is not None and hasattr(self._executor, 'shutdown'):
             try:

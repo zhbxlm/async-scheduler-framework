@@ -8,8 +8,10 @@ Implements the circuit breaker pattern for queue capability protection:
   HALF_OPEN → (failure)            → OPEN
 """
 from __future__ import annotations
+
 import time
 from typing import Any
+
 import redis.asyncio as aioredis
 
 _STATE_CLOSED    = "closed"

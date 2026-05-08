@@ -1,8 +1,9 @@
 """Tests for SchedulerClient SDK."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.asyncio
@@ -36,8 +37,8 @@ async def test_client_submit_task():
 @pytest.mark.asyncio
 async def test_client_wait_for_task_success():
     """Test wait_for_task returns on completed status."""
+
     from src.sdk.client import SchedulerClient
-    import asyncio
 
     completed_resp = MagicMock()
     completed_resp.status_code = 200

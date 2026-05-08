@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-
 import uuid
 from typing import Any
 
 from src.common.db_utils import maybe_await
-from src.models.task_run import TaskRunRecord
 from src.models.dag_run import DagRunRecord
-
-
+from src.models.task_run import TaskRunRecord
 
 
 class RunTrackingService:

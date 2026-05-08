@@ -7,13 +7,14 @@ Refactored to inherit BaseRedisRegistry for unified interface.
 """
 from __future__ import annotations
 
-import orjson
 import logging
 from typing import Any
 
+import orjson
+
+from src.common.error_handling import ExternalServiceError, log_errors
 from src.models.cluster import ClusterInfo, ClusterStatus, ObservedResources
 from src.platform.base_registry import BaseRedisRegistry
-from src.common.error_handling import log_errors, ExternalServiceError
 
 logger = logging.getLogger(__name__)
 

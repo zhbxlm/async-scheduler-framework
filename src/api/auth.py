@@ -7,10 +7,9 @@ Multi-tenant mode:   SHA-256 API key hash lookup via TenantRegistry
 from __future__ import annotations
 
 import hmac
-from typing import Optional
 
 from fastapi import HTTPException, Request, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 
 def mask_api_key(api_key: str) -> str:
@@ -27,10 +26,10 @@ security = HTTPBearer(auto_error=False)
 
 async def authenticate(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
 ) -> dict:
     """Authenticate via API key; return tenant context dict.
-    
+
     Optimized: settings are cached in app.state during startup to avoid
     repeated module imports on every request.
     """

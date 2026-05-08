@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from src.common.db_utils import maybe_await
-from src.common.metrics import FORCE_OPERATIONS_TOTAL
-from src.common.service_logger import log_service_event
-
 from typing import Any
 
+from src.common.metrics import FORCE_OPERATIONS_TOTAL
+from src.common.service_logger import log_service_event
 from src.services.governance import GovernanceService
 from src.services.operator_actions import OperatorActionService
-
-
 
 
 class ForceOperationService:

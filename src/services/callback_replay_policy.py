@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.common.db_utils import maybe_await
+from src.models.callback_outbox import CallbackOutboxRecord
 from src.services.governance import GovernanceService
 
 
@@ -22,6 +24,18 @@ class CallbackReplayPolicyService:
     ) -> dict:
         reasons: list[str] = []
         allowed = True
+
+        if current_status is None and self._db is not None:
+            async with self._db() as session:
+                row = await maybe_await(session.get(CallbackOutboxRecord, outbox_id))
+                if row is None:
+                    return {
+                        "allowed": False,
+                        "outbox_id": outbox_id,
+                        "reasons": ["callback outbox record not found"],
+                    }
+                status_value = getattr(row.delivery_status, "value", row.delivery_status)
+                current_status = str(status_value) if status_value is not None else None
 
         # Reason is always required
         if not reason:

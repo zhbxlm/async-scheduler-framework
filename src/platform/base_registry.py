@@ -3,12 +3,14 @@
 Uses orjson for 2-5x faster serialisation than stdlib json.
 """
 from __future__ import annotations
-import logging
-from typing import Generic, TypeVar, Optional, Any
-import redis.asyncio as aioredis
-import orjson
 
-from src.common.error_handling import log_errors, ExternalServiceError
+import logging
+from typing import Any, Generic, TypeVar
+
+import orjson
+import redis.asyncio as aioredis
+
+from src.common.error_handling import ExternalServiceError, log_errors
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class BaseRedisRegistry(Generic[T]):
         return f"{self._prefix}:{tenant_id}:{item_id}"
 
     @log_errors(log_level="ERROR", raise_exception=False, exception_type=ExternalServiceError)
-    async def get(self, tenant_id: str, item_id: str) -> Optional[T]:
+    async def get(self, tenant_id: str, item_id: str) -> T | None:
         key = self._make_key(tenant_id, item_id)
         try:
             data = await self._r.get(key)

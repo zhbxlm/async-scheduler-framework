@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _DEFAULT_HIGH_RISK_OPS: frozenset[str] = frozenset({
     "force_replay_on_active_lease",
     "force_replay_on_running_task",

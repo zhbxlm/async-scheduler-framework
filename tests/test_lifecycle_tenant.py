@@ -32,22 +32,21 @@
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from src.common.lifecycle import (
+    CompensationServiceResource,
+    CronSchedulerResource,
     LifecycleManager,
     ManagedResource,
     TaskReconcilerResource,
-    CronSchedulerResource,
-    CompensationServiceResource,
     get_lifecycle_manager,
 )
-from tests.fake_redis import FullFakeAsyncRedis
 from src.platform.tenant_registry import TenantRegistry
-
+from tests.fake_redis import FullFakeAsyncRedis
 
 # ===========================================================================
 # Helpers
