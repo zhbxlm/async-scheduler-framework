@@ -54,7 +54,7 @@ Completed on 2026-05-08. Full suite remains green.
 ### P1.2 Task API container: remove control-plane-only runtime objects
 
 **Problem**
-`build_task_api()` still assembles background/control-plane class graph (`CronScheduler`, `TaskReconciler`, `CompensationService`, etc.), even when `task-api` should only serve synchronous request/response responsibilities.
+`build_task_api()` still assembled background/control-plane class graph (`CronScheduler`, `TaskReconciler`, `CompensationService`, etc.), even when `task-api` should only serve synchronous request/response responsibilities.
 
 **Target state**
 `task-api` container includes only request-serving dependencies.
@@ -79,8 +79,8 @@ Completed on 2026-05-08. Full suite remains green.
 - [x] Map actual task-api runtime usages from `app.state` and route/service paths
 - [x] Remove unused background objects from `build_task_api()`
 - [x] Remove corresponding lifespan registration logic from `main_tasks.py`
-- [ ] Verify task API routes still function under tests
-- [ ] Run targeted + full regression suite
+- [x] Verify task API routes still function under tests
+- [x] Run targeted + full regression suite
 
 **Stop/confirm condition**
 Pause only if a background object is required by a request-serving path and boundary change would alter externally visible behavior.
@@ -90,7 +90,7 @@ Pause only if a background object is required by a request-serving path and boun
 ### P2.1 Split oversized `ops.py`
 
 **Problem**
-`src/api/routes/ops.py` aggregates too many concerns:
+`src/api/routes/ops.py` aggregated too many concerns:
 - overview/stats
 - dashboard
 - callbacks/dead letters
@@ -102,24 +102,24 @@ Pause only if a background object is required by a request-serving path and boun
 Smaller routers grouped by operational concern.
 
 **Planned split**
-- [ ] `ops_overview_routes.py`
-- [ ] `ops_dashboard_routes.py`
-- [ ] `ops_callback_routes.py`
-- [ ] `ops_replay_routes.py`
-- [ ] `ops_force_routes.py`
+- [x] `ops_overview_routes.py`
+- [x] `ops_dashboard_routes.py`
+- [x] `ops_callback_routes.py`
+- [x] `ops_replay_routes.py`
+- [x] `ops_force_routes.py`
 
 **Execution plan**
 - [x] Move endpoints without semantic changes
 - [x] Keep prefixes and schemas stable
 - [x] Rewire imports in `main.py`
-- [ ] Run targeted + full regression suite
+- [x] Run targeted + full regression suite
 
 ---
 
 ### P2.2 Slim down `tasks.py`
 
 **Problem**
-`src/api/routes/tasks.py` still contains query logic, mapping logic, and direct ORM access that should live below the route layer.
+`src/api/routes/tasks.py` still contained query logic, mapping logic, and direct ORM access that should live below the route layer.
 
 **Target state**
 Route layer handles only:
@@ -129,21 +129,24 @@ Route layer handles only:
 - response wiring
 
 **Planned extraction**
-- [ ] `TaskQueryService`
+- [x] `TaskQueryService`
 - [ ] `TaskAccessPolicy` (if needed)
-- [ ] `TaskPresenter` / mapping helpers
+- [x] `TaskPresenter` / mapping helpers
 
 **Execution plan**
 - [x] Extract list/get/result/cancel read paths first
 - [x] Keep API schema and behavior unchanged
-- [ ] Run targeted + full regression suite
+- [x] Run targeted + full regression suite
+
+**Current note**
+A thin compatibility shell remains in `tasks.py` for `_to_json` / `_serialize` because current tests import these helpers directly.
 
 ---
 
 ### P3.1 Formalize optional capabilities
 
 **Problem**
-Capabilities like tracing and proxy HTTP server support are coded as optional/degradable but are not yet fully formalized in dependency/documentation policy.
+Capabilities like tracing and proxy HTTP server support were coded as optional/degradable but were not yet fully formalized in dependency/documentation policy.
 
 **Target state**
 Every optional capability is clearly categorized:
@@ -156,31 +159,34 @@ Every optional capability is clearly categorized:
 - [x] Decide dependency ownership per package
 - [x] Align docs + package metadata + runtime fallback behavior
 
+**Current note**
+Tracing is now documented and declared as an optional `tracing` extra in the root package.
+
 ---
 
 ### P4.1 Explicit shutdown phases
 
 **Problem**
-`LifecycleManager.stop_all()` currently infers shutdown order from resource names/types heuristically.
+`LifecycleManager.stop_all()` previously inferred shutdown order from resource names/types heuristically.
 
 **Target state**
 Each resource explicitly declares shutdown phase/order.
 
 **Execution plan**
-- [ ] Add explicit phase/priority field to `ManagedResource`
-- [ ] Preserve current behavior as baseline
-- [ ] Update tests to assert explicit ordering
+- [x] Add explicit phase/priority field to `ManagedResource`
+- [x] Preserve current behavior as baseline
+- [x] Update tests to assert explicit ordering
+
+**Current note**
+Implementation uses explicit `shutdown_phase` first, with heuristic fallback retained for compatibility.
 
 ---
 
-## Execution order
+## Recommended next items
 
-1. P1.1 LifecycleManager singleton removal
-2. P1.2 Task API container boundary tightening
-3. P2.1 Split `ops.py`
-4. P2.2 Slim down `tasks.py`
-5. P3.1 Optional capability formalization
-6. P4.1 Explicit shutdown phases
+1. Continue `tasks.py` cleanup only if it can remain behavior-preserving.
+2. Consider extracting `TaskAccessPolicy` if route/service auth checks begin duplicating again.
+3. Extend optional capability policy from root package to subpackage strategy only if needed.
 
 ---
 
@@ -189,4 +195,8 @@ Each resource explicitly declares shutdown phase/order.
 ### 2026-05-08
 - Created backlog document.
 - Completed P1.1 LifecycleManager singleton removal.
-- Next item: P1.2 Task API container boundary tightening.
+- Completed P1.2 task-api container boundary tightening.
+- Completed P2.1 first-round `ops.py` route split into overview/dashboard/callback/replay/force modules.
+- Completed P2.2 first-round `tasks.py` slimming: query paths and mapping helpers moved below route layer while preserving route compatibility shims used by tests.
+- Completed P3.1 first-round optional capability formalization for tracing via `tracing` extra + README guidance.
+- Completed P4.1 explicit shutdown phase introduction with compatibility fallback.
