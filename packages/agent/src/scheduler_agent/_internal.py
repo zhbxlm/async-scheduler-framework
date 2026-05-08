@@ -1,8 +1,12 @@
-"""scheduler_agent._internal — bridges NodeAgent to framework internals."""
+"""scheduler_agent._internal — wires NodeAgent to the monorepo agent server."""
 from __future__ import annotations
 
-import os, sys, logging
+import logging
 from typing import TYPE_CHECKING
+
+from scheduler_runtime_core.logging_config import configure_logging
+
+configure_logging()
 
 if TYPE_CHECKING:
     from scheduler_agent.node import NodeAgent
@@ -10,23 +14,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _ensure_framework_on_path() -> None:
-    candidate = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "src")
-    )
-    repo_root = os.path.dirname(candidate)
-    if os.path.isdir(candidate) and repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-
-
 async def _start_agent(agent: "NodeAgent") -> None:
-    _ensure_framework_on_path()
     try:
         from src.agent.server import NodeAgentServer
         from src.agent.config import AgentConfig
     except ImportError as exc:
         raise RuntimeError(
-            "async-scheduler framework is not installed. "
+            "async-scheduler agent framework is not installed. "
             "Install it with: pip install async-scheduler-agent"
         ) from exc
 

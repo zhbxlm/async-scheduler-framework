@@ -1,37 +1,21 @@
-"""scheduler_task_api._internal — bridges public API to framework internals.
-
-This module is an implementation detail. Never import from here directly.
-"""
+"""scheduler_task_api._internal — wires the monorepo Task API app into runtime-core."""
 from __future__ import annotations
 
-import logging
-import os
-import sys
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from scheduler_runtime_core.app_factory import configure, build_app
+from scheduler_runtime_core.logging_config import configure_logging
+
+configure_logging()
 
 
-def _ensure_framework_on_path() -> None:
-    """Add monorepo src/ to sys.path when running from a development checkout."""
-    candidate = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "src")
-    )
-    repo_root = os.path.dirname(candidate)
-    if os.path.isdir(candidate) and repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
+def _task_api_factory():
+    from src.main_tasks import app  # late import — heavy, only at serve time
+    return app
+
+
+configure("task-api", _task_api_factory)
 
 
 def _build_app(**kwargs: Any):
-    """Build and return the Task API FastAPI application."""
-    _ensure_framework_on_path()
-
-    try:
-        from src.main_tasks import app
-    except ImportError as exc:
-        raise RuntimeError(
-            "async-scheduler framework is not installed. "
-            "Install it with: pip install async-scheduler-task-api"
-        ) from exc
-
-    return app
+    return build_app("task-api")

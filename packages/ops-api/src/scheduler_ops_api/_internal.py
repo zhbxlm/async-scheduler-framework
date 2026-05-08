@@ -1,26 +1,21 @@
-"""scheduler_ops_api._internal — bridges public API to framework internals."""
+"""scheduler_ops_api._internal — wires the monorepo Ops API app into runtime-core."""
 from __future__ import annotations
 
-import os, sys
 from typing import Any
 
+from scheduler_runtime_core.app_factory import configure, build_app
+from scheduler_runtime_core.logging_config import configure_logging
 
-def _ensure_framework_on_path() -> None:
-    candidate = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "src")
-    )
-    repo_root = os.path.dirname(candidate)
-    if os.path.isdir(candidate) and repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
+configure_logging()
+
+
+def _ops_api_factory():
+    from src.main import app  # late import — heavy, only at serve time
+    return app
+
+
+configure("ops-api", _ops_api_factory)
 
 
 def _build_app(**kwargs: Any):
-    _ensure_framework_on_path()
-    try:
-        from src.main import app
-    except ImportError as exc:
-        raise RuntimeError(
-            "async-scheduler framework is not installed. "
-            "Install it with: pip install async-scheduler-ops-api"
-        ) from exc
-    return app
+    return build_app("ops-api")

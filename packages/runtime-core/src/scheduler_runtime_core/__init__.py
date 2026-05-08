@@ -13,6 +13,7 @@ Public API:
 from __future__ import annotations
 
 from scheduler_runtime_core import (  # noqa: F401 — re-export for convenience
+    app_factory,
     async_db,
     control_plane,
     http_client,
