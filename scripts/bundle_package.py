@@ -166,6 +166,17 @@ def bundle(svc: str, *, build_wheel: bool = True, clean: bool = True) -> None:
             copied.append(dst)
 
         # 2b. Copy glue-layer infra/ (not reachable via src.* imports)
+        # Also ensure infra/redis_client.py's dependency on <pkg>.common.redis_ha
+        # is satisfied by bundling redis_ha.py explicitly.
+        redis_ha_src = SRC_ROOT / "common" / "redis_ha.py"
+        if redis_ha_src.exists():
+            redis_ha_rel = "common/redis_ha.py"
+            if redis_ha_rel not in manifest:
+                dst = pkg_dir / redis_ha_rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_text(rewrite_imports(redis_ha_src.read_text(), pkg))
+                copied.append(dst)
+
         glue_infra = REPO_ROOT / "src" / pkg / "infra"
         if glue_infra.exists():
             for src_f in sorted(glue_infra.rglob("*.py")):

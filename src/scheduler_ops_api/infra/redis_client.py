@@ -24,7 +24,7 @@ async def create_redis_client(
         if url:
             return aioredis.from_url(url, decode_responses=decode_responses, max_connections=max_connections, retry_on_timeout=True, health_check_interval=30)
         return aioredis.Redis(host=host, port=port, password=password or None, db=db, decode_responses=decode_responses, max_connections=max_connections, retry_on_timeout=True, health_check_interval=30, socket_keepalive=True, socket_connect_timeout=5)
-    from src.common.redis_ha import RedisHA  # shared HA impl, still monorepo until redis_ha is extracted
+    from scheduler_ops_api.common.redis_ha import RedisHA  # bundled: src/common/redis_ha.py
     sentinel_urls = os.getenv("REDIS_SENTINEL_URLS", "")
     master_name = os.getenv("REDIS_SENTINEL_MASTER", "mymaster")
     if sentinel_urls:
