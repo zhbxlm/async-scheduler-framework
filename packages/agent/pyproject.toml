@@ -12,6 +12,9 @@ license = "MIT"
 dependencies = [
     "async-scheduler-runtime-core>=1.2.0",
     "click>=8.1",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "httpx>=0.25",
 ]
 
 [project.optional-dependencies]

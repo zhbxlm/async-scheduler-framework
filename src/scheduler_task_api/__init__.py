@@ -1,3 +1,6 @@
+# Package entry layer for scheduler-task-api.
+# Source of truth lives in src/task/ and src/{common,models,platform,services}/.
+# This package is built into a standalone wheel via scripts/bundle_package.py.
 """scheduler_task_api — Task Submission API service.
 
 Start the server::

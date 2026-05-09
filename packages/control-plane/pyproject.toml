@@ -11,6 +11,12 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "async-scheduler-runtime-core>=1.2.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "redis[hiredis]>=5.0",
+    "orjson>=3.9",
+    "httpx>=0.25",
 ]
 
 [project.optional-dependencies]

@@ -1,3 +1,6 @@
+# Package entry layer for scheduler-ops-api.
+# Source of truth lives in src/{common,models,platform,services,monitoring}/.
+# This package is built into a standalone wheel via scripts/bundle_package.py.
 """scheduler_ops_api — Ops/Admin API service for async-scheduler.
 
 Start the server::

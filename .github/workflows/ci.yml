@@ -51,11 +51,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e .[dev]
         pip install -e packages/runtime-core
-        pip install -e packages/task-api --no-deps
-        pip install -e packages/ops-api --no-deps
-        pip install -e packages/control-plane --no-deps
-        pip install -e packages/agent --no-deps
-        pip install pydantic-settings
+        pip install -e packages/task-api
+        pip install -e packages/ops-api
+        pip install -e packages/control-plane
+        pip install -e packages/agent
         pip install pytest pytest-asyncio pytest-timeout httpx
     
     - name: Wait for Redis
@@ -80,6 +79,9 @@ jobs:
           sleep 1
         done
     
+    - name: Verify bundle manifests
+      run: python scripts/verify_manifest.py
+
     - name: Run tests
       env:
         REDIS_URL: redis://localhost:6379/0
