@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 # ─────────────────────────────────────────────────────────────────────────────
 [project]
 name = "ray-async"
-version = "1.1.0"
+version = "1.2.0"
 description = "Ray Async — Enterprise async task scheduling framework with DAG orchestration, multi-tenancy and tidal resource management"
 readme = "README.md"
 requires-python = ">=3.10"

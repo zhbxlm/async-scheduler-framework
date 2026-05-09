@@ -15,11 +15,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
 PACKAGE_PYPROJECTS = [
+    ROOT / "pyproject.toml",                               # root package (async-scheduler)
     ROOT / "packages" / "runtime-core" / "pyproject.toml",
     ROOT / "packages" / "task-api" / "pyproject.toml",
     ROOT / "packages" / "ops-api" / "pyproject.toml",
     ROOT / "packages" / "control-plane" / "pyproject.toml",
     ROOT / "packages" / "agent" / "pyproject.toml",
+    ROOT / "packages" / "cli" / "pyproject.toml",
+    ROOT / "packages" / "proxy" / "pyproject.toml",
+    ROOT / "packages" / "sdk" / "pyproject.toml",
+    ROOT / "packages" / "worker" / "pyproject.toml",
 ]
 
 

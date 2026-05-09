@@ -82,6 +82,9 @@ jobs:
     - name: Verify bundle manifests
       run: python scripts/verify_manifest.py
 
+    - name: Verify version consistency
+      run: python scripts/verify_versions.py
+
     - name: Run tests
       env:
         REDIS_URL: redis://localhost:6379/0
