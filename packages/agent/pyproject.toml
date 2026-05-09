@@ -14,10 +14,16 @@ dependencies = [
     "click>=8.1",
 ]
 
+[project.optional-dependencies]
+full = [
+    "async-scheduler-runtime-core[agent]>=1.2.0",
+]
+
 [project.scripts]
 scheduler-agent = "scheduler_agent.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["../../src"]
+include = ["scheduler_agent", "scheduler_agent.*"]
 [tool.setuptools.package-dir]
-"" = "src"
+"" = "../../src"

@@ -13,11 +13,17 @@ dependencies = [
     "async-scheduler-runtime-core>=1.2.0",
 ]
 
+[project.optional-dependencies]
+full = [
+    "async-scheduler-runtime-core[control-plane]>=1.2.0",
+]
+
 [project.scripts]
 scheduler-control-plane = "scheduler_control_plane.server:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["../../src"]
+include = ["scheduler_control_plane", "scheduler_control_plane.*"]
 
 [tool.setuptools.package-dir]
-"" = "src"
+"" = "../../src"

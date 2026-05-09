@@ -18,13 +18,17 @@ dependencies = [
 [project.optional-dependencies]
 # Full tracing stack — install when OTLP exporter is needed at this layer
 tracing = [
-    "async-scheduler-runtime-core[tracing]>=1.1.0",
+    "async-scheduler-runtime-core[tracing]>=1.2.0",
+]
+full = [
+    "async-scheduler-runtime-core[ops-api]>=1.2.0",
 ]
 
 [project.scripts]
 scheduler-ops-api = "scheduler_ops_api.server:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["../../src"]
+include = ["scheduler_ops_api", "scheduler_ops_api.*"]
 [tool.setuptools.package-dir]
-"" = "src"
+"" = "../../src"
