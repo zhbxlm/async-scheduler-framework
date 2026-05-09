@@ -12,14 +12,13 @@ license = "MIT"
 dependencies = [
     "async-scheduler-runtime-core>=1.2.0",
     "click>=8.1",
-    "uvicorn[standard
+    "uvicorn[standard]>=0.24",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "sqlalchemy[asyncio]>=2.0",
     "redis[hiredis]>=5.0",
     "orjson>=3.9",
     "httpx>=0.25",
-]>=0.24",
 ]
 
 [project.optional-dependencies]
